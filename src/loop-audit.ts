@@ -1,6 +1,6 @@
 // The hourly loop's audit pass: open lanes whose session is gone, READY lanes left open, lanes without progress for hours.
 import type { Deps } from "./harness.ts";
-import { progressOf, waitingOn, waitingSinceOf } from "./progress.ts";
+import { progressOf, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { hhmm } from "./fit.ts";
 import { refText } from "./refs.ts";
 import type { AgentStatus } from "./runtime/types.ts";
@@ -32,10 +32,11 @@ export async function audit(d: Deps, run: LoopRun): Promise<void> {
     } else if (now - progressOf(lane) >= STALE_HOURS * HOUR) {
       // Progress, not talk: a lane that keeps reporting without new evidence is as stale as a silent one.
       const age = hours(now - progressOf(lane));
-      // A waiting lane's last entry is as often the duty loop's escalation as its own report: name what it waits on.
+      // A waiting lane's last entry is as often the duty loop's escalation as its own report: name what it waits on,
+      // whole, since a cut link or job id names nothing the lead can check.
       run.findings.push(
         lane.status === "waiting"
-          ? `${lane.key} waiting, no progress for ${age}h: on ${waitingOn(lane)} since ${hhmm(waitingSinceOf(lane))}`
+          ? `${lane.key} waiting, no progress for ${age}h: on ${waitingTarget(lane)} since ${hhmm(waitingSinceOf(lane))}`
           : `${lane.key} working, no progress for ${age}h`,
       );
     }

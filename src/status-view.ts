@@ -1,11 +1,9 @@
 // The lane board `dori status` prints: open lanes first, the longest without progress on top, closed lanes folded into
 // one line each, every line within WIDTH terminal columns.
-import { ageText, fitEnd, hhmm, oneLine, padCols, wrap } from "./fit.ts";
-import { progressOf, waitingOn, waitingSinceOf } from "./progress.ts";
+import { ageText, fitEnd, hhmm, indented, oneLine, padCols, WIDTH, wrap } from "./fit.ts";
+import { progressOf, waitingOn, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { refText } from "./refs.ts";
 import type { Lane } from "./store-types.ts";
-
-export const WIDTH = 120;
 
 /** Columns the progress field and the start of the last entry need beside a lane's name; fewer moves them below it. */
 const BODY_MIN = 40;
@@ -31,7 +29,8 @@ function tailOf(l: Lane, cols: number): string {
  * `key  status  runtime  ref  progress <age> (<since>)  <tail>`. The key and the ref are never cut (keys share
  * prefixes, and a cut one names no lane a command can take): their columns are as wide as the widest open lane's, and
  * the rest is cut to the line. When they leave less than BODY_MIN columns (WAITING_MIN for a waiting lane, so its
- * target and time are never cut off the line's end), the rest goes on an indented line below.
+ * target and time are never cut off the line's end), the rest goes on an indented line below. A waiting target the line
+ * cut follows whole on indented lines: a cut link or job id names nothing to check.
  */
 function laneLine(l: Lane, now: number, cols: { key: number; ref: number }): string[] {
   const since = progressOf(l);
@@ -44,8 +43,13 @@ function laneLine(l: Lane, now: number, cols: { key: number; ref: number }): str
   const progress = padCols(`progress ${ageText(now - since)} (${hhmm(since)})`, 23);
   const body = (room: number) => fitEnd(`${progress} ${tailOf(l, room - 24)}`.trimEnd(), room);
   const room = WIDTH - Bun.stringWidth(id) - 1;
-  if (room >= (l.status === "waiting" ? Math.max(BODY_MIN, WAITING_MIN) : BODY_MIN)) return [`${id} ${body(room)}`];
-  return [...wrap(id.trimEnd(), WIDTH), `  ${body(WIDTH - 2)}`];
+  const lines =
+    room >= (l.status === "waiting" ? Math.max(BODY_MIN, WAITING_MIN) : BODY_MIN)
+      ? [`${id} ${body(room)}`]
+      : [...wrap(id.trimEnd(), WIDTH), `  ${body(WIDTH - 2)}`];
+  if (l.status !== "waiting") return lines;
+  const target = waitingTarget(l);
+  return lines.some((line) => line.includes(`waiting: ${target} since `)) ? lines : [...lines, ...indented(target)];
 }
 
 /** One summary line per closed status: how many, and the one closed last. */

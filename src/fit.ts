@@ -1,5 +1,8 @@
 // Terminal text helpers: wide (Korean) characters take two columns, and a cut never splits a character.
 
+/** The terminal width every message and board line keeps within. */
+export const WIDTH = 120;
+
 const graphemes = (text: string): string[] =>
   Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (s) => s.segment);
 
@@ -53,6 +56,12 @@ export function wrap(text: string, cols: number): string[] {
   }
   return [...lines, rest];
 }
+
+/**
+ * `text` whole on indented lines within WIDTH. A cut link, job id or path names nothing a reader can open or check, so a
+ * line that has to stay short is followed by these when it cut one.
+ */
+export const indented = (text: string): string[] => wrap(text, WIDTH - 2).map((l) => `  ${l}`);
 
 /** Local wall-clock time, "19:47". */
 export function hhmm(at: number): string {

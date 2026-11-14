@@ -3,6 +3,7 @@ import { utimesSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../src/cli.ts";
 import { dutyTick } from "../src/duty.ts";
+import { oneLine } from "../src/fit.ts";
 import { ready, report, startLane } from "../src/lanes.ts";
 import { href } from "./fake.ts";
 import { setup } from "./harness-setup.ts";
@@ -194,7 +195,11 @@ describe("the progress clock", () => {
     expect(out[2]).toBe("  not counted: x y (no such file)");
     await at(42);
     const msg = lead.received.at(-1)!.split("\n");
-    expect(msg).toHaveLength(3);
     expect(msg[2]).toMatch(/^last evidence: .*a Next: close every lane \[2J\.md @ \d\d:\d\d\. Next: check the lane/);
+    // The cut path follows whole on indented lines, still one-line text: no escape, no line of its own for "Next:".
+    const whole = msg.slice(3);
+    expect(whole.every((l) => l.startsWith("  ") && !l.includes("\u001b"))).toBe(true);
+    const bare = (s: string) => s.replace(/\s/g, "");
+    expect(bare(whole.join(""))).toBe(bare(oneLine(file)));
   });
 });

@@ -32,7 +32,9 @@ describe("a waiting lane", () => {
     expect(await at(9)).toEqual([]);
     expect(await at(10)).toContainEqual({ lane: "blocked", action: "nudge-1" });
     expect(pane.received.at(-1)).toContain(`[duty -> blocked] Waiting on CI run 812 since ${start}`);
-    expect(pane.received.at(-1)).toContain("Check that CI run 812 is still alive");
+    expect(pane.received.at(-1)).toContain(
+      "is still alive and moving (a check, a process, a request):\n  CI run 812\n",
+    );
     expect(await at(20)).toContainEqual({ lane: "blocked", action: "nudge-2" });
     expect((await at(39)).map((e) => e.action)).not.toContain("escalated");
     expect(await at(40)).toContainEqual({ lane: "blocked", action: "escalated" });

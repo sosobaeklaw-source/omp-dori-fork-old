@@ -6,8 +6,8 @@ import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
 import { openSession, type SessionRef } from "./runtime/types.ts";
 import { RuntimeChoiceError } from "./runtime/select.ts";
-import { wrap } from "./fit.ts";
-import { laneBoard, WIDTH } from "./status-view.ts";
+import { WIDTH, wrap } from "./fit.ts";
+import { laneBoard } from "./status-view.ts";
 
 function renderPrompt(d: Deps, name: string): string {
   const dir = join(d.store.root, "prompts");

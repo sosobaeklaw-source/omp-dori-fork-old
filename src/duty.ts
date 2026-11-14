@@ -5,11 +5,10 @@ import { flushInbox } from "./inbox.ts";
 import { oweLead, payLead } from "./inbox-files.ts";
 import { Refusal } from "./refusal.ts";
 import { refText } from "./refs.ts";
-import { escalation, progressOf, stalled, waitingOn, waitingSinceOf } from "./progress.ts";
+import { escalation, progressOf, stalled, waitingOn, waitingSinceOf, waitingTarget } from "./progress.ts";
 import type { SessionRef } from "./runtime/types.ts";
 import type { Lane } from "./store-types.ts";
-import { ageText, hhmm } from "./fit.ts";
-import { WIDTH } from "./status-view.ts";
+import { ageText, hhmm, indented, WIDTH } from "./fit.ts";
 
 /** Quiet minutes before the first and second nudge; the lead is told at ESCALATE_MINUTES without progress. */
 export const NUDGE_MINUTES = [10, 20] as const;
@@ -162,10 +161,17 @@ export async function dutyTick(d: Deps): Promise<DutyEvent[]> {
         since: hhmm(since),
         age: ageText(now - since),
         dori: d.doriCmd,
-        ...(waiting ? { target: "", waitingSince: hhmm(waitingSinceOf(lane)) } : {}),
+        ...(waiting
+          ? {
+              target: "",
+              wholeTarget: indented(waitingTarget(lane)).join("\n"),
+              waitingSince: hhmm(waitingSinceOf(lane)),
+            }
+          : {}),
       };
       // Built and queued before it is counted: a nudge that could not be built or queued is not used up. A waiting
-      // nudge's target gets what its first line leaves of WIDTH beside the key (at most 40 columns), so the time shows.
+      // nudge's first line names the target in what it leaves of WIDTH beside the key (at most 40 columns), so the time
+      // shows; its body names the target whole, since a cut link or job id names nothing the lane can check.
       const name = waiting ? "nudge-waiting.md" : "nudge.md";
       const room = waiting ? WIDTH - Bun.stringWidth(prompt(name, vars).split("\n")[0]!) : 0;
       const text = prompt(name, waiting ? { ...vars, target: waitingOn(lane, Math.max(1, room)) } : vars);
