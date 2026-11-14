@@ -92,28 +92,14 @@ const scope = (cwd: string): string => {
   return existsSync(path) ? realpathSync(path) : path;
 };
 
-const COMMON_WORDS: Readonly<Record<string, true>> = {
-  that: true,
-  this: true,
-  with: true,
-  from: true,
-  have: true,
-  will: true,
-  when: true,
-  your: true,
-  their: true,
-  before: true,
-  after: true,
-  into: true,
-  only: true,
-  must: true,
-  should: true,
-  work: true,
-  using: true,
-};
+const COMMON_WORDS = new Set(
+  "the and for are not our you was its can all use run to of in on is it be as at by or an if do no we that this with from have will when your their before after into only must should work using".split(
+    " ",
+  ),
+);
 const keywords = (text: string): string[] =>
-  (text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter(
-    (word) => word !== "then" && !Object.hasOwn(COMMON_WORDS, word),
+  (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter(
+    (word) => (word.length >= 2 || /[^\p{ASCII}]/u.test(word)) && word !== "then" && !COMMON_WORDS.has(word),
   );
 
 export class Lessons {

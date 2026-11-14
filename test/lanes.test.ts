@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Lessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { groupId } from "../src/runtime/group.ts";
@@ -54,6 +54,55 @@ describe("lanes", () => {
     } finally {
       if (previous === undefined) delete process.env["DORI_STATE_DIR"];
       else process.env["DORI_STATE_DIR"] = previous;
+    }
+  });
+
+  test("start uses its home state and ignores unrelated configuration settings", async () => {
+    const { d, brief } = setup();
+    const previousConfig = process.env["DORI_CONFIG"];
+    const previousState = process.env["DORI_STATE_DIR"];
+    delete process.env["DORI_CONFIG"];
+    delete process.env["DORI_STATE_DIR"];
+    try {
+      const state = join(d.store.root, "state");
+      mkdirSync(state, { recursive: true });
+      writeFileSync(join(d.store.root, "config.json"), JSON.stringify({ runtime: "invalid" }));
+      const lesson = new Lessons(state).add(
+        { lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" },
+        1,
+      );
+      const lane = await startLane(d, "home-lessons", brief, { group: "w1" });
+      expect(d.store.lane("home-lessons")?.lessons).toEqual([lesson]);
+      expect(await Bun.file(lane.brief).text()).toContain("Review login results");
+    } finally {
+      if (previousConfig === undefined) delete process.env["DORI_CONFIG"];
+      else process.env["DORI_CONFIG"] = previousConfig;
+      if (previousState === undefined) delete process.env["DORI_STATE_DIR"];
+      else process.env["DORI_STATE_DIR"] = previousState;
+    }
+  });
+
+  test("start shares the explicitly configured lesson state with skill launch", async () => {
+    const { d, brief } = setup();
+    const previousConfig = process.env["DORI_CONFIG"];
+    const previousState = process.env["DORI_STATE_DIR"];
+    const state = join(d.store.root, "shared-state");
+    const config = join(d.store.root, "skill-config.json");
+    process.env["DORI_CONFIG"] = config;
+    delete process.env["DORI_STATE_DIR"];
+    try {
+      writeFileSync(config, JSON.stringify({ stateDir: state, supervision: { defaults: { tokens: -1 } } }));
+      const lesson = new Lessons(state).add(
+        { lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" },
+        1,
+      );
+      await startLane(d, "configured-lessons", brief, { group: "w1" });
+      expect(d.store.lane("configured-lessons")?.lessons).toEqual([lesson]);
+    } finally {
+      if (previousConfig === undefined) delete process.env["DORI_CONFIG"];
+      else process.env["DORI_CONFIG"] = previousConfig;
+      if (previousState === undefined) delete process.env["DORI_STATE_DIR"];
+      else process.env["DORI_STATE_DIR"] = previousState;
     }
   });
 

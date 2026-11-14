@@ -22,7 +22,7 @@ const expandHome = (path: string): string =>
   path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 
 /** The extension's config/state precedence; callers with loaded config pass stateDir explicitly. */
-export function ompStateDir(env: Env): string {
+export function ompStateDir(env: Env, fallback = join(homedir(), ".dori", "state")): string {
   if (env["DORI_STATE_DIR"] !== undefined) return expandHome(env["DORI_STATE_DIR"]);
   const path = env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json");
   let raw: string;
@@ -30,10 +30,10 @@ export function ompStateDir(env: Env): string {
     raw = readFileSync(path, "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    return join(homedir(), ".dori", "state");
+    return fallback;
   }
   const config = JSON.parse(raw) as { stateDir?: string };
-  return expandHome(config.stateDir ?? join(homedir(), ".dori", "state"));
+  return expandHome(config.stateDir ?? fallback);
 }
 
 const OMP_COMMAND =

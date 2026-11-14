@@ -10,7 +10,7 @@ import { openSession, type SessionRef } from "./runtime/types.ts";
 import { RuntimeChoiceError } from "./runtime/select.ts";
 import { laneBoard } from "./status-view.ts";
 
-function renderPrompt(d: Deps, name: string): string {
+export function renderPrompt(d: Deps, name: string): string {
   const dir = join(d.store.root, "prompts");
   mkdirSync(dir, { recursive: true });
   const src = readFileSync(promptFile(name), "utf8").replaceAll("{{dori}}", d.doriCmd);
