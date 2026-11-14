@@ -1,4 +1,5 @@
 import type { SessionRef } from "./runtime/types.ts";
+import type { Lesson } from "../skills/dori-mode/scripts/src/lessons.ts";
 
 export type LaneStatus = "working" | "waiting" | "ready" | "done" | "lost";
 
@@ -28,6 +29,8 @@ export type Lane = {
   tabId: string;
   brief: string;
   cwd: string;
+  /** Exact lesson records included when the lane started; older lane records may not have this field. */
+  lessons?: Lesson[];
   status: LaneStatus;
   createdAt: number;
   lastActivityAt: number;

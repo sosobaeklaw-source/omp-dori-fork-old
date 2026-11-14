@@ -92,6 +92,30 @@ const scope = (cwd: string): string => {
   return existsSync(path) ? realpathSync(path) : path;
 };
 
+const COMMON_WORDS: Readonly<Record<string, true>> = {
+  that: true,
+  this: true,
+  with: true,
+  from: true,
+  have: true,
+  will: true,
+  when: true,
+  your: true,
+  their: true,
+  before: true,
+  after: true,
+  into: true,
+  only: true,
+  must: true,
+  should: true,
+  work: true,
+  using: true,
+};
+const keywords = (text: string): string[] =>
+  (text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter(
+    (word) => word !== "then" && !Object.hasOwn(COMMON_WORDS, word),
+  );
+
 export class Lessons {
   readonly path: string;
 
@@ -156,9 +180,14 @@ export class Lessons {
    * `omitted` lists the eligible lessons a cap kept out, so a caller can say so instead of shipping a brief that
    * quietly lacks a standing rule.
    */
-  forRepo(cwd: string): LessonRead {
+  forRepo(cwd: string, brief?: string): LessonRead {
     const { lessons, problems } = this.read(cwd);
-    const current = lessons.filter((lesson) => lesson.outcome === "pending" || lesson.outcome === "helped");
+    const terms = brief === undefined ? undefined : new Set(keywords(brief));
+    const current = lessons.filter(
+      (lesson) =>
+        (lesson.outcome === "pending" || lesson.outcome === "helped") &&
+        (terms === undefined || keywords(lesson.rule).some((word) => terms.has(word))),
+    );
     const globalAll = current.filter((lesson) => lesson.scope === "global");
     const repoAll = current.filter((lesson) => lesson.scope !== "global");
     const global = globalAll.slice(0, GLOBAL_LESSON_CAP);
@@ -188,7 +217,7 @@ export class Lessons {
 
 const section = (heading: string, lessons: readonly Lesson[]): string =>
   lessons.length
-    ? `${heading}\n${lessons.map((lesson) => `- [${lesson.outcome}; ${lesson.lane}] ${lesson.rule}`).join("\n")}\n\n`
+    ? `${heading}\n${lessons.map((lesson) => `- [${lesson.outcome}; ${lesson.lane}; source: ${lesson.evidence}] ${lesson.rule}`).join("\n")}\n\n`
     : "";
 
 export const renderLessons = (lessons: readonly Lesson[]): string =>
@@ -200,3 +229,17 @@ export const renderLessons = (lessons: readonly Lesson[]): string =>
     "## Lessons for this repo",
     lessons.filter((lesson) => lesson.scope !== "global"),
   );
+
+export const prepareLessons = (stateDir: string, cwd: string, brief: string) => {
+  const { lessons, problems, omitted } = new Lessons(stateDir).forRepo(cwd, brief);
+  return {
+    lessons,
+    preamble: renderLessons(lessons),
+    warnings: [
+      ...problems.map((problem) => `LESSON_WARNING ${problem}`),
+      ...omitted.map(
+        (lesson) => `LESSON_OMITTED ${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`,
+      ),
+    ],
+  };
+};

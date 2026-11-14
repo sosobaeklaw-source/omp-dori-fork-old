@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadConfig } from "../skills/dori-mode/scripts/src/config.ts";
+import { prepareLessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { shq } from "./delivery.ts";
 import { oneName } from "./fit.ts";
 import { agentCommand, prompt, type Deps } from "./harness.ts";
@@ -36,7 +38,10 @@ export async function startLane(
   const cwd = resolve(opts.cwd ?? process.cwd());
   const briefPath = d.store.briefPath(key);
   const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
-  await Bun.write(briefPath, `${readFileSync(briefFile, "utf8").trimEnd()}\n\n${footer}`);
+  const brief = readFileSync(briefFile, "utf8").trimEnd();
+  const prepared = prepareLessons((await loadConfig()).stateDir, cwd, brief);
+  for (const warning of prepared.warnings) console.error(warning);
+  await Bun.write(briefPath, `${brief}\n\n${prepared.preamble}${footer}`);
 
   // The group is the caller's own when it runs in a session of the selected runtime (a lane opened from the lead's
   // workspace stays there); otherwise herdr gets a new "dori" workspace and hc this home's group label.
@@ -61,6 +66,7 @@ export async function startLane(
     tabId: ref.container ?? "",
     brief: briefPath,
     cwd,
+    lessons: prepared.lessons,
     status: "working",
     createdAt: now,
     lastActivityAt: now,

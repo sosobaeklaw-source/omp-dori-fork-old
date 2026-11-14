@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { Lessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { groupId } from "../src/runtime/group.ts";
 import { Store } from "../src/store.ts";
 import { Refusal } from "../src/refusal.ts";
@@ -17,6 +18,43 @@ describe("lanes", () => {
     expect(await Bun.file(lane.brief).text()).toContain("dori ready fix-login --text");
     expect(lead.received).toEqual([`[START fix-login] lane opened in ${lane.paneId}`]);
     await expect(startLane(d, "fix-login", brief, { group: "w1" })).rejects.toThrow(Refusal);
+  });
+
+  test("start ships and records current global and matching repo lessons with their sources", async () => {
+    const { d, brief } = setup();
+    const previous = process.env["DORI_STATE_DIR"];
+    process.env["DORI_STATE_DIR"] = d.store.root;
+    try {
+      const journal = new Lessons(d.store.root);
+      const global = journal.add(
+        { lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" },
+        1,
+      );
+      const repo = journal.add(
+        { lane: "old-lane", cwd: d.store.root, rule: "Run the focused test", evidence: "test:7" },
+        2,
+      );
+      journal.add({ lane: "old-lane", cwd: "/other-repo", rule: "Unrelated login rule", evidence: "other:1" }, 3);
+      journal.add({ lane: "old-lane", cwd: d.store.root, rule: "Check deployment logs", evidence: "deploy:1" }, 5);
+      const retired = journal.add(
+        { lane: "old-lane", cwd: d.store.root, rule: "Retired login rule", evidence: "old:1" },
+        4,
+      );
+      journal.mark(retired.id, "harmful");
+
+      const lane = await startLane(d, "lessons-lane", brief, { group: "w1", cwd: d.store.root });
+      const shipped = await Bun.file(lane.brief).text();
+      expect(shipped).toContain("[pending; lead; source: report:42] Review login results");
+      expect(shipped).toContain("[pending; old-lane; source: test:7] Run the focused test");
+      expect(shipped).not.toContain("Unrelated login rule");
+      expect(shipped).not.toContain("Retired login rule");
+      expect(shipped).not.toContain("Check deployment logs");
+      expect(shipped.indexOf("Review login results")).toBeGreaterThan(shipped.indexOf("Fix the flaky login test."));
+      expect(d.store.lane("lessons-lane")?.lessons).toEqual([global, repo]);
+    } finally {
+      if (previous === undefined) delete process.env["DORI_STATE_DIR"];
+      else process.env["DORI_STATE_DIR"] = previous;
+    }
   });
 
   test("start refuses the role names lead and duty as lane keys before it writes or opens anything", async () => {

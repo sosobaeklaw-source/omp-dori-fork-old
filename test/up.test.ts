@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { up } from "../src/cli-up.ts";
 import { groupId } from "../src/runtime/group.ts";
@@ -7,6 +7,28 @@ import { World } from "./fake.ts";
 import { captureIo } from "./inbox-setup.ts";
 
 describe("dori up", () => {
+  test("appends each local prompt overlay on every up without accumulating it", async () => {
+    const w = new World();
+    const d = w.deps();
+    const dir = join(d.store.root, "prompts");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "lead.local.md"), "Lead-specific instructions.\n");
+    writeFileSync(join(dir, "duty.local.md"), "Duty-specific instructions.\n");
+    await captureIo(async () => {
+      await up(d, "/w");
+      return 0;
+    });
+    const first = readFileSync(join(dir, "lead.md"), "utf8");
+    expect(first).toEndWith("\n\nLead-specific instructions.\n");
+    expect(readFileSync(join(dir, "duty.md"), "utf8")).toEndWith("\n\nDuty-specific instructions.\n");
+    await captureIo(async () => {
+      await up(d, "/w");
+      return 0;
+    });
+    expect(readFileSync(join(dir, "lead.md"), "utf8")).toBe(first);
+    expect(readFileSync(join(dir, "lead.local.md"), "utf8")).toBe("Lead-specific instructions.\n");
+  });
+
   test("herdr: the same 8 calls as before runtimes existed, and all four roles registered", async () => {
     const w = new World();
     const d = w.deps();

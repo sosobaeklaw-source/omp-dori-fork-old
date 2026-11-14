@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
 import { agentCommand, promptFile, type Deps } from "./harness.ts";
@@ -15,7 +15,9 @@ function renderPrompt(d: Deps, name: string): string {
   mkdirSync(dir, { recursive: true });
   const src = readFileSync(promptFile(name), "utf8").replaceAll("{{dori}}", d.doriCmd);
   const out = join(dir, name);
-  writeFileSync(out, src);
+  const local = join(dir, name.replace(/\.md$/, ".local.md"));
+  const overlay = existsSync(local) ? readFileSync(local, "utf8") : "";
+  writeFileSync(out, overlay ? `${src.trimEnd()}\n\n${overlay}` : src);
   return out;
 }
 

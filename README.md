@@ -133,6 +133,8 @@ DORI_INSTALL_MODE=side DORI_NO_PULL=1 DORI_SRC="$PWD" bash scripts/install-sourc
 
 The installed `dori` is the messenger/lane CLI. The complete harness remains available through `dori harness <args>` or `bun src/cli.ts <args>` from a source checkout. Harness startup creates real sessions and loops; its registry and completion protocol are separate from the skill's. Maintainer source updates use [`dori upstream`](skills/dori-mode/references/scripts.md#staged-dori-updates), separately from consumer release updates.
 
+For private harness instructions, put text in `DORI_HOME/prompts/lead.local.md` or `duty.local.md`. Each `dori up` appends the corresponding local file to the rendered prompt without changing the source template or the local file.
+
 ## OMP session contract
 
 Lead/duty sessions use `omp --dori-role dori`; work lanes and the built-in reviewer use `--dori-role lane`. Dori's extension handlers are role-gated, leaving ordinary OMP sessions unchanged. Roles persist across resume, and process-bound native session/approval records guard input delivery. Native goals and recorded monitor intent survive through session state; resuming the owning Dori session restores its recorded monitors. Consumer releases retain their manifest-bound omp-ulw pin and role-scoped import. Source primary mode can load omp-ulw globally, while side mode confines it to its wrapper. See the [runtime contract](docs/runtime.md).

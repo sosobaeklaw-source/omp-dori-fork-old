@@ -1,14 +1,14 @@
 import { configPath, fill, isOmpCommand } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { laneGoalActive } from "./goal-record.ts";
-import { BRIEF_START, footer, originalBrief, quoteForPane } from "./launch-footer.ts";
+import { BRIEF_START, footer, LESSONS_START, originalBrief, quoteForPane } from "./launch-footer.ts";
 import { parseRef, type SessionRef } from "../../../../src/runtime/types.ts";
 import { LANE_KEY, type Lane, RESERVED_LANE_KEY, sessionFields, upgradeLane } from "./registry.ts";
 import { iso, runtimesOf } from "./run.ts";
 import { Reports } from "./reports.ts";
 import { doneSyntaxErrors } from "./signals.ts";
 import type { BudgetLimits } from "./supervision-observe.ts";
-import { Lessons, renderLessons } from "./lessons.ts";
+import { prepareLessons } from "./lessons.ts";
 import { laneLaunchEnv, TokenFileError } from "./slack-token.ts";
 import { startupFailure } from "./startup-screen.ts";
 import { launchFinished, launchScreen, launchStatus } from "./launch-finished.ts";
@@ -99,18 +99,12 @@ export const prepareLaunch = async (
     },
     activityPaths: input.activityPaths ?? [],
   };
-  // A damaged journal line is a warning: it must not keep a lane from starting or hide the lessons around it.
-  const { lessons, problems, omitted } = new Lessons(deps.config.stateDir).forRepo(cwd);
+  const brief = originalBrief(await briefFile.text());
+  const prepared = prepareLessons(deps.config.stateDir, cwd, brief);
   return {
     lane: draft,
-    // A lesson the cap kept out is named too: a brief that silently lacks a standing rule is the bug this catches.
-    warnings: [
-      ...problems.map((problem) => `LESSON_WARNING ${problem}`),
-      ...omitted.map(
-        (lesson) => `LESSON_OMITTED ${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`,
-      ),
-    ],
-    preamble: `${renderLessons(lessons)}${BRIEF_START}\n${originalBrief(await briefFile.text())}\n${footer(draft, deps.config.leadPane, deps.config.repoIdentities, runtimesOf(deps).choice?.kind)}`,
+    warnings: prepared.warnings,
+    preamble: `${BRIEF_START}\n${brief}\n${LESSONS_START}\n${prepared.preamble}${footer(draft, deps.config.leadPane, deps.config.repoIdentities, runtimesOf(deps).choice?.kind)}`,
   };
 };
 
