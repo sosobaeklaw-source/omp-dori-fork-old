@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { prepareLessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { shq } from "./delivery.ts";
 import { oneName } from "./fit.ts";
-import { agentCommand, prompt, type Deps } from "./harness.ts";
+import { agentCommand, isOmpAgentCommand, prompt, type Deps } from "./harness.ts";
 import { settled, tellLead, type SendResult } from "./inbox.ts";
 import { Refusal } from "./refusal.ts";
 import { stopLaneServices } from "./lane-services.ts";
@@ -13,7 +13,7 @@ import { checkPriority } from "./lock-queue.ts";
 import { applyEvidence, blockerOf, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
-import { homeStateDir } from "./lane-model.ts";
+import { homeStateDir, takeLanePin } from "./lane-model.ts";
 import { openSession } from "./runtime/types.ts";
 import { KEY_RE, reservedKey, type Lane } from "./store-types.ts";
 
@@ -54,10 +54,14 @@ export async function startLane(
     (self?.runtime === rt.kind ? self.group : undefined) ??
     (rt.kind === "herdr" ? await rt.createGroup("dori", cwd) : groupId(d.store.root));
   const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
+  // OMP takes the lane pin (a lead's before `start`, or the hourly loop's) as its model, unless the command names one.
+  const command = agentCommand(d, "lane");
+  const pinned =
+    isOmpAgentCommand(command) && !/(?:^|\s)--model(?:[=\s]|$)/.test(command) ? takeLanePin(d.store.root) : "";
   const ref = await openSession(
     rt,
     { name: key, role: "lane", container: "tab", cwd, env: { DORI_LANE: key, DORI_HOME: d.store.root }, group },
-    `${agentCommand(d, "lane")} ${shq(kickoff)}`,
+    `${command}${pinned} ${shq(kickoff)}`,
   );
 
   const now = d.now();

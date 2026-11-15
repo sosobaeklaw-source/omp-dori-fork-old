@@ -74,7 +74,7 @@ describe("dori up", () => {
         ["pane", "run", "w1:p3", prompt("duty.md")],
         split("w1:p3", `DORI_HOME=${root}`),
         ["pane", "run", "w1:p4", "dori duty --interval 60"],
-        split("w1:p4", `DORI_HOME=${root}`, "HERDR_WORKSPACE_ID=w1"),
+        split("w1:p4", `DORI_HOME=${root}`, "DORI_AGENT_CMD=omo", "HERDR_WORKSPACE_ID=w1"),
         ["pane", "run", "w1:p5", "dori loop"],
       ].map((argv) => ["herdr", ...argv]),
     );
