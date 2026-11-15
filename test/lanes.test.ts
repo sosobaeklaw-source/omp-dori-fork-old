@@ -20,20 +20,14 @@ describe("lanes", () => {
     await expect(startLane(d, "fix-login", brief, { group: "w1" })).rejects.toThrow(Refusal);
   });
 
-  test("start ships and records current global and matching repo lessons with their sources", async () => {
+  test("start ships current global and matching repo lessons with their sources", async () => {
     const { d, brief } = setup();
     const previous = process.env["DORI_STATE_DIR"];
     process.env["DORI_STATE_DIR"] = d.store.root;
     try {
       const journal = new Lessons(d.store.root);
-      const global = journal.add(
-        { lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" },
-        1,
-      );
-      const repo = journal.add(
-        { lane: "old-lane", cwd: d.store.root, rule: "Run the focused test", evidence: "test:7" },
-        2,
-      );
+      journal.add({ lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" }, 1);
+      journal.add({ lane: "old-lane", cwd: d.store.root, rule: "Run the focused test", evidence: "test:7" }, 2);
       journal.add({ lane: "old-lane", cwd: "/other-repo", rule: "Unrelated login rule", evidence: "other:1" }, 3);
       journal.add({ lane: "old-lane", cwd: d.store.root, rule: "Check deployment logs", evidence: "deploy:1" }, 5);
       const retired = journal.add(
@@ -50,7 +44,6 @@ describe("lanes", () => {
       expect(shipped).not.toContain("Retired login rule");
       expect(shipped).not.toContain("Check deployment logs");
       expect(shipped.indexOf("Review login results")).toBeGreaterThan(shipped.indexOf("Fix the flaky login test."));
-      expect(d.store.lane("lessons-lane")?.lessons).toEqual([global, repo]);
     } finally {
       if (previous === undefined) delete process.env["DORI_STATE_DIR"];
       else process.env["DORI_STATE_DIR"] = previous;
@@ -67,12 +60,8 @@ describe("lanes", () => {
       const state = join(d.store.root, "state");
       mkdirSync(state, { recursive: true });
       writeFileSync(join(d.store.root, "config.json"), JSON.stringify({ runtime: "invalid" }));
-      const lesson = new Lessons(state).add(
-        { lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" },
-        1,
-      );
+      new Lessons(state).add({ lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" }, 1);
       const lane = await startLane(d, "home-lessons", brief, { group: "w1" });
-      expect(d.store.lane("home-lessons")?.lessons).toEqual([lesson]);
       expect(await Bun.file(lane.brief).text()).toContain("Review login results");
     } finally {
       if (previousConfig === undefined) delete process.env["DORI_CONFIG"];
@@ -92,12 +81,9 @@ describe("lanes", () => {
     delete process.env["DORI_STATE_DIR"];
     try {
       writeFileSync(config, JSON.stringify({ stateDir: state, supervision: { defaults: { tokens: -1 } } }));
-      const lesson = new Lessons(state).add(
-        { lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" },
-        1,
-      );
-      await startLane(d, "configured-lessons", brief, { group: "w1" });
-      expect(d.store.lane("configured-lessons")?.lessons).toEqual([lesson]);
+      new Lessons(state).add({ lane: "lead", scope: "global", rule: "Review login results", evidence: "report:42" }, 1);
+      const lane = await startLane(d, "configured-lessons", brief, { group: "w1" });
+      expect(await Bun.file(lane.brief).text()).toContain("[pending; lead; source: report:42] Review login results");
     } finally {
       if (previousConfig === undefined) delete process.env["DORI_CONFIG"];
       else process.env["DORI_CONFIG"] = previousConfig;

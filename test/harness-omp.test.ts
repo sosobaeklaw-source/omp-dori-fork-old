@@ -126,6 +126,8 @@ test("an OMP config that is not an object, or has an unusable stateDir, is a Con
     expect(() => ompStateDir({ DORI_CONFIG: config })).toThrow(ConfigError);
     expect(() => ompStateDir({ DORI_CONFIG: config })).toThrow(message);
   }
-  writeFileSync(config, "{}");
-  expect(ompStateDir({ DORI_CONFIG: config }, join(root, "state"))).toBe(join(root, "state"));
+  for (const raw of ["{}", '{"stateDir":null}']) {
+    writeFileSync(config, raw);
+    expect(ompStateDir({ DORI_CONFIG: config }, join(root, "state"))).toBe(join(root, "state"));
+  }
 });

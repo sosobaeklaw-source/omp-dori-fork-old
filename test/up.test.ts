@@ -13,14 +13,17 @@ describe("dori up", () => {
     const dir = join(d.store.root, "prompts");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "lead.local.md"), "Lead-specific instructions.\n");
-    writeFileSync(join(dir, "duty.local.md"), "Duty-specific instructions.\n");
+    writeFileSync(join(dir, "duty.local.md"), "Duty-specific instructions: run {{dori}} status.\n");
     await captureIo(async () => {
       await up(d, "/w");
       return 0;
     });
     const first = readFileSync(join(dir, "lead.md"), "utf8");
     expect(first).toEndWith("\n\nLead-specific instructions.\n");
-    expect(readFileSync(join(dir, "duty.md"), "utf8")).toEndWith("\n\nDuty-specific instructions.\n");
+    expect(readFileSync(join(dir, "duty.md"), "utf8")).toEndWith(
+      `\n\nDuty-specific instructions: run ${d.doriCmd} status.\n`,
+    );
+    expect(readFileSync(join(dir, "duty.local.md"), "utf8")).toContain("{{dori}}");
     await captureIo(async () => {
       await up(d, "/w");
       return 0;

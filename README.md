@@ -133,7 +133,7 @@ DORI_INSTALL_MODE=side DORI_NO_PULL=1 DORI_SRC="$PWD" bash scripts/install-sourc
 
 The installed `dori` is the messenger/lane CLI. The complete harness remains available through `dori harness <args>` or `bun src/cli.ts <args>` from a source checkout. Harness startup creates real sessions and loops; its registry and completion protocol are separate from the skill's. Maintainer source updates use [`dori upstream`](skills/dori-mode/references/scripts.md#staged-dori-updates), separately from consumer release updates.
 
-For private harness instructions, put text in `DORI_HOME/prompts/lead.local.md` or `duty.local.md`. Each `dori up` appends the corresponding local file to the rendered prompt without changing the source template or the local file.
+For private harness instructions, put text in `DORI_HOME/prompts/lead.local.md` or `duty.local.md`. Each `dori up` appends the corresponding local file to the rendered prompt, replacing `{{dori}}` as in the template, without changing the source template or the local file.
 
 ## OMP session contract
 

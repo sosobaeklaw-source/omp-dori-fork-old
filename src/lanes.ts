@@ -70,7 +70,6 @@ export async function startLane(
     tabId: ref.container ?? "",
     brief: briefPath,
     cwd,
-    lessons: prepared.lessons,
     status: "working",
     createdAt: now,
     lastActivityAt: now,

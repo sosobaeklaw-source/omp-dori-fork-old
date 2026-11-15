@@ -13,11 +13,11 @@ import { laneBoard } from "./status-view.ts";
 export function renderPrompt(d: Deps, name: string): string {
   const dir = join(d.store.root, "prompts");
   mkdirSync(dir, { recursive: true });
-  const src = readFileSync(promptFile(name), "utf8").replaceAll("{{dori}}", d.doriCmd);
+  const src = readFileSync(promptFile(name), "utf8");
   const out = join(dir, name);
   const local = join(dir, name.replace(/\.md$/, ".local.md"));
   const overlay = existsSync(local) ? readFileSync(local, "utf8") : "";
-  writeFileSync(out, overlay ? `${src.trimEnd()}\n\n${overlay}` : src);
+  writeFileSync(out, (overlay ? `${src.trimEnd()}\n\n${overlay}` : src).replaceAll("{{dori}}", d.doriCmd));
   return out;
 }
 

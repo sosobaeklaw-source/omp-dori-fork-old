@@ -71,7 +71,7 @@ test.skipIf(!hcBin)(
   async () => {
     const brief = join(laneHome, "brief.md");
     writeFileSync(brief, "E2E-HC-BRIEF: verify prompt overlay\n");
-    const lesson = new Lessons(join(laneHome, "omp-state")).add(
+    new Lessons(join(laneHome, "omp-state")).add(
       { lane: "prior", cwd: laneHome, rule: "Check prompt overlay output", evidence: "file:///evidence" },
       1,
     );
@@ -80,8 +80,6 @@ test.skipIf(!hcBin)(
     expect(delivered).toContain("Check prompt overlay output");
     expect(delivered).toContain("file:///evidence");
     expect(delivered.indexOf("Check prompt overlay output")).toBeGreaterThan(delivered.indexOf("E2E-HC-BRIEF"));
-    const state = JSON.parse(readFileSync(join(laneHome, "lanes", "e2e-k.json"), "utf8"));
-    expect(state.lessons).toEqual([lesson]);
     lane = addressOf(started, "STARTED e2e-k");
     // hc updates `foreground` after the first OSC 7501 report: until it shows the fixture, the login shell is in
     // front and Dori holds deliveries (#66), so the lane is ready only when both agree.

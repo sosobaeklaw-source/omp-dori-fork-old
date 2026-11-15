@@ -42,7 +42,7 @@ export function ompStateDir(env: Env, fallback = join(homedir(), ".dori", "state
   if (typeof config !== "object" || config === null || Array.isArray(config))
     throw new ConfigError(`${path} must hold a JSON object`);
   const stateDir: unknown = Reflect.get(config, "stateDir");
-  if (stateDir === undefined) return expandHome(fallback);
+  if (stateDir === undefined || stateDir === null) return expandHome(fallback);
   if (typeof stateDir !== "string" || !stateDir) throw new ConfigError(`${path}: "stateDir" must be a nonempty string`);
   return expandHome(stateDir);
 }

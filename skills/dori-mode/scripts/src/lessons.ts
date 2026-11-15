@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { briefMatcher } from "./lesson-match.ts";
 import { LANE_KEY } from "./registry.ts";
 
 export type LessonOutcome = "pending" | "helped" | "no-effect" | "harmful" | "encoded";
@@ -93,16 +94,6 @@ const scope = (cwd: string): string => {
   return existsSync(path) ? realpathSync(path) : path;
 };
 
-const COMMON_WORDS = new Set(
-  "the and for are not our you was its can all use run to of in on is it be as at by or an if do no we that this with from have will when your their before after into only must should work using".split(
-    " ",
-  ),
-);
-const keywords = (text: string): string[] =>
-  (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter(
-    (word) => (word.length >= 2 || /[^\p{ASCII}]/u.test(word)) && word !== "then" && !COMMON_WORDS.has(word),
-  );
-
 export class Lessons {
   readonly path: string;
 
@@ -164,16 +155,16 @@ export class Lessons {
   /**
    * The lessons a new lane in cwd gets, newest first: at most GLOBAL_LESSON_CAP global ones, then at most
    * REPO_LESSON_CAP for the repo. Each kind has its own cap, so global rules never push repo lessons out of a brief.
-   * With a brief, repo lessons must share a keyword with it; global ones are standing rules and always apply.
-   * `omitted` and `filtered` list what a cap or the keyword match kept out, so a caller can say so instead of shipping
+   * With a brief, repo lessons must match it (lesson-match.ts); global ones are standing rules and always apply.
+   * `omitted` and `filtered` list what a cap or the match kept out, so a caller can name them instead of shipping
    * a brief that quietly lacks a lesson.
    */
   forRepo(cwd: string, brief?: string): LessonRead {
     const { lessons, problems } = this.read(cwd);
-    const terms = brief === undefined ? undefined : new Set(keywords(brief));
+    const matches = brief === undefined ? undefined : briefMatcher(brief);
     const current = lessons.filter((lesson) => lesson.outcome === "pending" || lesson.outcome === "helped");
     const globalAll = current.filter((lesson) => lesson.scope === "global");
-    const relevant = (lesson: Lesson) => terms === undefined || keywords(lesson.rule).some((word) => terms.has(word));
+    const relevant = (lesson: Lesson) => matches === undefined || matches(lesson.rule);
     const repoCurrent = current.filter((lesson) => lesson.scope !== "global");
     const repoAll = repoCurrent.filter(relevant);
     const global = globalAll.slice(0, GLOBAL_LESSON_CAP);
@@ -227,6 +218,9 @@ export const renderLessons = (lessons: readonly Lesson[]): string =>
     lessons.filter((lesson) => lesson.scope !== "global"),
   );
 
+const label = (lesson: Lesson): string =>
+  `${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`;
+
 export const prepareLessons = (stateDir: string, cwd: string, brief: string) => {
   const { lessons, problems, omitted, filtered } = new Lessons(stateDir).forRepo(cwd, brief);
   return {
@@ -234,10 +228,8 @@ export const prepareLessons = (stateDir: string, cwd: string, brief: string) => 
     preamble: renderLessons(lessons),
     warnings: [
       ...problems.map((problem) => `LESSON_WARNING ${problem}`),
-      ...omitted.map(
-        (lesson) => `LESSON_OMITTED ${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`,
-      ),
-      ...(filtered.length ? [`LESSON_FILTERED ${filtered.length} repo lesson(s) share no brief keyword`] : []),
+      ...omitted.map((lesson) => `LESSON_OMITTED ${label(lesson)}`),
+      ...filtered.map((lesson) => `LESSON_FILTERED ${label(lesson)}`),
     ],
   };
 };

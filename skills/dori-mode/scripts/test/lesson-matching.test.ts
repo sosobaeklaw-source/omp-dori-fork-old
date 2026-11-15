@@ -26,7 +26,7 @@ test("brief matching includes short Korean and technical tokens but excludes unr
   expect(lessons.forRepo("/repo", "the and for").lessons).toEqual([]);
 });
 
-test("omission warnings name only matching lessons excluded by the cap", () => {
+test("warnings name each lesson a cap omitted and each repo lesson the brief match filtered", () => {
   const matching = Array.from({ length: REPO_LESSON_CAP + 1 }, (_, i) =>
     lessons.add({ ...input, rule: `Login rule ${i}` }, T0 + i),
   );
@@ -41,13 +41,12 @@ test("omission warnings name only matching lessons excluded by the cap", () => {
   const oldest = matching[0];
   if (!oldest) throw new Error("fixture missing");
   expect(prepared.warnings).toEqual([
-    expect.stringContaining(oldest.id),
-    expect.stringMatching(/^LESSON_FILTERED 1 repo lesson\(s\) /),
+    expect.stringMatching(new RegExp(`^LESSON_OMITTED ${oldest.id} `)),
+    `LESSON_FILTERED ${unrelated.id} (/repo) Deployment checks`,
   ]);
-  expect(prepared.warnings.join("\n")).not.toContain(unrelated.id);
 });
 
-test("a global standing rule reaches a brief it shares no word with; a filtered repo lesson is counted", () => {
+test("a global standing rule reaches a brief it shares no word with; a filtered repo lesson is named", () => {
   const global = lessons.add(
     { lane: "lead", scope: "global", rule: "Never change the global Git identity", evidence: "slack:D1/2.1" },
     T0,
@@ -56,8 +55,18 @@ test("a global standing rule reaches a brief it shares no word with; a filtered 
   const prepared = prepareLessons(state.dir, "/repo", "Fix the login bug.");
   expect(prepared.lessons.map((lesson) => lesson.id)).toEqual([global.id]);
   expect(lessons.forRepo("/repo", "Fix the login bug.").filtered.map((lesson) => lesson.id)).toEqual([repo.id]);
-  expect(prepared.warnings).toEqual([expect.stringMatching(/^LESSON_FILTERED 1 repo lesson\(s\) /)]);
+  expect(prepared.warnings).toEqual([`LESSON_FILTERED ${repo.id} (/repo) Run deployment checks`]);
   expect(prepareLessons(state.dir, "/repo", "Run the deployment").warnings).toEqual([]);
+});
+
+test("matching follows plurals, word stems and Korean particles; numbers and common verbs alone never match", () => {
+  const plural = lessons.add({ ...input, rule: "Tests must subscribe first" }, T0);
+  const stem = lessons.add({ ...input, rule: "Deploy behind a flag" }, T0 + 1);
+  const korean = lessons.add({ ...input, rule: "테스트를 먼저 고정" }, T0 + 2);
+  lessons.add({ ...input, rule: "Fix 50 flaky checks" }, T0 + 3);
+  lessons.add({ ...input, rule: "Confirm the owner" }, T0 + 4);
+  const brief = "Fix the test for the deployment config; 테스트는 50초 안에 끝나야 한다.";
+  expect(lessons.forRepo("/repo", brief).lessons.map((lesson) => lesson.id)).toEqual([korean.id, stem.id, plural.id]);
 });
 
 test("a brief shows the first BRIEF_EVIDENCE_CHARS of long evidence; the journal keeps it whole", () => {
