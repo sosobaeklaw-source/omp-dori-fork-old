@@ -14,7 +14,8 @@ afterEach(() => {
     try {
       process.kill(-c.pid!, "SIGKILL");
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+      // ESRCH: already gone; EPERM: macOS killpg on a group left with only unreaped zombies.
+      if (!["ESRCH", "EPERM"].includes((e as NodeJS.ErrnoException).code ?? "")) throw e;
     }
   }
 });

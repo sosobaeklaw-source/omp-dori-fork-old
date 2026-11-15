@@ -85,7 +85,9 @@ export async function stopLaneServices(exec: Exec, runDir: string, home: string,
         process.kill(-s.pid, "SIGTERM");
         stopped.push(s.name);
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+        // ESRCH: the group is gone. EPERM: macOS refuses killpg on a group left with only zombies (exited, unreaped).
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "ESRCH" && code !== "EPERM") throw e;
       }
     }
   }
