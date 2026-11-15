@@ -3,6 +3,7 @@ import { cpus, loadavg } from "node:os";
 import { join, resolve } from "node:path";
 import { shq } from "./delivery.ts";
 import { memFreePct } from "./host.ts";
+import { OMP_RUN_DIR } from "./lane-services.ts";
 import { type Exec, spawnExec } from "./runtime/exec.ts";
 import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
@@ -25,6 +26,8 @@ export type Deps = {
   /** Which runtime new sessions open on, and why (`dori status` prints it). Throws when none can be chosen. */
   readonly choice: () => RuntimeChoice;
   readonly exec: Exec;
+  /** omp's run directory, where it records the named services each session started. */
+  readonly ompRunDir: string;
   readonly now: () => number;
   readonly agentCmd: string;
   readonly doriCmd: string;
@@ -54,6 +57,7 @@ export const defaultDeps = (): Deps => {
     },
     choice,
     exec: spawnExec,
+    ompRunDir: OMP_RUN_DIR,
     now: Date.now,
     agentCmd: process.env["DORI_AGENT_CMD"] ?? "omp",
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,

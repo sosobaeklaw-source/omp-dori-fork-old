@@ -176,6 +176,7 @@ export class World {
       ),
       choice: () => ({ kind, source: "config" }),
       exec: this.exec,
+      ompRunDir: join(tmpdir(), "dori-test-no-omp-run"),
       now: () => this.clock,
       agentCmd: "omo",
       doriCmd: "dori",

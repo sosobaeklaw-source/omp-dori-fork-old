@@ -6,6 +6,7 @@ import { oneName } from "./fit.ts";
 import { agentCommand, prompt, type Deps } from "./harness.ts";
 import { settled, tellLead, type SendResult } from "./inbox.ts";
 import { Refusal } from "./refusal.ts";
+import { stopLaneServices } from "./lane-services.ts";
 import { runHook } from "./hooks.ts";
 import { checkPriority } from "./lock-queue.ts";
 import { applyEvidence, blockerOf, waitingSinceOf, waitingTarget } from "./progress.ts";
@@ -166,9 +167,14 @@ export async function ready(
   return sent;
 }
 
-export async function done(d: Deps, key: string): Promise<void> {
+/**
+ * Closes a READY lane's pane and stops the omp named services it started, returning their names. On a lane that is
+ * already done it only stops what is still running, which sweeps services left by lanes closed before this existed.
+ */
+export async function done(d: Deps, key: string): Promise<string[]> {
   const lane = d.store.lane(key);
   if (!lane) throw new Refusal(`no lane ${key}`);
+  if (lane.status === "done") return stopLaneServices(d.exec, d.ompRunDir, d.store.root, key);
   if (lane.status !== "ready") throw new Refusal(`lane ${key} is ${lane.status}, not ready: no final answer recorded`);
   const rt = d.runtimes.for(lane.sessionRef);
   const { status: st } = await rt.probe(lane.sessionRef);
@@ -178,4 +184,5 @@ export async function done(d: Deps, key: string): Promise<void> {
   lane.status = "done";
   lane.log.push({ at: d.now(), kind: "done", text: "closed by lead" });
   d.store.saveLane(lane);
+  return stopLaneServices(d.exec, d.ompRunDir, d.store.root, key);
 }

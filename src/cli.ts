@@ -142,10 +142,11 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
     case "merge":
       console.log(await mergeGate(d, need(x, "PR"), { dryRun: one(a, "dry-run") === "true" }));
       return 0;
-    case "done":
-      await done(d, need(x, "lane key"));
-      console.log(`DONE ${x}`);
+    case "done": {
+      const stopped = await done(d, need(x, "lane key"));
+      console.log(`DONE ${x}${stopped.length ? ` stopped services: ${stopped.join(" ")}` : ""}`);
       return 0;
+    }
     case "migrate":
       return runMigrate(d, a);
     case "lock":
