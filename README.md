@@ -143,6 +143,7 @@ Lead/duty sessions use `omp --dori-role dori`; work lanes and the built-in revie
 - [Dori skill and operating rules](skills/dori-mode/SKILL.md) · [Setup reference](skills/dori-mode/references/setup.md)
 - [Runtime adapters and session contracts](docs/runtime.md)
 - [Maintainer container recipe](docs/container.md) · [Hourly loop and backlog](docs/hourly-loop.md)
+- [Shared locks and lane priority](docs/locks.md)
 - [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Modified-copy notice](NOTICE)
 
 ## Contributing

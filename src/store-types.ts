@@ -16,6 +16,7 @@ export type LaneStatus = "working" | "waiting" | "ready" | "done" | "lost";
  * waiting; a waiting lane runs on the same clock, and its nudges and escalation name them.
  * `noticeId`: this lane incarnation's persisted random identity. `progressEpoch`: its counter, advanced by new evidence
  * and READY independently of wall time, so notice retries reuse an id and a new epoch or reused lane key gets a new one.
+ * `priority`: 1 (first) to 9 (last), from `start --priority`, the backlog item or `priority`; a lock waits in line by it.
  */
 export type Lane = {
   key: string;
@@ -39,6 +40,7 @@ export type Lane = {
   escalatedAt?: number;
   waitingFor?: string;
   waitingSince?: number;
+  priority?: number;
   nudges: number;
   final?: { text: string; evidence: string[]; at: number };
   log: { at: number; kind: "start" | "report" | "ready" | "nudge" | "escalate" | "done" | "lost"; text: string }[];
