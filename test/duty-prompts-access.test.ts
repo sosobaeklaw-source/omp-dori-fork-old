@@ -9,7 +9,7 @@ test.each(["nudge.md", "nudge-waiting.md"])(
     const root = mkdtempSync("/tmp/dori-prompts-access-");
     try {
       chmodSync(root, 0o755);
-      for (const dir of ["src", "prompts"]) {
+      for (const dir of ["src", "prompts", join("skills", "dori-mode", "scripts", "src")]) {
         cpSync(join(import.meta.dir, "..", dir), join(root, dir), { recursive: true });
       }
       cpSync(join(import.meta.dir, "..", "package.json"), join(root, "package.json"));
