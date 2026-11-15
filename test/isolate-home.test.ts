@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { defaultDeps } from "../src/harness.ts";
 import { Store } from "../src/store.ts";
@@ -22,4 +23,43 @@ test("tests run in a temporary home whatever the caller exported", async () => {
   expect(Bun.spawnSync(["sh", "-c", 'printf %s "$HOME"']).stdout.toString()).toBe(home);
   expect((await Bun.$`printf %s "$HOME"`.text()).trim()).toBe(home);
   expect(execFileSync("sh", ["-c", 'printf %s "$HOME"']).toString()).toBe(home);
+});
+
+// Bun reads bunfig.toml only where `bun test` starts, so a probe run from /tmp gets no preload and keeps whatever
+// DORI_* its shell exported: the default home, config and state are refused while they sit inside the real home.
+test("bun test started outside a preloaded root refuses a home inside the real one", () => {
+  const real = userInfo().homedir;
+  // Never created: the probe must refuse it before writing anything.
+  const live = join(real, `.dori-test-guard-${process.pid}`);
+  const dir = mkdtempSync("/tmp/dth-probe-");
+  try {
+    const src = join(import.meta.dir, "..", "src");
+    writeFileSync(
+      join(dir, "probe.test.ts"),
+      `import { expect, test } from "bun:test";
+import { Store } from ${JSON.stringify(join(src, "store.ts"))};
+import { ompStateDir } from ${JSON.stringify(join(src, "runtime", "omp.ts"))};
+import { configPath } from ${JSON.stringify(join(src, "..", "skills", "dori-mode", "scripts", "src", "config.ts"))};
+test("probe", () => {
+  expect(() => new Store()).toThrow("under bun test");
+  expect(() => configPath()).toThrow("under bun test");
+  expect(() => ompStateDir(process.env)).toThrow("under bun test");
+});
+`,
+    );
+    const r = Bun.spawnSync([process.execPath, "test", "./probe.test.ts"], {
+      cwd: dir,
+      env: {
+        PATH: process.env["PATH"],
+        HOME: real,
+        DORI_HOME: live,
+        DORI_CONFIG: join(live, "config.json"),
+        DORI_STATE_DIR: join(live, "state"),
+      },
+    });
+    expect({ code: r.exitCode, err: r.stderr.toString() }).toMatchObject({ code: 0 });
+    expect(existsSync(live)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { resolveConsumerOmpUlwPath } from "../../../../src/release/runtime.ts";
+import { outsideRealHomeUnderTest } from "../../../../src/test-home.ts";
 import type { RuntimeKind } from "../../../../src/runtime/types.ts";
 import type { SupervisionOptions } from "./supervision-observe.ts";
 import type { CommitIdentity } from "./verify-pr-check.ts";
@@ -83,7 +84,8 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
   },
 });
 
-export const configPath = (): string => process.env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json");
+export const configPath = (): string =>
+  outsideRealHomeUnderTest(process.env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json"));
 
 export const expandHome = (path: string, home = homedir()): string =>
   path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : path;
@@ -215,7 +217,7 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
   }
   return {
     ...merged,
-    stateDir: expandHome(process.env["DORI_STATE_DIR"] ?? merged.stateDir, home),
+    stateDir: outsideRealHomeUnderTest(expandHome(process.env["DORI_STATE_DIR"] ?? merged.stateDir, home)),
     defaultCwd: expandHome(merged.defaultCwd, home),
     sessionsDir: expandHome(merged.sessionsDir, home),
     ompUlwPath: resolveConsumerOmpUlwPath(expandHome(merged.ompUlwPath, home), { home }),

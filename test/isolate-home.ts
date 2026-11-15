@@ -1,6 +1,7 @@
 // Preloaded by every bun test root (see the bunfig.toml files). Tests must never reach the operator's home:
 // a lead's shell sources ~/.omp-dori/env.sh, so DORI_HOME/DORI_CONFIG/DORI_STATE_DIR point at the live harness,
-// and any test that calls defaultDeps(), configPath() or homedir() would write there.
+// and any test that calls defaultDeps(), configPath() or homedir() would write there. Bun reads bunfig.toml only in
+// the directory `bun test` starts in; started anywhere else, src/test-home.ts refuses a home inside the real one.
 import { afterAll, mock } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import * as os from "node:os";
@@ -19,8 +20,9 @@ Object.assign(process.env, {
   XDG_CONFIG_HOME: join(home, ".config"),
   XDG_STATE_HOME: join(home, ".local", "state"),
   XDG_CACHE_HOME: join(home, ".cache"),
-  // git reads ~/.gitconfig from HOME; give commits in fixtures a fixed identity instead.
+  // git reads ~/.gitconfig from HOME and the machine's system config; give fixtures neither, and a fixed identity.
   GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
   GIT_AUTHOR_NAME: "dori test",
   GIT_AUTHOR_EMAIL: "test@example.invalid",
   GIT_COMMITTER_NAME: "dori test",
