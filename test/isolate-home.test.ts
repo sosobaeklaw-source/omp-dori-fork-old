@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { defaultDeps } from "../src/harness.ts";
@@ -26,13 +26,15 @@ test("tests run in a temporary home whatever the caller exported", async () => {
 });
 
 // Bun reads bunfig.toml only where `bun test` starts, so a probe run from /tmp gets no preload and keeps whatever
-// DORI_* its shell exported: the default home, config and state are refused while they sit inside the real home.
+// DORI_* its shell exported: absolute homes, configs and state dirs inside the real home are refused, also through a
+// symlink from outside it, while a relative path (one that names the checkout, which may sit in the home) is not.
 test("bun test started outside a preloaded root refuses a home inside the real one", () => {
   const real = userInfo().homedir;
   // Never created: the probe must refuse it before writing anything.
   const live = join(real, `.dori-test-guard-${process.pid}`);
   const dir = mkdtempSync("/tmp/dth-probe-");
   try {
+    symlinkSync(real, join(dir, "home-link"));
     const src = join(import.meta.dir, "..", "src");
     writeFileSync(
       join(dir, "probe.test.ts"),
@@ -40,10 +42,17 @@ test("bun test started outside a preloaded root refuses a home inside the real o
 import { Store } from ${JSON.stringify(join(src, "store.ts"))};
 import { ompStateDir } from ${JSON.stringify(join(src, "runtime", "omp.ts"))};
 import { configPath } from ${JSON.stringify(join(src, "..", "skills", "dori-mode", "scripts", "src", "config.ts"))};
+import { outsideRealHomeUnderTest } from ${JSON.stringify(join(src, "test-home.ts"))};
 test("probe", () => {
   expect(() => new Store()).toThrow("under bun test");
   expect(() => configPath()).toThrow("under bun test");
   expect(() => ompStateDir(process.env)).toThrow("under bun test");
+  const linked = ${JSON.stringify(join(dir, "home-link", `.dori-test-guard-${process.pid}`))};
+  expect(() => outsideRealHomeUnderTest(linked)).toThrow("under bun test");
+  // A relative path is the caller's own business even when the cwd is inside the real home (a checkout under ~).
+  process.chdir(${JSON.stringify(real)});
+  for (const relative of ["", ".", "..", "config.json"]) expect(outsideRealHomeUnderTest(relative)).toBe(relative);
+  expect(outsideRealHomeUnderTest("/tmp/elsewhere/.dori")).toBe("/tmp/elsewhere/.dori");
 });
 `,
     );
