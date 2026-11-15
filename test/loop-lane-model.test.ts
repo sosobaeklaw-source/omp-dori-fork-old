@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startLane } from "../src/lanes.ts";
 import { loopTick } from "../src/loop.ts";
+import type { Exec } from "../src/runtime/exec.ts";
 import { setup } from "./loop-setup.ts";
 
 // The home's own config decides the state directory here, not the environment of the shell running the tests.
@@ -16,8 +17,8 @@ afterEach(() => {
 
 const KICKOFF = "'Read your brief at ";
 
-function omp(agentCmd = "omp") {
-  const s = setup();
+function omp(agentCmd = "omp", exec?: (inner: Exec) => Exec) {
+  const s = setup(exec ? { exec } : {});
   const d = { ...s.d, agentCmd };
   const state = join(d.store.root, "omp-state");
   const pin = join(state, "next-lane-model");
@@ -35,27 +36,41 @@ function omp(agentCmd = "omp") {
 test("the loop starts each OMP lane on config.json loopLaneModel and never touches a lead's pin", async () => {
   const { add, pin, config, leadPin, ran, tick } = omp();
   config({});
+  leadPin("lead/own|low");
   add("unpinned");
   expect((await tick()).started).toEqual(["unpinned (p5)"]);
   expect(ran("unpinned")).toStartWith(`omp --dori-role lane ${KICKOFF}`);
 
   config({ loopLaneModel: "p/m|high" });
-  leadPin("lead/own|low");
   add("pinned");
   expect((await tick()).started).toEqual(["pinned (p5)"]);
   expect(ran("pinned")).toStartWith(`omp --dori-role lane --model 'p/m' --thinking 'high' ${KICKOFF}`);
   expect(readFileSync(pin, "utf8")).toBe("lead/own|low");
+
+  // A malformed pin is the lead's to fix: the loop never reads it, so no item is charged for it.
+  leadPin("bad pin");
+  add("unaffected");
+  expect((await tick()).started).toEqual(["unaffected (p5)"]);
 });
 
-test("a lead's hand-written pin is taken once; an explicit --model wins over both pin and loop model", async () => {
-  const { d, brief, pin, config, leadPin, ran } = omp();
+test("a lead's start takes its hand-written pin once the lane opened; an explicit --model wins over both", async () => {
+  let down = false;
+  const { d, brief, pin, config, leadPin, ran } = omp(
+    "omp",
+    (inner) => async (cmd, argv) =>
+      down && cmd === "herdr" && argv[0] === "tab" ? { code: 1, stdout: "", stderr: "server down" } : inner(cmd, argv),
+  );
   config({});
   leadPin("x/y\n");
-  await startLane(d, "first", brief, { cwd: d.store.root });
+  down = true;
+  await expect(startLane(d, "failed", brief, { cwd: d.store.root, pin: true })).rejects.toThrow();
+  expect(readFileSync(pin, "utf8")).toBe("x/y\n");
+  down = false;
+  await startLane(d, "first", brief, { cwd: d.store.root, pin: true });
   expect(ran("first")).toStartWith(`omp --dori-role lane --model 'x/y' ${KICKOFF}`);
-  await startLane(d, "second", brief, { cwd: d.store.root });
-  expect(ran("second")).toStartWith(`omp --dori-role lane ${KICKOFF}`);
   expect(existsSync(pin)).toBe(false);
+  await startLane(d, "second", brief, { cwd: d.store.root, pin: true });
+  expect(ran("second")).toStartWith(`omp --dori-role lane ${KICKOFF}`);
 
   const explicit = omp("omp --model a/b");
   explicit.config({ loopLaneModel: "p/m|high" });
@@ -63,6 +78,8 @@ test("a lead's hand-written pin is taken once; an explicit --model wins over bot
   explicit.add("explicit");
   expect((await explicit.tick()).started).toEqual(["explicit (p5)"]);
   expect(explicit.ran("explicit")).toStartWith(`omp --model a/b --dori-role lane ${KICKOFF}`);
+  await startLane(explicit.d, "by-hand", explicit.brief, { cwd: explicit.d.store.root, pin: true });
+  expect(explicit.ran("by-hand")).toStartWith(`omp --model a/b --dori-role lane ${KICKOFF}`);
   expect(readFileSync(explicit.pin, "utf8")).toBe("x/y|low");
 });
 

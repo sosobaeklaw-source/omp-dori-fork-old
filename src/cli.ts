@@ -76,10 +76,12 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
       const cwd = one(a, "cwd");
       const workspace = one(a, "workspace");
       const priority = one(a, "priority");
+      // A lead's `start` runs on the lane pin it wrote by hand, if any; the hourly loop passes its own model instead.
       const lane = await startLane(d, need(x, "lane key"), need(one(a, "brief"), "--brief"), {
         ...(cwd !== undefined ? { cwd } : {}),
         ...(workspace !== undefined ? { group: workspace } : {}),
         ...(priority !== undefined ? { priority: Number(priority) } : {}),
+        pin: true,
       });
       console.log(`STARTED ${lane.key} pane=${refText(lane.sessionRef)} brief=${lane.brief}`);
       return 0;

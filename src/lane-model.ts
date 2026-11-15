@@ -1,6 +1,6 @@
 // Which OMP a lane starts with, and which model it runs: the hourly loop's config.json `loopLaneModel`, or the lane
 // pin a lead writes by hand before `start`.
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
@@ -33,14 +33,13 @@ export function loopLaneModel(root: string): string | undefined {
 }
 
 /**
- * Takes the lane pin a lead wrote by hand before `start` (it is gone afterwards), or undefined with none. A pin that is
- * not "<model>|<thinking>" is a ConfigError and stays in place for the person who wrote it.
+ * The lane pin a lead wrote by hand before `start`, or undefined with none; the starter removes `path` once its lane
+ * opened. A pin that is not "<model>|<thinking>" is a ConfigError and stays in place for the person who wrote it.
  */
-export function takeLanePin(root: string): string | undefined {
+export function lanePin(root: string): { path: string; model: string } | undefined {
   const path = join(homeStateDir(root), "next-lane-model");
   if (!existsSync(path)) return undefined;
-  const pin = readFileSync(path, "utf8").trim();
-  if (!PIN.test(pin)) throw new ConfigError(`${path} must look like "provider/model" or "provider/model|thinking"`);
-  rmSync(path, { force: true });
-  return pin;
+  const model = readFileSync(path, "utf8").trim();
+  if (!PIN.test(model)) throw new ConfigError(`${path} must look like "provider/model" or "provider/model|thinking"`);
+  return { path, model };
 }

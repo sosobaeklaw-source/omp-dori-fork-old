@@ -98,6 +98,8 @@ describe("OMP harness launches", () => {
         writeFileSync(join(home, "config.json"), JSON.stringify({ agentCommand: argv }));
       config(["/side home/bin/omp", "--dori-role", "lane", "--model", "{model}", "{prompt}"]);
       expect(agentCommand(defaultDeps(), "lane")).toBe("'/side home/bin/omp' --dori-role lane");
+      config(["~/side/bin/omp", "{prompt}"]);
+      expect(defaultDeps().agentCmd).toBe(`${homedir()}/side/bin/omp`);
       config(["custom-agent", "{prompt}"]);
       expect(defaultDeps().agentCmd).toBe("omp");
       process.env["DORI_AGENT_CMD"] = "custom-agent --model x";

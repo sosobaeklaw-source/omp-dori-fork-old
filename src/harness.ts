@@ -62,7 +62,8 @@ export const defaultDeps = (): Deps => {
     ompRunDir: OMP_RUN_DIR,
     now: Date.now,
     // A loop pane opened by `up` gets only DORI_HOME; its config names the installed OMP wrapper, not the bare binary.
-    // Read on first use, so a command that starts no agent never reads config.json for it.
+    // Read on first use, so a command that starts no agent never reads config.json for it; an invalid config.json is a
+    // ConfigError here as for every other reader of it.
     get agentCmd() {
       agent ??= process.env["DORI_AGENT_CMD"] ?? configuredOmp(store.root) ?? "omp";
       return agent;
