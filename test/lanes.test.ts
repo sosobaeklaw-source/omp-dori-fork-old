@@ -115,6 +115,9 @@ describe("lanes", () => {
     expect(lead.received.at(-1)).toBe("[READY fix-login] fixed\nevidence: https://github.com/o/r/pull/1");
     expect(w.usage.map((e) => e.name)).toEqual(["dori.lane_started", "dori.lane_ready"]);
     expect(JSON.stringify(w.usage)).not.toContain("fix-login");
+    await d.store.enqueue(lane.sessionRef, { at: d.now(), from: "cli", text: "od327 add the motion stage" });
+    await expect(done(d, "fix-login")).rejects.toThrow("1 undelivered message(s)");
+    d.store.saveInbox(lane.sessionRef, []);
     await done(d, "fix-login");
     expect(w.panes.has(lane.paneId)).toBe(false);
     expect(d.store.lane("fix-login")!.status).toBe("done");

@@ -194,6 +194,14 @@ export async function done(d: Deps, key: string): Promise<string[]> {
   const { status: st } = await rt.probe(lane.sessionRef);
   if (st === "working" || st === "blocked" || st === "error")
     throw new Refusal(`lane ${key} pane is ${st}; let it finish first`);
+  // A message still queued never reached the lane; closing now loses it silently (od326/327/330, 2026-11-15).
+  const undelivered = d.store.queued(lane.sessionRef);
+  if (undelivered.length > 0)
+    throw new Refusal(
+      `lane ${key} has ${undelivered.length} undelivered message(s): ${undelivered
+        .map((m) => JSON.stringify(m.text.slice(0, 60)))
+        .join(", ")}; deliver them or drop each with inbox ack before done`,
+    );
   if (st !== "gone") await rt.close(lane.sessionRef);
   lane.status = "done";
   lane.log.push({ at: d.now(), kind: "done", text: "closed by lead" });

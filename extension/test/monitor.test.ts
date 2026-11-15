@@ -39,6 +39,22 @@ describe("Monitors", () => {
     await until(() => !alive(pid));
   });
 
+  test("an INBOUND line brings its own REPLY/ATTACHMENT records past a narrower filter, not another message's", async () => {
+    const { messages, monitors } = collect();
+    const out = [
+      'INBOUND discord c 1 from=owner ref=9 "고쳐"',
+      'INBOUND_REPLY discord c 1 {"id":"9","text":"299 rewrite"}',
+      'INBOUND_REPLY discord c 2 {"id":"8","text":"other"}',
+    ];
+    monitors.start("in", ["sh", "-c", out.map((l) => `echo '${l}'`).join("; ")], "^INBOUND\\s", "/", "s1");
+    await until(() => messages.join("\n").includes("exited"));
+    const lines = messages
+      .join("\n")
+      .split("\n")
+      .filter((l) => !l.includes("exited"));
+    expect(lines).toEqual([`[in] ${out[0]}`, `[in] ${out[1]}`]);
+  });
+
   test("delivers only matching stdout/stderr lines, a burst as one message, then the exit", async () => {
     const { messages, monitors } = collect();
     monitors.start(
