@@ -4,6 +4,7 @@
 import { log } from "./backlog.ts";
 import type { Deps } from "./harness.ts";
 import { tellLead } from "./inbox.ts";
+import { pinLoopLaneModel } from "./lane-model.ts";
 import { startLane } from "./lanes.ts";
 import { audit, HOUR } from "./loop-audit.ts";
 import { acquire, holds, release } from "./loop-lock.ts";
@@ -102,6 +103,8 @@ async function pull(
       break;
     }
     try {
+      // The installed OMP wrapper refuses a lane with no model; the loop pins it the way a lead does before `start`.
+      pinLoopLaneModel(d.store.root);
       await startLane(d, item.id, item.brief, { cwd: item.cwd, priority: item.priority });
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);

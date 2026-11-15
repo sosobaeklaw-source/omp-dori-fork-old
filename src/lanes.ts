@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { prepareLessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { shq } from "./delivery.ts";
 import { oneName } from "./fit.ts";
@@ -13,7 +13,7 @@ import { checkPriority } from "./lock-queue.ts";
 import { applyEvidence, blockerOf, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
-import { ompStateDir } from "./runtime/omp.ts";
+import { homeStateDir } from "./lane-model.ts";
 import { openSession } from "./runtime/types.ts";
 import { KEY_RE, reservedKey, type Lane } from "./store-types.ts";
 
@@ -40,10 +40,7 @@ export async function startLane(
   const briefPath = d.store.briefPath(key);
   const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
   const brief = readFileSync(briefFile, "utf8").trimEnd();
-  const stateDir = ompStateDir(
-    { ...process.env, DORI_CONFIG: process.env["DORI_CONFIG"] ?? join(d.store.root, "config.json") },
-    process.env["DORI_CONFIG"] === undefined ? join(d.store.root, "state") : undefined,
-  );
+  const stateDir = homeStateDir(d.store.root);
   const prepared = prepareLessons(stateDir, cwd, brief);
   for (const warning of prepared.warnings) console.error(warning);
   await Bun.write(briefPath, `${brief}\n\n${prepared.preamble}${footer}`);

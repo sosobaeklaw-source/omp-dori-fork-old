@@ -79,10 +79,11 @@ describe("OMP harness launches", () => {
     expect(d.store.receipt("o/r#7", "a".repeat(40))!.model).toBe("selected/model");
   });
 
-  test("default dependencies select OMP and retain an explicit DORI_AGENT_CMD", () => {
+  test("default dependencies select OMP, the config's OMP wrapper, and retain an explicit DORI_AGENT_CMD", () => {
     const keys = ["DORI_HOME", "DORI_AGENT_CMD", "DORI_TELEMETRY", "DORI_CMD"];
     const before = keys.map((key) => process.env[key]);
-    process.env["DORI_HOME"] = mkdtempSync(join(tmpdir(), "dori-default-"));
+    const home = mkdtempSync(join(tmpdir(), "dori-default-"));
+    process.env["DORI_HOME"] = home;
     process.env["DORI_TELEMETRY"] = "0";
     delete process.env["DORI_AGENT_CMD"];
     delete process.env["DORI_CMD"];
@@ -92,6 +93,13 @@ describe("OMP harness launches", () => {
       expect(agentCommand(d, "dori")).toBe("omp --dori-role dori");
       expect(d.doriCmd).toContain("bun '");
       expect(d.doriCmd).toContain("src/cli.ts");
+      // A loop pane started by `up` has DORI_HOME only: the config's wrapper, never the bare binary on PATH.
+      const config = (argv: readonly string[]) =>
+        writeFileSync(join(home, "config.json"), JSON.stringify({ agentCommand: argv }));
+      config(["/side home/bin/omp", "--dori-role", "lane", "--model", "{model}", "{prompt}"]);
+      expect(agentCommand(defaultDeps(), "lane")).toBe("'/side home/bin/omp' --dori-role lane");
+      config(["custom-agent", "{prompt}"]);
+      expect(defaultDeps().agentCmd).toBe("omp");
       process.env["DORI_AGENT_CMD"] = "custom-agent --model x";
       expect(defaultDeps().agentCmd).toBe("custom-agent --model x");
     } finally {
