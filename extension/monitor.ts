@@ -19,6 +19,8 @@ type Running = {
   /** Session the monitor was started in; its lines are delivered only while that session is current. */
   readonly session: string;
   stopped: boolean;
+  /** "source channel message" of the last INBOUND line delivered. */
+  inbound?: string;
 };
 
 export type MonitorInfo = {
@@ -105,7 +107,15 @@ export class Monitors {
   }
 
   #line(entry: Running, line: string): void {
-    if (!entry.stopped && entry.filter.test(line)) this.#queue(entry, `[${entry.name}] ${line}`);
+    if (entry.stopped) return;
+    // An INBOUND line's INBOUND_REPLY / INBOUND_ATTACHMENT records belong to it: a filter like ^INBOUND\s dropped the
+    // text of the message the owner replied to, so a bare "고쳐" was guessed onto the wrong item (2026-11-16).
+    const record = /^INBOUND_(?:REPLY|ATTACHMENT) (\S+ \S+ \S+) /.exec(line);
+    if (entry.filter.test(line) || (record && record[1] === entry.inbound)) {
+      const head = /^INBOUND (\S+ \S+ \S+) /.exec(line);
+      if (head) entry.inbound = head[1];
+      this.#queue(entry, `[${entry.name}] ${line}`);
+    }
   }
 
   #queue(entry: Running, text: string): void {

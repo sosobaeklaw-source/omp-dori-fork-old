@@ -21,7 +21,8 @@ describe("review + merge gate", () => {
     gh(w, []);
     await expect(mergeGate(d, "o/r#7")).rejects.toThrow("no review receipt");
     w.reviewer = () => ({ code: 0, stdout: "HIGH src/a.ts:3 ...\nVERDICT: BLOCK" });
-    expect((await review(d, "o/r#7")).verdict).toBe("BLOCK");
+    await expect(review(d, "o/r#7")).rejects.toThrow("needs --model");
+    expect((await review(d, "o/r#7", "some/model")).verdict).toBe("BLOCK");
     await expect(mergeGate(d, "o/r#7")).rejects.toThrow("is BLOCK");
     w.reviewer = () => ({ code: 0, stdout: "no findings\nVERDICT: CLEAR" });
     await review(d, "o/r#7", "some/model");
@@ -51,7 +52,7 @@ describe("review + merge gate", () => {
     gh(w, []);
     const lines = Array.from({ length: 205 }, (_, i) => `line-${i + 1}`);
     w.reviewer = () => ({ code: 0, stdout: lines.join("\n") });
-    const failure: unknown = await review(d, "o/r#8").then(
+    const failure: unknown = await review(d, "o/r#8", "some/model").then(
       () => undefined,
       (e: unknown) => e,
     );
@@ -73,7 +74,7 @@ describe("review + merge gate", () => {
     const { w, d } = setup();
     gh(w, []);
     w.reviewer = () => ({ code: 9, stdout: "partial reviewer output" });
-    const failure: unknown = await review(d, "o/r#9").then(
+    const failure: unknown = await review(d, "o/r#9", "some/model").then(
       () => undefined,
       (e: unknown) => e,
     );

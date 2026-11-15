@@ -34,6 +34,9 @@ export async function review(
   const pr = parsePr(prId);
   // hooks.reviewCommand replaces the built-in reviewer; it must print a VERDICT line like the built-in one.
   const hook = loadHooks(d.store.root).reviewCommand;
+  // Without a model the reviewer would fall to whatever the lane wrapper picks — once a free public model that ran a
+  // full suite for two hours, or a lead's next-lane pin meant for another lane (2026-11-16).
+  if (!hook && !model) throw new Refusal(`review ${prId} needs --model <provider/model>; refusing to pick one`);
   const sha = await headSha(d, pr);
   const vars = { pr: pr.id, repo: pr.repo, number: String(pr.number), sha };
   const text = prompt("review.md", vars);
