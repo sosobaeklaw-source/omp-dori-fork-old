@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { outsideRealHomeUnderTest } from "../test-home.ts";
 import type { Exec } from "./exec.ts";
 import { ConfigError } from "./select.ts";
 import type { ForegroundProcess, Probe } from "./types.ts";
@@ -23,7 +24,10 @@ const expandHome = (path: string): string =>
   path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 
 /** The extension's config/state precedence; callers with loaded config pass stateDir explicitly. */
-export function ompStateDir(env: Env, fallback = join(homedir(), ".dori", "state")): string {
+export const ompStateDir = (env: Env, fallback?: string): string =>
+  outsideRealHomeUnderTest(configuredStateDir(env, fallback));
+
+function configuredStateDir(env: Env, fallback = join(homedir(), ".dori", "state")): string {
   if (env["DORI_STATE_DIR"] !== undefined) return expandHome(env["DORI_STATE_DIR"]);
   const path = env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json");
   let raw: string;

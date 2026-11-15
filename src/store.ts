@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { defaultHome } from "./test-home.ts";
 import {
   appendQueue,
   doneIds,
@@ -43,7 +43,7 @@ const checkedId = (id: string): string => {
 };
 
 export class Store {
-  constructor(readonly root: string = process.env["DORI_HOME"] ?? join(homedir(), ".dori")) {
+  constructor(readonly root: string = defaultHome()) {
     for (const d of ["lanes", "inbox", "briefs", "receipts", "backlog", "loop/runs", "duty"])
       mkdirSync(join(root, d), { recursive: true });
   }
