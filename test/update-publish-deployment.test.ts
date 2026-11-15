@@ -79,4 +79,5 @@ test("real publication followed by an admitted deployment preparation failure re
   const config = join(f.directory, "updater.json");
   saveJson(config, f.config);
   expect(await runUpdate(["check", "--config", config])).toBe(3);
-});
+  // One test drives real git, bun and ps (about 97 processes, 3-5.4 s by load): bun's 5 s default cut it mid-check.
+}, 15_000);
