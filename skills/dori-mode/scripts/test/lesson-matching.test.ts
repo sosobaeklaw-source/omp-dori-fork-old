@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { Lessons, prepareLessons, REPO_LESSON_CAP } from "../src/lessons.ts";
+import { BRIEF_EVIDENCE_CHARS, Lessons, prepareLessons, REPO_LESSON_CAP } from "../src/lessons.ts";
 import { type TestState, withState } from "./fakes.ts";
 
 const T0 = Date.parse("2026-10-29T00:00:00Z");
@@ -40,6 +40,32 @@ test("omission warnings name only matching lessons excluded by the cap", () => {
   );
   const oldest = matching[0];
   if (!oldest) throw new Error("fixture missing");
-  expect(prepared.warnings).toEqual([expect.stringContaining(oldest.id)]);
+  expect(prepared.warnings).toEqual([
+    expect.stringContaining(oldest.id),
+    expect.stringMatching(/^LESSON_FILTERED 1 repo lesson\(s\) /),
+  ]);
   expect(prepared.warnings.join("\n")).not.toContain(unrelated.id);
+});
+
+test("a global standing rule reaches a brief it shares no word with; a filtered repo lesson is counted", () => {
+  const global = lessons.add(
+    { lane: "lead", scope: "global", rule: "Never change the global Git identity", evidence: "slack:D1/2.1" },
+    T0,
+  );
+  const repo = lessons.add({ ...input, rule: "Run deployment checks" }, T0 + 1);
+  const prepared = prepareLessons(state.dir, "/repo", "Fix the login bug.");
+  expect(prepared.lessons.map((lesson) => lesson.id)).toEqual([global.id]);
+  expect(lessons.forRepo("/repo", "Fix the login bug.").filtered.map((lesson) => lesson.id)).toEqual([repo.id]);
+  expect(prepared.warnings).toEqual([expect.stringMatching(/^LESSON_FILTERED 1 repo lesson\(s\) /)]);
+  expect(prepareLessons(state.dir, "/repo", "Run the deployment").warnings).toEqual([]);
+});
+
+test("a brief shows the first BRIEF_EVIDENCE_CHARS of long evidence; the journal keeps it whole", () => {
+  const evidence = `/evidence/${"x".repeat(2 * BRIEF_EVIDENCE_CHARS)}`;
+  const lesson = lessons.add({ ...input, evidence }, T0);
+  const { preamble } = prepareLessons(state.dir, "/repo", "Subscribe first");
+  const shown = `${evidence.slice(0, BRIEF_EVIDENCE_CHARS - 3)}...`;
+  expect(preamble).toContain(`source: ${shown}] ${input.rule}`);
+  expect(preamble).not.toContain(evidence);
+  expect(lessons.read().lessons).toEqual([lesson]);
 });

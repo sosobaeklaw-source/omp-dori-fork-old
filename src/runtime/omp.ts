@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "./exec.ts";
+import { ConfigError } from "./select.ts";
 import type { ForegroundProcess, Probe } from "./types.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -32,8 +33,18 @@ export function ompStateDir(env: Env, fallback = join(homedir(), ".dori", "state
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     return fallback;
   }
-  const config = JSON.parse(raw) as { stateDir?: string };
-  return expandHome(config.stateDir ?? fallback);
+  let config: unknown;
+  try {
+    config = JSON.parse(raw);
+  } catch (e) {
+    throw new ConfigError(`${path} is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (typeof config !== "object" || config === null || Array.isArray(config))
+    throw new ConfigError(`${path} must hold a JSON object`);
+  const stateDir: unknown = Reflect.get(config, "stateDir");
+  if (stateDir === undefined) return expandHome(fallback);
+  if (typeof stateDir !== "string" || !stateDir) throw new ConfigError(`${path}: "stateDir" must be a nonempty string`);
+  return expandHome(stateDir);
 }
 
 const OMP_COMMAND =
