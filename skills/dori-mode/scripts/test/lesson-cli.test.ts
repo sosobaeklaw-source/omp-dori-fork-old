@@ -72,7 +72,7 @@ test("CLI list and launch --dry-run name a damaged line, keep going, and write n
     writeFileSync(journal.path, `${readFileSync(journal.path, "utf8")}not-json\n`);
     const before = readFileSync(journal.path, "utf8");
     const brief = join(state.dir, "brief.md");
-    writeFileSync(brief, "Do the work.");
+    writeFileSync(brief, "Fix the flaky UI tests.");
     const invoke = (...args: string[]) =>
       run(["env", `DORI_CONFIG=${config}`, `DORI_STATE_DIR=${state.dir}`, process.execPath, cli, ...args]);
     // When listing and previewing a launch.
@@ -93,9 +93,11 @@ test("CLI list and launch --dry-run name a damaged line, keep going, and write n
     expect(JSON.parse(listed.out).map((l: { rule: string }) => l.rule)).toEqual(["Loop flaky UI tests 50 times"]);
     expect(listed.err).toContain(`LESSON_WARNING ${journal.path}:2: `);
     expect(preview.code).toBe(0);
-    expect(preview.out).toContain("## Lessons for this repo\n- [pending; qa-lessons] Loop flaky UI tests 50 times");
+    expect(preview.out).toContain(
+      "## Lessons for this repo\n- [pending; qa-lessons; source: /tmp/evidence] Loop flaky UI tests 50 times",
+    );
     expect(preview.err).toContain(`LESSON_WARNING ${journal.path}:2: `);
-    expect(readFileSync(brief, "utf8")).toBe("Do the work.");
+    expect(readFileSync(brief, "utf8")).toBe("Fix the flaky UI tests.");
     expect(readFileSync(journal.path, "utf8")).toBe(before);
     expect(existsSync(join(state.dir, "lanes"))).toBe(false);
   } finally {
@@ -128,7 +130,7 @@ test("launch preview ships twelve standing rules plus repo lessons and names eve
     );
     journal.mark(retired.id, "encoded");
     const brief = join(state.dir, "brief.md");
-    writeFileSync(brief, "Keep the owner's original task.");
+    writeFileSync(brief, "Keep the owner's original task for global and repo rules.");
     const before = readFileSync(journal.path, "utf8");
     const preview = await run([
       "env",
@@ -158,8 +160,8 @@ test("launch preview ships twelve standing rules plus repo lessons and names eve
       `LESSON_OMITTED ${repo[1]!.id} (${repo[1]!.cwd}) ${repo[1]!.rule}`,
       `LESSON_OMITTED ${repo[0]!.id} (${repo[0]!.cwd}) ${repo[0]!.rule}`,
     ]);
-    expect(preview.out).toContain("Keep the owner's original task.");
-    expect(readFileSync(brief, "utf8")).toBe("Keep the owner's original task.");
+    expect(preview.out).toContain("Keep the owner's original task for global and repo rules.");
+    expect(readFileSync(brief, "utf8")).toBe("Keep the owner's original task for global and repo rules.");
     expect(readFileSync(journal.path, "utf8")).toBe(before);
     expect(existsSync(join(state.dir, "lanes"))).toBe(false);
   } finally {

@@ -59,6 +59,26 @@ describe("dori migrate: roles and loops", () => {
     expect(d.store.queued({ runtime: "hc", id: "t1" }).map((m) => m.text)).toEqual(["[REPORT k] hi"]);
   });
 
+  test("lead and duty handoffs retain their rendered local overlays", async () => {
+    for (const role of ["lead", "duty"] as const) {
+      const { w, d, opts } = rolesWorld();
+      const dir = join(d.store.root, "prompts");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${role}.local.md`), `${role} private instructions\n`);
+      writeFileSync(join(dir, `${role === "lead" ? "duty" : "lead"}.local.md`), "other role instructions\n");
+
+      expect(await migrate(d, { role }, opts())).toBe(0);
+      const brief = w.hc.sent[0]!.text.split(" ").at(-1)!.replaceAll("'", "");
+      const handoff = readFileSync(brief, "utf8");
+      const rendered = readFileSync(join(dir, `${role}.md`), "utf8");
+      expect(handoff).toStartWith(`${rendered.trimEnd()}\n\n## Handoff`);
+      expect(handoff).toContain(`${role} private instructions`);
+      expect(handoff).not.toContain("other role instructions");
+      expect(handoff).not.toContain("{{dori}}");
+      expect(readFileSync(join(dir, `${role}.local.md`), "utf8")).toBe(`${role} private instructions\n`);
+    }
+  });
+
   test("--all: lanes first, then lead and duty, the loops last", async () => {
     const { d, lines, opts } = rolesWorld();
     expect(await migrate(d, { all: true }, opts())).toBe(0);

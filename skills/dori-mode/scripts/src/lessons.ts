@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { briefMatcher } from "./lesson-match.ts";
 import { LANE_KEY } from "./registry.ts";
 
 export type LessonOutcome = "pending" | "helped" | "no-effect" | "harmful" | "encoded";
@@ -28,7 +29,8 @@ export type Lesson = {
 };
 export type LessonInput = Pick<Lesson, "lane" | "rule" | "evidence"> &
   ({ readonly cwd: string; readonly scope?: undefined } | { readonly scope: "global"; readonly cwd?: undefined });
-export type LessonRead = { readonly lessons: Lesson[]; readonly omitted: Lesson[]; readonly problems: string[] };
+/** `omitted`: kept out by a cap. `filtered`: repo lessons whose rule shares no keyword with the brief. */
+export type LessonRead = { readonly omitted: Lesson[]; readonly filtered: Lesson[] } & LessonJournal;
 /** What `read` returns: no cap applies to a raw read, so nothing is omitted. */
 export type LessonJournal = { readonly lessons: Lesson[]; readonly problems: string[] };
 export class LessonError extends Error {}
@@ -153,19 +155,24 @@ export class Lessons {
   /**
    * The lessons a new lane in cwd gets, newest first: at most GLOBAL_LESSON_CAP global ones, then at most
    * REPO_LESSON_CAP for the repo. Each kind has its own cap, so global rules never push repo lessons out of a brief.
-   * `omitted` lists the eligible lessons a cap kept out, so a caller can say so instead of shipping a brief that
-   * quietly lacks a standing rule.
+   * With a brief, repo lessons must match it (lesson-match.ts); global ones are standing rules and always apply.
+   * `omitted` and `filtered` list what a cap or the match kept out, so a caller can name them instead of shipping
+   * a brief that quietly lacks a lesson.
    */
-  forRepo(cwd: string): LessonRead {
+  forRepo(cwd: string, brief?: string): LessonRead {
     const { lessons, problems } = this.read(cwd);
+    const matches = brief === undefined ? undefined : briefMatcher(brief);
     const current = lessons.filter((lesson) => lesson.outcome === "pending" || lesson.outcome === "helped");
     const globalAll = current.filter((lesson) => lesson.scope === "global");
-    const repoAll = current.filter((lesson) => lesson.scope !== "global");
+    const relevant = (lesson: Lesson) => matches === undefined || matches(lesson.rule);
+    const repoCurrent = current.filter((lesson) => lesson.scope !== "global");
+    const repoAll = repoCurrent.filter(relevant);
     const global = globalAll.slice(0, GLOBAL_LESSON_CAP);
     const repo = repoAll.slice(0, REPO_LESSON_CAP);
     return {
       lessons: [...global, ...repo],
       omitted: [...globalAll.slice(GLOBAL_LESSON_CAP), ...repoAll.slice(REPO_LESSON_CAP)],
+      filtered: repoCurrent.filter((lesson) => !relevant(lesson)),
       problems,
     };
   }
@@ -186,9 +193,19 @@ export class Lessons {
   }
 }
 
+/** A brief names each lesson's evidence; past this length only its start is shown, the journal keeps it whole. */
+export const BRIEF_EVIDENCE_CHARS = 200;
+
 const section = (heading: string, lessons: readonly Lesson[]): string =>
   lessons.length
-    ? `${heading}\n${lessons.map((lesson) => `- [${lesson.outcome}; ${lesson.lane}] ${lesson.rule}`).join("\n")}\n\n`
+    ? `${heading}\n${lessons
+        .map((lesson) => {
+          const { evidence } = lesson;
+          const shown =
+            evidence.length > BRIEF_EVIDENCE_CHARS ? `${evidence.slice(0, BRIEF_EVIDENCE_CHARS - 3)}...` : evidence;
+          return `- [${lesson.outcome}; ${lesson.lane}; source: ${shown}] ${lesson.rule}`;
+        })
+        .join("\n")}\n\n`
     : "";
 
 export const renderLessons = (lessons: readonly Lesson[]): string =>
@@ -200,3 +217,19 @@ export const renderLessons = (lessons: readonly Lesson[]): string =>
     "## Lessons for this repo",
     lessons.filter((lesson) => lesson.scope !== "global"),
   );
+
+const label = (lesson: Lesson): string =>
+  `${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`;
+
+export const prepareLessons = (stateDir: string, cwd: string, brief: string) => {
+  const { lessons, problems, omitted, filtered } = new Lessons(stateDir).forRepo(cwd, brief);
+  return {
+    lessons,
+    preamble: renderLessons(lessons),
+    warnings: [
+      ...problems.map((problem) => `LESSON_WARNING ${problem}`),
+      ...omitted.map((lesson) => `LESSON_OMITTED ${label(lesson)}`),
+      ...filtered.map((lesson) => `LESSON_FILTERED ${label(lesson)}`),
+    ],
+  };
+};

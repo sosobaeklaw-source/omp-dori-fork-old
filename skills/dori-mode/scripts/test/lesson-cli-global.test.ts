@@ -17,7 +17,7 @@ test("CLI add --global needs no lane, reaches a launch in any repo, and refuses 
     const config = join(state.dir, "config.json");
     writeFileSync(config, JSON.stringify({ stateDir: state.dir, defaultCwd: state.dir, hooks: {} }));
     const brief = join(state.dir, "brief.md");
-    writeFileSync(brief, "Do the work.");
+    writeFileSync(brief, "Clean up bulky job data.");
     const invoke = (...args: string[]) =>
       run(["env", `DORI_CONFIG=${config}`, `DORI_STATE_DIR=${state.dir}`, process.execPath, cli, ...args]);
     // When the lead adds a global lesson and previews a launch.
@@ -47,7 +47,7 @@ test("CLI add --global needs no lane, reaches a launch in any repo, and refuses 
     expect(JSON.parse(added.out)).toMatchObject({ lane: "lead", scope: "global", outcome: "pending" });
     expect(preview.code).toBe(0);
     expect(preview.out).toContain(
-      "## Lessons for every lane\n- [pending; lead] Delete bulky job data once results are saved\n\n",
+      "## Lessons for every lane\n- [pending; lead; source: slack:D1/4.1] Delete bulky job data once results are saved\n\n",
     );
     const before = readFileSync(new Lessons(state.dir).path, "utf8");
     expect((await invoke("lesson", "add", "--global", "--cwd", state.dir, "--rule", "x", "--evidence", "y")).code).toBe(

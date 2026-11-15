@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Lessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import {
   dori,
   fixture,
@@ -44,8 +45,11 @@ test.skipIf(!hcBin)(
   "dori up opens lead, duty and both loops as four hc terminals labelled with one group",
   async () => {
     const home = newHome("up");
+    mkdirSync(join(home, "prompts"), { recursive: true });
+    writeFileSync(join(home, "prompts", "lead.local.md"), "Local lead instructions.\n");
     const up = await dori(home, "up", "--cwd", home);
     expect(up).toContain("UP runtime=hc");
+    expect(readFileSync(join(home, "prompts", "lead.md"), "utf8")).toEndWith("\n\nLocal lead instructions.\n");
     const status = await dori(home, "status");
     expect(status).toContain("RUNTIME hc (from env)");
     const lead = /lead=hc:(\S+)/.exec(status)?.[1];
@@ -66,8 +70,16 @@ test.skipIf(!hcBin)(
   "dori start opens a lane whose probe is idle once the fixture reports",
   async () => {
     const brief = join(laneHome, "brief.md");
-    writeFileSync(brief, "E2E-HC-BRIEF\n");
+    writeFileSync(brief, "E2E-HC-BRIEF: verify prompt overlay\n");
+    new Lessons(join(laneHome, "omp-state")).add(
+      { lane: "prior", cwd: laneHome, rule: "Check prompt overlay output", evidence: "file:///evidence" },
+      1,
+    );
     const started = await dori(laneHome, "start", "e2e-k", "--brief", brief, "--cwd", laneHome);
+    const delivered = readFileSync(join(laneHome, "briefs", "e2e-k.md"), "utf8");
+    expect(delivered).toContain("Check prompt overlay output");
+    expect(delivered).toContain("file:///evidence");
+    expect(delivered.indexOf("Check prompt overlay output")).toBeGreaterThan(delivered.indexOf("E2E-HC-BRIEF"));
     lane = addressOf(started, "STARTED e2e-k");
     // hc updates `foreground` after the first OSC 7501 report: until it shows the fixture, the login shell is in
     // front and Dori holds deliveries (#66), so the lane is ready only when both agree.

@@ -12,6 +12,7 @@ const CLI = cliCommand();
 
 const FOOTER_HEADING = "## Lane footer (written by dori launch)";
 export const BRIEF_START = "<!-- dori launch: the brief starts below -->";
+export const LESSONS_START = "<!-- dori launch: lessons start -->";
 const FOOTER_START = "<!-- dori launch: footer start -->";
 const FOOTER_END = "<!-- dori launch: footer end -->";
 
@@ -23,7 +24,9 @@ export const originalBrief = (text: string): string => {
   const foot = brief.endsWith(FOOTER_END) ? brief.lastIndexOf(`\n${FOOTER_START}\n`) : -1;
   if (foot === -1) return brief;
   const start = brief.indexOf(`${BRIEF_START}\n`);
-  return brief.slice(start === -1 || start > foot ? 0 : start + BRIEF_START.length + 1, foot).replace(/\s*$/, "");
+  const lessons = brief.lastIndexOf(`\n${LESSONS_START}\n`, foot);
+  const end = lessons !== -1 && lessons > start ? lessons : foot;
+  return brief.slice(start === -1 || start > end ? 0 : start + BRIEF_START.length + 1, end).replace(/\s*$/, "");
 };
 
 // Name only the selected runtime; an unresolved preview still records reports without inventing a send command.

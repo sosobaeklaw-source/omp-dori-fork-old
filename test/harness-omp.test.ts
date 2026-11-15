@@ -7,6 +7,7 @@ import { review } from "../src/gate.ts";
 import { agentCommand, defaultDeps } from "../src/harness.ts";
 import { startLane } from "../src/lanes.ts";
 import { ompStateDir } from "../src/runtime/omp.ts";
+import { ConfigError } from "../src/runtime/select.ts";
 import { World } from "./fake.ts";
 import { setup } from "./harness-setup.ts";
 import { captureIo } from "./inbox-setup.ts";
@@ -109,4 +110,24 @@ test("OMP state directory follows config, environment override and home expansio
   expect(ompStateDir({ DORI_CONFIG: config })).toBe(join(homedir(), "synthetic-omp-state"));
   expect(ompStateDir({ DORI_CONFIG: config, DORI_STATE_DIR: join(root, "override") })).toBe(join(root, "override"));
   expect(ompStateDir({ DORI_CONFIG: join(root, "missing.json") })).toBe(join(homedir(), ".dori", "state"));
+});
+
+test("an OMP config that is not an object, or has an unusable stateDir, is a ConfigError naming the file", () => {
+  const root = mkdtempSync(join(tmpdir(), "dori-omp-config-"));
+  const config = join(root, "config.json");
+  for (const [raw, message] of [
+    ["null", `${config} must hold a JSON object`],
+    ["[1]", `${config} must hold a JSON object`],
+    ["{", `${config} is not valid JSON`],
+    ['{"stateDir":7}', `${config}: "stateDir" must be a nonempty string`],
+    ['{"stateDir":""}', `${config}: "stateDir" must be a nonempty string`],
+  ] as const) {
+    writeFileSync(config, raw);
+    expect(() => ompStateDir({ DORI_CONFIG: config })).toThrow(ConfigError);
+    expect(() => ompStateDir({ DORI_CONFIG: config })).toThrow(message);
+  }
+  for (const raw of ["{}", '{"stateDir":null}']) {
+    writeFileSync(config, raw);
+    expect(ompStateDir({ DORI_CONFIG: config }, join(root, "state"))).toBe(join(root, "state"));
+  }
 });

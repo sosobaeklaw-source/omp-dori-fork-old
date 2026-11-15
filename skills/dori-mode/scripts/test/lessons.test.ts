@@ -222,7 +222,7 @@ test("the brief preamble puts global lessons under their own heading above the r
   );
   // When rendered for the repo; then each kind has its section, global first.
   expect(renderLessons(lessons.forRepo("/repo").lessons)).toBe(
-    "## Lessons for every lane\n- [pending; lead] Never change the global Git identity\n\n## Lessons for this repo\n- [pending; demo-lane] Subscribe before triggering\n\n",
+    "## Lessons for every lane\n- [pending; lead; source: slack:D1/2.1] Never change the global Git identity\n\n## Lessons for this repo\n- [pending; demo-lane; source: /evidence/test.txt] Subscribe before triggering\n\n",
   );
 });
 

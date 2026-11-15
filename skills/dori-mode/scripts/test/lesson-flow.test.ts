@@ -99,9 +99,13 @@ test("preview is side-effect free and actual launch ships the same prepared brie
       clock = fakeClock(T0);
     const deps = depsFor(world, clock, state.dir);
     const brief = join(state.dir, "brief.md"),
-      original = "Perform the fixture work.";
+      original = "Subscribe before triggering the fixture work.";
     writeFileSync(brief, original);
     new Lessons(state.dir).add({ ...lesson, lane: lane.key, cwd: "/repo" }, T0);
+    new Lessons(state.dir).add(
+      { lane: lane.key, cwd: "/repo", rule: "Inspect deployment logs", evidence: "log:1" },
+      T0 + 1,
+    );
     const input = { key: lane.key, title: lane.title, brief, done: lane.done };
     // When preparing without execution.
     const preview = await prepareLaunch(deps, input);
@@ -109,6 +113,9 @@ test("preview is side-effect free and actual launch ships the same prepared brie
     expect(readFileSync(brief, "utf8")).toBe(original);
     expect(await deps.registry.list()).toEqual([]);
     expect(world.calls).toEqual([]);
+    expect(preview.preamble).toContain(`] ${lesson.rule}`);
+    expect(preview.preamble).not.toContain("Inspect deployment logs");
+    expect(preview.preamble.lastIndexOf(lesson.rule)).toBeGreaterThan(preview.preamble.indexOf(original));
     // When actually launching through the same preparation path.
     const launched = await launchLane(
       {
@@ -140,7 +147,7 @@ test("a retry after a failed tab create ships the same brief, not a second lesso
     const world = newWorld();
     const deps = depsFor(world, fakeClock(T0), state.dir);
     const brief = join(state.dir, "brief.md");
-    writeFileSync(brief, "Perform the fixture work.");
+    writeFileSync(brief, "Subscribe before triggering the fixture work.");
     new Lessons(state.dir).add({ ...lesson, lane: lane.key, cwd: "/repo" }, T0);
     const input = { key: lane.key, title: lane.title, brief, done: lane.done, cwd: "/repo" };
     const expected = (await prepareLaunch(deps, input)).preamble;
@@ -168,7 +175,7 @@ test("a brief that quotes the footer heading mid-file is shipped whole on first 
     const deps = depsFor(newWorld(), fakeClock(T0), state.dir);
     const brief = join(state.dir, "brief.md");
     const original =
-      "Perform the fixture work.\n\n## Lane footer (written by dori launch)\n- Key: old-lane. Work thread: none.\n\nThen do the new work below the old footer.";
+      "Subscribe before triggering the fixture work.\n\n## Lane footer (written by dori launch)\n- Key: old-lane. Work thread: none.\n\nThen do the new work below the old footer.";
     writeFileSync(brief, original);
     new Lessons(state.dir).add({ ...lesson, lane: lane.key, cwd: "/repo" }, T0);
     const input = { key: lane.key, title: lane.title, brief, done: lane.done, cwd: "/repo" };
@@ -202,7 +209,7 @@ test("a damaged journal line does not stop a launch; the brief keeps the valid l
   try {
     const deps = depsFor(newWorld(), fakeClock(T0), state.dir);
     const brief = join(state.dir, "brief.md");
-    writeFileSync(brief, "Perform the fixture work.");
+    writeFileSync(brief, "Subscribe before triggering the fixture work.");
     const journal = new Lessons(state.dir);
     journal.add({ ...lesson, lane: lane.key, cwd: "/repo" }, T0);
     writeFileSync(journal.path, `${readFileSync(journal.path, "utf8")}not-json\n`);
