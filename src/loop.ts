@@ -4,6 +4,7 @@
 import { log } from "./backlog.ts";
 import type { Deps } from "./harness.ts";
 import { tellLead } from "./inbox.ts";
+import { loopLaneModel } from "./lane-model.ts";
 import { startLane } from "./lanes.ts";
 import { audit, HOUR } from "./loop-audit.ts";
 import { acquire, holds, release } from "./loop-lock.ts";
@@ -92,6 +93,15 @@ async function pull(
     );
     starts = 0;
   }
+  // Every lane the loop opens runs on config.json loopLaneModel. A bad setting is the config's fault, not any item's:
+  // it holds all starts this run and counts against no item.
+  let model: string | undefined;
+  try {
+    model = loopLaneModel(d.store.root);
+  } catch (e) {
+    if (starts > 0 && candidates.length > 0) run.held.push(e instanceof Error ? e.message : String(e));
+    starts = 0;
+  }
   // Each start attempt uses one of this run's slots, so a broken host costs at most `starts` failures per run.
   // A failed item counts toward MAX_ATTEMPTS and then becomes a question, so it never blocks the items behind it.
   let tried = 0;
@@ -102,7 +112,7 @@ async function pull(
       break;
     }
     try {
-      await startLane(d, item.id, item.brief, { cwd: item.cwd, priority: item.priority });
+      await startLane(d, item.id, item.brief, { cwd: item.cwd, priority: item.priority, model });
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       const lane = d.store.lane(item.id);

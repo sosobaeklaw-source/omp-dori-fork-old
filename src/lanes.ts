@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { prepareLessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { shq } from "./delivery.ts";
 import { oneName } from "./fit.ts";
-import { agentCommand, prompt, type Deps } from "./harness.ts";
+import { agentCommand, isOmpAgentCommand, prompt, type Deps } from "./harness.ts";
 import { settled, tellLead, type SendResult } from "./inbox.ts";
 import { Refusal } from "./refusal.ts";
 import { stopLaneServices } from "./lane-services.ts";
@@ -13,7 +13,7 @@ import { checkPriority } from "./lock-queue.ts";
 import { applyEvidence, blockerOf, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
-import { ompStateDir } from "./runtime/omp.ts";
+import { homeStateDir, lanePin } from "./lane-model.ts";
 import { openSession } from "./runtime/types.ts";
 import { KEY_RE, reservedKey, type Lane } from "./store-types.ts";
 
@@ -27,7 +27,7 @@ export async function startLane(
   d: Deps,
   key: string,
   briefFile: string,
-  opts: { cwd?: string; group?: string; priority?: number } = {},
+  opts: { cwd?: string; group?: string; priority?: number; model?: string | undefined; pin?: boolean } = {},
 ): Promise<Lane> {
   if (!KEY_RE.test(key)) throw new Refusal(`lane key must match ${KEY_RE}`);
   const priority = opts.priority === undefined ? undefined : checkPriority(opts.priority);
@@ -40,10 +40,7 @@ export async function startLane(
   const briefPath = d.store.briefPath(key);
   const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
   const brief = readFileSync(briefFile, "utf8").trimEnd();
-  const stateDir = ompStateDir(
-    { ...process.env, DORI_CONFIG: process.env["DORI_CONFIG"] ?? join(d.store.root, "config.json") },
-    process.env["DORI_CONFIG"] === undefined ? join(d.store.root, "state") : undefined,
-  );
+  const stateDir = homeStateDir(d.store.root);
   const prepared = prepareLessons(stateDir, cwd, brief);
   for (const warning of prepared.warnings) console.error(warning);
   await Bun.write(briefPath, `${brief}\n\n${prepared.preamble}${footer}`);
@@ -57,11 +54,19 @@ export async function startLane(
     (self?.runtime === rt.kind ? self.group : undefined) ??
     (rt.kind === "herdr" ? await rt.createGroup("dori", cwd) : groupId(d.store.root));
   const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
+  // An OMP lane runs on the caller's model ("<model>|<thinking>", the hourly loop's), else, for `pin` (a lead's `start`),
+  // the lane pin that lead wrote by hand, removed once the lane opened. A command that names --model takes neither.
+  const command = agentCommand(d, "lane");
+  const choose = isOmpAgentCommand(command) && !/(?:^|\s)--model(?:[=\s]|$)/.test(command);
+  const pin = choose && opts.model === undefined && opts.pin ? lanePin(d.store.root) : undefined;
+  const [model, thinking] = (choose ? (opts.model ?? pin?.model) : undefined)?.split("|") ?? [];
+  const modelArgs = model ? ` --model ${shq(model)}${thinking ? ` --thinking ${shq(thinking)}` : ""}` : "";
   const ref = await openSession(
     rt,
     { name: key, role: "lane", container: "tab", cwd, env: { DORI_LANE: key, DORI_HOME: d.store.root }, group },
-    `${agentCommand(d, "lane")} ${shq(kickoff)}`,
+    `${command}${modelArgs} ${shq(kickoff)}`,
   );
+  if (pin) rmSync(pin.path, { force: true });
 
   const now = d.now();
   const lane: Lane = {

@@ -8,6 +8,7 @@ import { type Exec, spawnExec } from "./runtime/exec.ts";
 import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
 import { Runtimes } from "./runtime/registry.ts";
+import { configuredOmp } from "./lane-model.ts";
 import { ompStateDir } from "./runtime/omp.ts";
 import { type RuntimeChoice, readRuntimeChoice } from "./runtime/select.ts";
 import { Store } from "./store.ts";
@@ -40,6 +41,7 @@ export const defaultDeps = (): Deps => {
   const store = new Store();
   let chosen: RuntimeChoice | undefined;
   let runtimes: Runtimes | undefined;
+  let agent: string | undefined;
   const choice = (): RuntimeChoice =>
     (chosen ??= readRuntimeChoice({ env: process.env, configPath: join(store.root, "config.json") }));
   return {
@@ -59,7 +61,13 @@ export const defaultDeps = (): Deps => {
     exec: spawnExec,
     ompRunDir: OMP_RUN_DIR,
     now: Date.now,
-    agentCmd: process.env["DORI_AGENT_CMD"] ?? "omp",
+    // A loop pane opened by `up` gets only DORI_HOME; its config names the installed OMP wrapper, not the bare binary.
+    // Read on first use, so a command that starts no agent never reads config.json for it; an invalid config.json is a
+    // ConfigError here as for every other reader of it.
+    get agentCmd() {
+      agent ??= process.env["DORI_AGENT_CMD"] ?? configuredOmp(store.root) ?? "omp";
+      return agent;
+    },
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,
     host: () => ({ load1: loadavg()[0] ?? 0, cores: cpus().length, memFreePct: memFreePct() }),
     usage: new Telemetry(store.root),

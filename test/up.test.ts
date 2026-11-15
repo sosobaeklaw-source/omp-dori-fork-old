@@ -74,7 +74,7 @@ describe("dori up", () => {
         ["pane", "run", "w1:p3", prompt("duty.md")],
         split("w1:p3", `DORI_HOME=${root}`),
         ["pane", "run", "w1:p4", "dori duty --interval 60"],
-        split("w1:p4", `DORI_HOME=${root}`, "HERDR_WORKSPACE_ID=w1"),
+        split("w1:p4", `DORI_HOME=${root}`, "DORI_AGENT_CMD=omo", "HERDR_WORKSPACE_ID=w1"),
         ["pane", "run", "w1:p5", "dori loop"],
       ].map((argv) => ["herdr", ...argv]),
     );
@@ -89,13 +89,20 @@ describe("dori up", () => {
 
   test("hc: four terminals in this home's group, prefixed roles, no herdr workspace variable", async () => {
     const w = new World();
-    const d = w.deps({ runtime: "hc" });
+    const d = { ...w.deps({ runtime: "hc" }), agentCmd: "'/side home/bin/omp'" };
     const { out } = await captureIo(async () => {
       await up(d, "/w");
       return 0;
     });
     const runs = w.calls.filter((c) => c.cmd === "hc" && c.argv[1] === "run").map((c) => c.argv);
     expect(runs).toHaveLength(4);
+    // Only the hourly loop starts lanes; its env is argv for `env`, so a quoted wrapper path stays one element.
+    expect(runs.map((a) => a.filter((x) => x.startsWith("DORI_AGENT_CMD=")))).toEqual([
+      [],
+      [],
+      [],
+      ["DORI_AGENT_CMD='/side home/bin/omp'"],
+    ]);
     for (const argv of runs) expect(argv).toContain(`dori.group=${groupId(d.store.root)}`);
     expect(runs.map((a) => a.find((x) => x.startsWith("dori.role=")))).toEqual([
       "dori.role=lead",

@@ -51,7 +51,9 @@ export async function up(d: Deps, cwd: string): Promise<void> {
     `${d.doriCmd} duty --interval 60`,
   );
   d.store.setRole("duty-loop", loop);
-  const hourlyEnv = rt.kind === "herdr" && group !== undefined ? { ...env, HERDR_WORKSPACE_ID: group } : env;
+  // The hourly loop starts lanes, so it gets the agent command this `up` resolved, not whatever its own shell finds.
+  const loopEnv = { ...env, DORI_AGENT_CMD: d.agentCmd };
+  const hourlyEnv = rt.kind === "herdr" && group !== undefined ? { ...loopEnv, HERDR_WORKSPACE_ID: group } : loopEnv;
   const hourly = await openSession(
     rt,
     { name: "hourly-loop", role: "hourly-loop", container: "split-below", near: loop, cwd, env: hourlyEnv, ...inGroup },
