@@ -10,7 +10,13 @@ import { setup } from "./harness-setup.ts";
 // This test process plays omp's broker: services are its children, each leading its own process group.
 const children: ChildProcess[] = [];
 afterEach(() => {
-  for (const c of children.splice(0)) if (c.exitCode === null && c.signalCode === null) c.kill("SIGKILL");
+  for (const c of children.splice(0)) {
+    try {
+      process.kill(-c.pid!, "SIGKILL");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+    }
+  }
 });
 
 function service(): ChildProcess {
@@ -27,38 +33,46 @@ function exited(c: ChildProcess): Promise<NodeJS.Signals | null> {
   return promise;
 }
 
-function record(run: string, broker: number, name: string, pid: number, state: string, lane?: string) {
-  const dir = join(run, "daemons", "scope1", "daemons", name);
+type Rec = { name: string; pid: number; state?: string; lane: string; home: string; startedAt?: number };
+
+function record(run: string, broker: number, r: Rec) {
+  const dir = join(run, "daemons", "scope1", "daemons", r.name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(run, "daemons", "scope1", "broker.pid"), JSON.stringify({ pid: broker }));
-  writeFileSync(join(dir, "meta.json"), JSON.stringify({ daemon: { name, state, pid, startedAt: 1 } }));
-  writeFileSync(join(dir, "spec.json"), JSON.stringify({ env: lane === undefined ? {} : { DORI_LANE: lane } }));
+  const daemon = { name: r.name, state: r.state ?? "ready", pid: r.pid, startedAt: r.startedAt ?? 1 };
+  writeFileSync(join(dir, "meta.json"), JSON.stringify({ daemon }));
+  writeFileSync(join(dir, "spec.json"), JSON.stringify({ env: { DORI_LANE: r.lane, DORI_HOME: r.home } }));
 }
+
+const alive = (c: ChildProcess) => c.exitCode === null && c.signalCode === null;
 
 describe("done stops the lane's omp named services", () => {
   test("only the closed lane's live services under the broker get SIGTERM; a re-run on a done lane sweeps", async () => {
     const run = mkdtempSync(join(tmpdir(), "dori-omp-run-"));
     const { d: base, brief } = setup();
     const d = { ...base, exec: spawnExec, ompRunDir: run };
-    const mine = service();
-    const other = service();
-    const ended = service();
-    record(run, process.pid, "vite", mine.pid!, "ready", "fix-login");
-    record(run, process.pid, "other-lane", other.pid!, "ready", "someone-else");
-    record(run, process.pid, "failed-before", ended.pid!, "failed", "fix-login");
-    record(run, process.pid, "not-a-broker-child", process.pid, "ready", "fix-login");
+    const home = d.store.root;
+    const lane = "fix-login";
+    const [mine, other, ended, sideHome, reused] = [service(), service(), service(), service(), service()];
+    record(run, process.pid, { name: "vite", pid: mine.pid!, lane, home: `${home}/.` });
+    record(run, process.pid, { name: "other-lane", pid: other.pid!, lane: "someone-else", home });
+    record(run, process.pid, { name: "failed-before", pid: ended.pid!, state: "failed", lane, home });
+    record(run, process.pid, { name: "not-a-broker-child", pid: process.pid, lane, home });
+    record(run, process.pid, { name: "same-key-other-home", pid: sideHome.pid!, lane, home: `${home}-side` });
+    // The pid of an old record of this lane now belongs to a newer service of another lane.
+    record(run, process.pid, { name: "old-vite", pid: reused.pid!, lane, home, startedAt: 1 });
+    record(run, process.pid, { name: "new-owner", pid: reused.pid!, lane: "someone-else", home, startedAt: 2 });
 
-    await startLane(d, "fix-login", brief, { group: "w1" });
-    await ready(d, "fix-login", "fixed", ["https://github.com/o/r/pull/1"]);
-    expect(await done(d, "fix-login")).toEqual(["vite"]);
+    await startLane(d, lane, brief, { group: "w1" });
+    await ready(d, lane, "fixed", ["https://github.com/o/r/pull/1"]);
+    expect(await done(d, lane)).toEqual(["vite"]);
     expect(await exited(mine)).toBe("SIGTERM");
-    expect(other.exitCode === null && other.signalCode === null).toBe(true);
-    expect(ended.exitCode === null && ended.signalCode === null).toBe(true);
-    expect(d.store.lane("fix-login")!.status).toBe("done");
+    for (const c of [other, ended, sideHome, reused]) expect(alive(c)).toBe(true);
+    expect(d.store.lane(lane)!.status).toBe("done");
 
     const late = service();
-    record(run, process.pid, "vite-late", late.pid!, "ready", "fix-login");
-    expect(await done(d, "fix-login")).toEqual(["vite-late"]);
+    record(run, process.pid, { name: "vite-late", pid: late.pid!, lane, home });
+    expect(await done(d, lane)).toEqual(["vite-late"]);
     expect(await exited(late)).toBe("SIGTERM");
   });
 });

@@ -174,7 +174,7 @@ export async function ready(
 export async function done(d: Deps, key: string): Promise<string[]> {
   const lane = d.store.lane(key);
   if (!lane) throw new Refusal(`no lane ${key}`);
-  if (lane.status === "done") return stopLaneServices(d.exec, d.ompRunDir, key);
+  if (lane.status === "done") return stopLaneServices(d.exec, d.ompRunDir, d.store.root, key);
   if (lane.status !== "ready") throw new Refusal(`lane ${key} is ${lane.status}, not ready: no final answer recorded`);
   const rt = d.runtimes.for(lane.sessionRef);
   const { status: st } = await rt.probe(lane.sessionRef);
@@ -184,5 +184,5 @@ export async function done(d: Deps, key: string): Promise<string[]> {
   lane.status = "done";
   lane.log.push({ at: d.now(), kind: "done", text: "closed by lead" });
   d.store.saveLane(lane);
-  return stopLaneServices(d.exec, d.ompRunDir, key);
+  return stopLaneServices(d.exec, d.ompRunDir, d.store.root, key);
 }
