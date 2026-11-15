@@ -27,7 +27,7 @@ export async function startLane(
   d: Deps,
   key: string,
   briefFile: string,
-  opts: { cwd?: string; group?: string; priority?: number } = {},
+  opts: { cwd?: string; group?: string; priority?: number; model?: string | undefined } = {},
 ): Promise<Lane> {
   if (!KEY_RE.test(key)) throw new Refusal(`lane key must match ${KEY_RE}`);
   const priority = opts.priority === undefined ? undefined : checkPriority(opts.priority);
@@ -54,14 +54,16 @@ export async function startLane(
     (self?.runtime === rt.kind ? self.group : undefined) ??
     (rt.kind === "herdr" ? await rt.createGroup("dori", cwd) : groupId(d.store.root));
   const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
-  // OMP takes the lane pin (a lead's before `start`, or the hourly loop's) as its model, unless the command names one.
+  // An OMP lane runs on the caller's model ("<model>|<thinking>", the hourly loop's), else the lane pin a lead wrote by
+  // hand before `start`; a command that names --model keeps it and takes neither.
   const command = agentCommand(d, "lane");
-  const pinned =
-    isOmpAgentCommand(command) && !/(?:^|\s)--model(?:[=\s]|$)/.test(command) ? takeLanePin(d.store.root) : "";
+  const choose = isOmpAgentCommand(command) && !/(?:^|\s)--model(?:[=\s]|$)/.test(command);
+  const [model, thinking] = (choose ? (opts.model ?? takeLanePin(d.store.root)) : undefined)?.split("|") ?? [];
+  const modelArgs = model ? ` --model ${shq(model)}${thinking ? ` --thinking ${shq(thinking)}` : ""}` : "";
   const ref = await openSession(
     rt,
     { name: key, role: "lane", container: "tab", cwd, env: { DORI_LANE: key, DORI_HOME: d.store.root }, group },
-    `${command}${pinned} ${shq(kickoff)}`,
+    `${command}${modelArgs} ${shq(kickoff)}`,
   );
 
   const now = d.now();

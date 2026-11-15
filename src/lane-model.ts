@@ -1,6 +1,6 @@
-// Which OMP a lane starts with, and which model it runs: the lane pin a lead writes by hand before `start` or the
-// hourly loop writes from config.json `loopLaneModel`, taken by the next lane start.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+// Which OMP a lane starts with, and which model it runs: the hourly loop's config.json `loopLaneModel`, or the lane
+// pin a lead writes by hand before `start`.
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
@@ -16,9 +16,6 @@ export const homeStateDir = (root: string): string =>
     process.env["DORI_CONFIG"] === undefined ? join(root, "state") : undefined,
   );
 
-/** Where the next lane start finds its model pin: written by a lead by hand or by the hourly loop, taken by `startLane`. */
-export const lanePinPath = (root: string): string => join(homeStateDir(root), "next-lane-model");
-
 /** `<root>/config.json` `agentCommand[0]` as a shell word when it names an OMP executable (the installer's wrapper). */
 export function configuredOmp(root: string): string | undefined {
   const argv: unknown = Reflect.get(readConfig(root), "agentCommand");
@@ -28,29 +25,22 @@ export function configuredOmp(root: string): string | undefined {
   return /^[\w./-]+$/.test(cmd) ? cmd : shq(cmd);
 }
 
-/** Writes `<root>/config.json` `loopLaneModel` ("<model>|<thinking>") as the lane pin; false (nothing written) with no setting. */
-export function pinLoopLaneModel(root: string): boolean {
-  const pin: unknown = Reflect.get(readConfig(root), "loopLaneModel");
-  if (pin === undefined) return false;
-  if (typeof pin !== "string" || !PIN.test(pin))
-    throw new ConfigError('config.json: loopLaneModel must look like "provider/model" or "provider/model|thinking"');
-  const path = lanePinPath(root);
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(`${path}.tmp.${process.pid}`, pin, { mode: 0o600 });
-  renameSync(`${path}.tmp.${process.pid}`, path);
-  return true;
+/** `<root>/config.json` `loopLaneModel` ("<model>|<thinking>"), the model of every lane the hourly loop opens. */
+export function loopLaneModel(root: string): string | undefined {
+  const model: unknown = Reflect.get(readConfig(root), "loopLaneModel");
+  if (model === undefined || (typeof model === "string" && PIN.test(model))) return model;
+  throw new ConfigError('config.json: loopLaneModel must look like "provider/model" or "provider/model|thinking"');
 }
 
 /**
- * Takes the lane pin (it is gone afterwards) as OMP arguments: ` --model <m>[ --thinking <t>]`, or "" with no pin.
- * A pin that is not "<model>|<thinking>" is a ConfigError and stays in place for the person who wrote it.
+ * Takes the lane pin a lead wrote by hand before `start` (it is gone afterwards), or undefined with none. A pin that is
+ * not "<model>|<thinking>" is a ConfigError and stays in place for the person who wrote it.
  */
-export function takeLanePin(root: string): string {
-  const path = lanePinPath(root);
-  if (!existsSync(path)) return "";
+export function takeLanePin(root: string): string | undefined {
+  const path = join(homeStateDir(root), "next-lane-model");
+  if (!existsSync(path)) return undefined;
   const pin = readFileSync(path, "utf8").trim();
   if (!PIN.test(pin)) throw new ConfigError(`${path} must look like "provider/model" or "provider/model|thinking"`);
   rmSync(path, { force: true });
-  const [model, thinking] = pin.split("|");
-  return ` --model ${shq(model!)}${thinking ? ` --thinking ${shq(thinking)}` : ""}`;
+  return pin;
 }

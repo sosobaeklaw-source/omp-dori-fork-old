@@ -1,11 +1,10 @@
 // The hourly loop: sync the backlog with live lanes, audit for missed work, start the next item
 // that needs no decision, ask the lead the open questions, and record the run. It never merges,
 // never pushes, never closes a pane and never edits a lane record. See docs/hourly-loop.md.
-import { rmSync } from "node:fs";
 import { log } from "./backlog.ts";
 import type { Deps } from "./harness.ts";
 import { tellLead } from "./inbox.ts";
-import { lanePinPath, pinLoopLaneModel } from "./lane-model.ts";
+import { loopLaneModel } from "./lane-model.ts";
 import { startLane } from "./lanes.ts";
 import { audit, HOUR } from "./loop-audit.ts";
 import { acquire, holds, release } from "./loop-lock.ts";
@@ -94,6 +93,15 @@ async function pull(
     );
     starts = 0;
   }
+  // Every lane the loop opens runs on config.json loopLaneModel. A bad setting is the config's fault, not any item's:
+  // it holds all starts this run and counts against no item.
+  let model: string | undefined;
+  try {
+    model = loopLaneModel(d.store.root);
+  } catch (e) {
+    if (starts > 0 && candidates.length > 0) run.held.push(e instanceof Error ? e.message : String(e));
+    starts = 0;
+  }
   // Each start attempt uses one of this run's slots, so a broken host costs at most `starts` failures per run.
   // A failed item counts toward MAX_ATTEMPTS and then becomes a question, so it never blocks the items behind it.
   let tried = 0;
@@ -103,14 +111,9 @@ async function pull(
       run.held.push("lock lost to another loop; no more starts this run");
       break;
     }
-    let pinned = false;
     try {
-      // The lane runs on the configured model, not whatever the agent command defaults to; startLane takes the pin.
-      pinned = pinLoopLaneModel(d.store.root);
-      await startLane(d, item.id, item.brief, { cwd: item.cwd, priority: item.priority });
+      await startLane(d, item.id, item.brief, { cwd: item.cwd, priority: item.priority, model });
     } catch (e) {
-      // A start that failed before its pane opened leaves the pin behind; it must not reach a lane opened later.
-      if (pinned) rmSync(lanePinPath(d.store.root), { force: true });
       const why = e instanceof Error ? e.message : String(e);
       const lane = d.store.lane(item.id);
       if (!lane || !isOpenLane(lane.status) || lane.createdAt < run.at) {
