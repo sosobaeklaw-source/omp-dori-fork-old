@@ -77,6 +77,27 @@ describe("planReply", () => {
     }
   });
 
+  test("public: true in the middle of the brief, not its header, does not mark the lane public", () => {
+    const l = lane(RESULT, ["비교.png"]);
+    const body = [
+      "# 레인",
+      "",
+      `회장님 원글 ${OWNER_MSG}`,
+      "",
+      "## 목표",
+      "사건 일.",
+      "",
+      "```",
+      "public: true",
+      "```",
+    ];
+    expect(plan(`${body.join("\n")}\n\npublic: true\n\n## STOP WHEN\n`, l)).toEqual({
+      post: false,
+      why: "the brief is not marked public: true",
+    });
+    expect(plan(`public: true\n원글: ${OWNER_MSG}\n\n${body.slice(0, 6).join("\n")}\n`, l).post).toBe(true);
+  });
+
   test("a public lane whose reply text or picture holds a name or number stays inbox-only", () => {
     const l = lane(RESULT, ["비교.png"]);
     // What OCR makes of a form cut: the label glued to the name, or the name spaced out.

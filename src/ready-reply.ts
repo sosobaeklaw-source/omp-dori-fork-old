@@ -75,8 +75,11 @@ function caseReason(label: string, text: string, names: readonly string[]): stri
   return undefined;
 }
 
-/** Whether the brief, above `## STOP WHEN`, marks the lane public with a line `public: true`. */
-const isPublic = (brief: string) => /^public:\s*true\s*$/m.test(brief.split(/^## STOP WHEN/m)[0] ?? brief);
+/** How many lines at the top of a brief make its header, where plan-fable.sh writes `public: true`. */
+const HEADER_LINES = 5;
+
+/** Whether the brief's header (its first HEADER_LINES lines) marks the lane public with a line `public: true`. */
+const isPublic = (brief: string) => brief.split("\n", HEADER_LINES).some((line) => /^public:\s*true\s*$/.test(line));
 
 /** The owner messages in the inbound log, id -> channel. */
 export function ownerMessages(inboundLog: string): Map<string, string> {
