@@ -11,17 +11,8 @@ import { alive } from "../skills/dori-mode/scripts/src/checkpoint-lock.ts";
 import { need, one, parse } from "../src/cli-args.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
-import {
-  addEntry,
-  buildRequest,
-  countCases,
-  END,
-  fillSheet,
-  kindOf,
-  kindRanges,
-  readSheet,
-  writerOf,
-} from "../src/writer-request.ts";
+import { addEntry, buildRequest, countCases, END, kindOf, kindRanges, writerOf } from "../src/writer-request.ts";
+import { fillSheet, readSheet } from "../src/writer-sheet.ts";
 import { sendOnSeat } from "../src/writer-seat.ts";
 
 const USAGE = `usage:
@@ -61,7 +52,7 @@ try {
     });
     console.log(`BUILT ${built.path} dok=${built.dok} reject=${built.reject} repeat=${built.repeat}`);
   } else if (cmd === "fill") {
-    const sheet = readSheet(need(one(a, "sheet"), "--sheet"));
+    const sheet = readSheet(need(one(a, "sheet"), "--sheet"), END);
     const words = fillSheet(sheet, readFileSync(need(one(a, "answer"), "--answer"), "utf8"));
     const out = need(one(a, "out"), "--out");
     writeFileSync(out, `${JSON.stringify(words, null, 1)}\n`);

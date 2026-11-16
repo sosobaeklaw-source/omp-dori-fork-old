@@ -11,8 +11,8 @@
  *
  * Words outside the body (figure text, table cells, cover strip, alt, captions) go the same way: the lane lists them
  * in one word sheet (`[key]` then what the slot says in the law's terms and its article, the sentence left out),
- * builds the request with `--sheet`, and `fill` copies the writer's answer back per key for the renderer. Nobody
- * retypes a figure's words between the writer and the picture.
+ * builds the request with `--sheet`, and `fill` copies the writer's answer back per key for the renderer
+ * (src/writer-sheet.ts). Nobody retypes a figure's words between the writer and the picture.
  *
  * A ledger `후` sentence that is not in that entry's own 원문 was written by the lead, not the owner, so it goes into
  * the body as `후(리드 제안):`; the writer does not take it as the owner's fix. The ledger file is left as written.
@@ -24,6 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Refusal } from "./refusal.ts";
+import { markLeadAfter, readSheet, SHEET_ASK } from "./writer-sheet.ts";
 
 export const KINDS = ["seo", "card", "video", "legal"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -163,7 +164,7 @@ export interface Built {
 export function buildRequest(input: BuildInput): Built {
   if (input.tasks.length === 0 && !input.sheet) throw new Refusal("give the lane's task text with --task FILE");
   for (const t of input.tasks) if (!existsSync(t)) throw new Refusal(`no task file ${t}`);
-  const sheet = input.sheet === undefined ? undefined : readSheet(input.sheet);
+  const sheet = input.sheet === undefined ? undefined : readSheet(input.sheet, END);
   const ranges = kindRanges(input.home, input.kind, input.cases);
   if (ranges.length === 0)
     throw new Refusal(
@@ -242,68 +243,4 @@ export function addEntry(input: AddInput): string {
   parseLedger(lines.join("\n"));
   appendFileSync(ledgerPath(input.home), `${lines.join("\n")}\n`);
   return lines[1]!;
-}
-
-/**
- * `후: "A / B"` becomes `후(리드 제안): "A / B"` unless every `/`-separated part is in the entry's 원문: only the
- * owner's own words count as his fix, and a sentence the lead put there is a proposal.
- */
-export function markLeadAfter(block: string): string {
-  const owner = (/원문: "([\s\S]*)"\n전: /.exec(block) ?? /원문: "([\s\S]*)"\s*$/.exec(block))?.[1];
-  return block.replace(/^후: "(.*)"$/m, (line, after: string) =>
-    owner !== undefined && after.split(" / ").every((p) => owner.includes(p.trim()))
-      ? line
-      : `후(리드 제안): "${after}"`,
-  );
-}
-
-/** Asked of the writer once, above the sheet's slots. */
-export const SHEET_ASK =
-  "아래 [ ] 칸마다, 그 아래 적힌 자리와 근거에 맞는 문장만 쓰세요. 답은 같은 [ ] 줄 아래에 그 칸의 문장만 둡니다.";
-
-export interface Sheet {
-  readonly text: string;
-  /** Slot keys in sheet order. */
-  readonly keys: readonly string[];
-}
-
-const SLOT = /^\[([^\]\s]+)\]\s*$/;
-
-/** A word sheet: `[key]` lines, each followed by what that slot says; keys are unique and at least one. */
-export function readSheet(path: string): Sheet {
-  if (!existsSync(path)) throw new Refusal(`no word sheet ${path}`);
-  const text = readFileSync(path, "utf8");
-  if (text.split("\n").includes(END)) throw new Refusal(`${path} holds the line "${END}"`);
-  const keys = text.split("\n").flatMap((l) => SLOT.exec(l.trim())?.[1] ?? []);
-  if (keys.length === 0) throw new Refusal(`${path}: no [key] line`);
-  const twice = keys.filter((k, i) => keys.indexOf(k) !== i);
-  if (twice.length > 0) throw new Refusal(`${path}: [${twice.join("], [")}] more than once`);
-  return { text, keys };
-}
-
-/**
- * The writer's words per slot, in sheet order. Text under a `[key]` line up to the next one, trimmed; a `[key]` the
- * sheet does not have, a missing one or an empty one is refused, so a figure is never drawn from a partial answer.
- */
-export function fillSheet(sheet: Sheet, answer: string): Record<string, string> {
-  const got = new Map<string, string[]>();
-  let open: string[] | undefined;
-  for (const line of answer.split("\n")) {
-    const key = SLOT.exec(line.trim())?.[1];
-    if (key !== undefined) {
-      if (!sheet.keys.includes(key)) throw new Refusal(`the answer has [${key}], which the sheet does not`);
-      if (got.has(key)) throw new Refusal(`the answer has [${key}] more than once`);
-      open = [];
-      got.set(key, open);
-    } else open?.push(line);
-  }
-  const out: Record<string, string> = {};
-  const missing: string[] = [];
-  for (const k of sheet.keys) {
-    const words = got.get(k)?.join("\n").trim();
-    if (words) out[k] = words;
-    else missing.push(k);
-  }
-  if (missing.length > 0) throw new Refusal(`the answer has no words for [${missing.join("], [")}]`);
-  return out;
 }

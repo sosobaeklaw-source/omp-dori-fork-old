@@ -8,14 +8,12 @@ import {
   casesPath,
   countCases,
   END,
-  fillSheet,
   type Kind,
   ledgerPath,
-  markLeadAfter,
   readRange,
-  readSheet,
   writerOf,
 } from "../src/writer-request.ts";
+import { fillSheet, markLeadAfter, readSheet } from "../src/writer-sheet.ts";
 
 // One synthetic entry per kind, one for all kinds, and a repeat pair whose first entry is seo-only.
 const LEDGER = `# ledger
@@ -193,7 +191,7 @@ describe("writer request", () => {
     const body = readFileSync(built.path, "utf8");
     expect(body.indexOf("Write section 2.")).toBeLessThan(body.indexOf("[제목]"));
     expect(body.indexOf(END)).toBeLessThan(body.indexOf("[상자1]"));
-    const sheet = readSheet(sheetPath);
+    const sheet = readSheet(sheetPath, END);
     expect(sheet.keys).toEqual(["제목", "상자1"]);
     expect(
       fillSheet(sheet, "설명 한 줄\n[제목]\n추가상병 불승인 처분에 대한 불복 절차\n\n[상자1]\n안 날부터 90일\n"),
@@ -204,6 +202,6 @@ describe("writer request", () => {
     expect(() => fillSheet(sheet, "[제목]\n제목만\n")).toThrow("no words for [상자1]");
     expect(() => fillSheet(sheet, "[제목]\na\n[상자1]\nb\n[상자9]\nc\n")).toThrow("[상자9], which the sheet does not");
     writeFileSync(sheetPath, "[a]\nx\n[a]\ny\n");
-    expect(() => readSheet(sheetPath)).toThrow("more than once");
+    expect(() => readSheet(sheetPath, END)).toThrow("more than once");
   });
 });
