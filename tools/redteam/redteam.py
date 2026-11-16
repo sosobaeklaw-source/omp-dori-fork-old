@@ -69,12 +69,15 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str) -> dict:
                          "u0/u1/u2 ChatGPT 웹에 로그인된 세션이 없어 돌리지 않았다. 다른 모델로 대신하지 않았다.")
         return {"branch": "gpt_web", "status": "blocked", "model": "-", "chars": 0}
     raw = out / "raw_gpt_web"
+    led = raw / "ledger.json"
+    # tk2 never resends a lane its ledger marks UNAVAILABLE; keep that attempt aside so a rerun sends again.
+    if led.exists() and json.loads(led.read_text())["lanes"].get(f"gpt6pro_{acct}", {}).get("status") == "UNAVAILABLE":
+        raw.rename(out / f"raw_gpt_web.failed-{time.strftime('%H%M%S')}")
     t0 = time.time()
     proc = subprocess.run([str(LOCK), acct, lane, "--", sys.executable, str(TK2), "run", "--prompt", str(prompt_file),
                            "--out", str(raw), "--only", f"gpt6pro_{acct}", "--deadline-min", "45"],
                           capture_output=True, text=True)
     rec = {}
-    led = raw / "ledger.json"
     if led.exists():
         rec = json.loads(led.read_text())["lanes"].get(f"gpt6pro_{acct}", {})
     text = (raw / "lanes" / rec["output"]).read_text() if rec.get("status") == "ok" else ""
