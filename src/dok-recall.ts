@@ -23,10 +23,11 @@ const COMMON = new Set(
 // Same particle stripping as lesson-match.ts, so "독후감을" and "독후감" are one word.
 const PARTICLE =
   /^(\p{Script=Hangul}{2,}?)(?:에서|으로|까지|부터|에게|한테|처럼|보다|은|는|이|가|을|를|에|의|도|로|와|과|만)$/u;
-// Copies, drafts and backups of a note, and the working folders its drafts sit in: the index skips most of them
-// too, and they crowd out the note itself. A folder or file name holding any of these is left out.
+// Copies, drafts and backups of a note, the requests, prompts and run logs that made it, and the working folders
+// its drafts sit in: the index skips most of them too, and they crowd out the note itself. A folder or file name
+// holding any of these is left out.
 const COPY =
-  /bak|backup|_old|_v\d|_r\d+\.md$|원본\.md$|before|보관_|사용금지_|사본|초안|검수전|수정전|교정전|_보존|집필요청|한도종료|_읽기자료|^_?work$|^dok-work$|^src$/i;
+  /bak|backup|_old|_v\d|_r\d+\.md$|원본\.md$|before|사본|백업|보관|보존|사용금지_|미사용|초안|초고|후보|검토중|(?:검수|수정|교정|대조|조사|정정)전|요청|지시\.md$|브리프|프롬프트|입력기록|stdout|한도종료|_읽기자료|failed|^attempt$|^_?work$|^dok-work$|^src$/i;
 const CITE = /[~/\w.-]*sobaegi-lead\/results\/[^\s)`'"]*독후감[^\s)`'":]*\.md/gu;
 
 /** Words of `text`: Korean words keep their two-letter pieces too, since Korean compounds have no spaces. */

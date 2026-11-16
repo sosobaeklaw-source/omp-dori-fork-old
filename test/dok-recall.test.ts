@@ -36,6 +36,11 @@ function tree(): string {
     "y/집필요청/독후감.md",
     "y/한도종료_독후감.md",
     "z/_읽기자료/독후감.md",
+    "wck-recall-1109/독후감_5차전_백업.md",
+    "readable-1110/독후감_opus_요청1.md",
+    "r109/109차_독후감_11-12절_카본보정후보.md",
+    "r111/carbon/독후감_3_실행stdout.md",
+    "pd/독후감_최종집필_지시.md",
   ].entries())
     note(rel, [`# 독후감 — 카드뉴스 초안 ${i}`, ...filler(`초안${i}`, 3)]);
   note("video-1111/독후감.md", ["# 독후감 — 영상 컷", "", ...filler("영상", 5)]);
