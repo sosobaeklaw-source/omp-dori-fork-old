@@ -54,7 +54,7 @@ export class Store {
 
   private writeJson(path: string, value: unknown): void {
     const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+    writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
     renameSync(tmp, path);
   }
 

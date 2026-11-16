@@ -53,7 +53,7 @@ export async function committedSource(root: string, commit: string, destination:
     await git(
       root,
       ["hash-object", "--no-filters", "--stdin-paths"],
-      files.map((file) => JSON.stringify(join(destination, file.path))).join("\n") + "\n",
+      `${files.map((file) => JSON.stringify(join(destination, file.path))).join("\n")}\n`,
     )
   )
     .toString()

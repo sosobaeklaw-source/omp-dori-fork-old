@@ -68,7 +68,7 @@ export class Telemetry implements Usage {
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly send: Sender = fetchSender,
     private readonly now: () => number = Date.now,
-    private readonly notice: (s: string) => void = (s) => process.stderr.write(s + "\n"),
+    private readonly notice: (s: string) => void = (s) => process.stderr.write(`${s}\n`),
   ) {}
 
   private get path(): string {
@@ -96,7 +96,7 @@ export class Telemetry implements Usage {
   private load(): State {
     if (!existsSync(this.path)) {
       const tmp = `${this.path}.${process.pid}.${randomBytes(4).toString("hex")}.new`;
-      writeFileSync(tmp, JSON.stringify({ installId: randomBytes(16).toString("hex") }) + "\n", { mode: 0o600 });
+      writeFileSync(tmp, `${JSON.stringify({ installId: randomBytes(16).toString("hex") })}\n`, { mode: 0o600 });
       try {
         linkSync(tmp, this.path);
       } catch (e) {
@@ -110,7 +110,7 @@ export class Telemetry implements Usage {
 
   private save(state: State): void {
     const tmp = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(state) + "\n", { mode: 0o600 });
+    writeFileSync(tmp, `${JSON.stringify(state)}\n`, { mode: 0o600 });
     renameSync(tmp, this.path);
   }
 
