@@ -149,7 +149,8 @@ def call_pirate(out: Path, prompt: str, m: dict) -> dict:
                                                          "x-opencode-session": "redteam-" + uuid.uuid4().hex[:12]},
                       body, timeout=900)
         text = (r["choices"][0]["message"].get("content") or "").strip()
-        head.update({"status": "ok" if text else "empty", "model_shown": r.get("model", "-"), "chars": len(text)})
+        head.update({"status": "ok" if text else "empty", "model_shown": r.get("model", "-"), "chars": len(text),
+                     "finish_reason": r["choices"][0].get("finish_reason"), "usage": json.dumps(r.get("usage"))})
     except Exception as e:  # each model's failure is its own result
         detail = e.read().decode(errors="replace")[:1500] if hasattr(e, "read") else ""
         text = ""
