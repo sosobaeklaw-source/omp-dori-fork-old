@@ -49,7 +49,7 @@ jobs:
         run: python3 -m unittest discover -s tools/redteam
 
   test-macos:
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -80,9 +80,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: skills/dori-mode/scripts
-      - run: bun test --parallel=3 --timeout=20000 --timings=.bun-test-timings.json ./test/
-      - run: bun run test:skill --timeout=20000
-      - run: bun run test:extension --timeout=20000
+      - run: bun test --parallel=3 --timings=.bun-test-timings.json ./test/
+      - run: bun run test:skill
+      - run: bun run test:extension
 
   e2e-herdr:
     runs-on: ubuntu-latest

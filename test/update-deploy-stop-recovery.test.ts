@@ -10,49 +10,42 @@ import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-posix.each([2, 3])(
-  "startup stop recaptures after a real foreground child exits during probe %s",
-  async (cut) => {
-    const f = await managedBashFixture({ transient: true });
-    // Slow CI runners spend seconds reaping the killed child; only this test widens the stop bound.
-    const config = { ...f.config, stopTimeoutMs: 30_000 };
-    const expected = processIdentity(f.runtime.pid)!;
-    expect(processIdentity(f.previousRuntime!.pid)).toBeUndefined();
-    const pulse = processIdentity(f.front.foreground_processes.at(-1)!.pid!)!;
-    expect(underProcess(pulse.pid, expected.pid)).toBe(true);
-    f.record.launchProcess = expected;
-    f.writeHealth({ ...f.health, presetLoaded: false });
-    let observations = 0;
-    let expired = false;
-    const cli = herdrDeploymentCli(async (cmd, args) => {
-      const snapshot = await f.cli.exec(cmd, args);
-      if (cmd === "herdr" && args[3] === "process-info") {
-        observations++;
-        if (sameProcess(expected)) expect(existsSync(f.signalPath)).toBe(false);
-        if (observations === cut) {
-          expect(sameProcess(pulse)).toBe(true);
-          process.kill(pulse.pid, "SIGTERM");
-          // Real kernel reaping cannot be advanced with a fake JS clock: wait until the child is actually gone.
-          const until = Date.now() + config.stopTimeoutMs;
-          while (processIdentity(pulse.pid) && Date.now() < until)
-            await f.cli.exec("ps", ["-o", "stat=", "-p", String(pulse.pid)]);
-          expect(processIdentity(pulse.pid)).toBeUndefined();
-          f.front.foreground_processes = f.front.foreground_processes.filter(({ pid }) => pid !== pulse.pid);
-          expired = true;
-        }
+posix.each([2, 3])("startup stop recaptures after a real foreground child exits during probe %s", async (cut) => {
+  const f = await managedBashFixture({ transient: true });
+  const expected = processIdentity(f.runtime.pid)!;
+  expect(processIdentity(f.previousRuntime!.pid)).toBeUndefined();
+  const pulse = processIdentity(f.front.foreground_processes.at(-1)!.pid!)!;
+  expect(underProcess(pulse.pid, expected.pid)).toBe(true);
+  f.record.launchProcess = expected;
+  f.writeHealth({ ...f.health, presetLoaded: false });
+  let observations = 0;
+  let expired = false;
+  const cli = herdrDeploymentCli(async (cmd, args) => {
+    const snapshot = await f.cli.exec(cmd, args);
+    if (cmd === "herdr" && args[3] === "process-info") {
+      observations++;
+      if (sameProcess(expected)) expect(existsSync(f.signalPath)).toBe(false);
+      if (observations === cut) {
+        expect(sameProcess(pulse)).toBe(true);
+        process.kill(pulse.pid, "SIGTERM");
+        // Real kernel reaping cannot be advanced with a fake JS clock.
+        const until = Date.now() + 1_000;
+        while (processIdentity(pulse.pid) && Date.now() < until)
+          await f.cli.exec("ps", ["-o", "stat=", "-p", String(pulse.pid)]);
+        expect(processIdentity(pulse.pid)).toBeUndefined();
+        f.front.foreground_processes = f.front.foreground_processes.filter(({ pid }) => pid !== pulse.pid);
+        expired = true;
       }
-      return snapshot;
-    }, config.herdrSession!);
-    await stopLaunchedProcess(config, cli, f.record, f.launchRequestedAt, expected);
-    expect(expired).toBe(true);
-    expect(observations).toBeGreaterThan(cut + 1);
-    expect(sameProcess(expected)).toBe(false);
-    for (const monitor of f.bootstrap.running!) expect(sameProcess(monitor.identity!)).toBe(false);
-    expect(readFileSync(f.signalPath, "utf8")).toBe("SIGTERM");
-    // Real process reaping plus recapture outlasts the default bound on loaded CI runners.
-  },
-  120_000,
-);
+    }
+    return snapshot;
+  }, f.config.herdrSession!);
+  await stopLaunchedProcess(f.config, cli, f.record, f.launchRequestedAt, expected);
+  expect(expired).toBe(true);
+  expect(observations).toBeGreaterThan(cut + 1);
+  expect(sameProcess(expected)).toBe(false);
+  for (const monitor of f.bootstrap.running!) expect(sameProcess(monitor.identity!)).toBe(false);
+  expect(readFileSync(f.signalPath, "utf8")).toBe("SIGTERM");
+});
 
 posix("an interrupted pre-signal capture never signals the owned startup", async () => {
   const f = await managedBashFixture();

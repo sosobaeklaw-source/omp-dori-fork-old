@@ -20,7 +20,7 @@ const posix = test.skipIf(process.platform !== "linux" && process.platform !== "
 posix("a managed Bash launch journals its real actor, verifies health and becomes active", async () => {
   const f = await managedBashFixture();
   expect((await f.cli.probe(f.config.pane, "held", f.config.stateDir)).shellInFront).toBe(true);
-  const healthy = await f.whileHealthFresh(restartDeployment(f.config));
+  const healthy = await restartDeployment(f.config);
   expect(healthy).toMatchObject({
     status: "healthy",
     step: "done",
@@ -46,7 +46,7 @@ posix("a prior managed Bash actor resumes rollback with managed health and an ac
   f.record.rollbackRequestedAt = f.launchRequestedAt;
   f.record.rollbackLaunchRequestedAt = f.launchRequestedAt;
   f.persist(f.record);
-  const restored = await f.whileHealthFresh(restartDeployment(f.config));
+  const restored = await restartDeployment(f.config);
   expect(restored).toMatchObject({
     status: "rolled-back",
     step: "done",

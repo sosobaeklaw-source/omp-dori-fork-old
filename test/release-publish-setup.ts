@@ -180,8 +180,7 @@ await publishRelease(process.cwd(), distribution);`,
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
-        // A hung publisher must still die, but loaded CI runners need more than 15 s for the real producer.
-        timeout: 60_000,
+        timeout: 15_000,
         killSignal: "SIGKILL",
       },
     );
