@@ -10,10 +10,10 @@ import { defaultHome } from "../src/test-home.ts";
 import { addEntry, buildRequest, countCases, END, kindOf, kindRanges, writerOf } from "../src/writer-request.ts";
 
 const USAGE = `usage:
-  writer_request build --kind seo|card|video|legal --model argon|hydrogen --lane-dir DIR --task FILE [--task FILE ...]
-                       [--cases PATH:START-END ...] [--label NAME]
+  writer_request build --kind seo|card|video|legal --model argon|hydrogen --lane-dir DIR --task FILE [--task FILE]
+                       [--cases PATH:START-END] [--cases PATH:START-END] [--label NAME]
       -> DIR/requests/NN_<model>[_NAME].txt and .count
-  writer_request count FILE --kind seo|card|video|legal [--cases PATH:START-END ...]
+  writer_request count FILE --kind seo|card|video|legal [--cases PATH:START-END] [--cases PATH:START-END]
       -> exit 1 unless every case line of those passages sits above the task line of FILE
   writer_request add --kind KIND[,KIND]|all --msg ID --text TEXT [--post ID] [--repeat ID]
                      [--before TEXT --after TEXT] [--date "YYYY-MM-DD HH:MM"]`;
@@ -22,6 +22,10 @@ try {
   const a = parse(process.argv.slice(2));
   const home = defaultHome();
   const cmd = a.pos[0];
+  // Every flag takes one value, so a second value after --cases or --task would otherwise drop out unseen.
+  const stray = a.pos.slice(cmd === "count" ? 2 : 1);
+  if (stray.length > 0)
+    throw new Refusal(`unexpected argument ${stray.join(" ")}: repeat the flag for each value\n${USAGE}`);
   if (cmd === "build") {
     const built = buildRequest({
       home,

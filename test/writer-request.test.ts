@@ -104,6 +104,28 @@ describe("writer request", () => {
     expect(countCases(`intro\n${END}\n${CASE_1}\n${CASE_2}\n`, r)[0]).toMatchObject({ hit: 0, total: 2 });
   });
 
+  test("the CLI refuses a second value after one flag, and count exits 1 unless every case line is there", () => {
+    const { home, lane, task, notes } = setup();
+    const run = (...args: string[]) => {
+      const p = Bun.spawnSync(["bun", join(import.meta.dir, "../tools/writer_request.ts"), ...args], {
+        env: { ...process.env, DORI_HOME: home },
+      });
+      return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() };
+    };
+    const extra = join(home, "extra.md");
+    writeFileSync(extra, `${CASE_2}\n`);
+    const base = ["build", "--kind", "seo", "--model", "argon", "--lane-dir", lane, "--task", task];
+    expect(run(...base, "--cases", `${notes}:1-5`, `${extra}:1-1`)).toMatchObject({ code: 1 });
+    expect(run(...base, "--cases", `${notes}:1-5`, "--cases", `${extra}:1-1`).code).toBe(0);
+    const body = join(lane, "requests", "01_argon.txt");
+    expect(run("count", body, "--kind", "seo", "--cases", `${extra}:1-1`).code).toBe(0);
+    writeFileSync(join(home, "hand.txt"), `${CASE_1}\n${END}\n`);
+    expect(run("count", join(home, "hand.txt"), "--kind", "seo").code).toBe(1);
+    writeFileSync(join(home, "noend.txt"), `${CASE_1}\n${CASE_2}\n`);
+    expect(run("count", join(home, "noend.txt"), "--kind", "seo")).toMatchObject({ code: 1 });
+    expect(run("count", join(home, "noend.txt"), "--kind", "seo").out).toContain(`no "${END}" line`);
+  });
+
   test("a range must be PATH:START-END inside the file, hold a case line and not hold the task line", () => {
     const { home, lane, task, notes } = setup();
     for (const span of ["5-3", "0-2", "3", "x-4"])
