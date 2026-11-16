@@ -1,0 +1,5 @@
+# legal: natural legal sentences (principle + 8 before/after pairs), lexicon passage, 공단 안내 block. macmini 원문 경로(owner-now-sync 미러) (rootfix-pr4-1116)
+~/sobaegi-lead/results/voice-rootcause/독후감_자연스러운_법률문장.md:51-55
+~/sobaegi-lead/results/voice-rootcause/독후감_자연스러운_법률문장.md:85-94
+~/sobaegi-lead/results/lexicon-natural-1110/독후감_자연스러운말.md:20-22
+~/sobaegi-lead/results/legal-lexicon/독후감.md:135-141

@@ -1,0 +1,6 @@
+# seo: 독후감 원문 대목(PATH:START-END), macmini ~/sobaegi-lead/results/ 를 owner-now-sync가 같은 경로로 비춘 것. 요약본은 넣지 않는다 (rootfix-pr4-1116)
+~/sobaegi-lead/results/rewrite-299-1116/기자팁원리.md:6-29
+~/sobaegi-lead/results/readable-1110/flow/독후감_글흐름.md:7-17
+~/sobaegi-lead/results/readable-1110/flow/독후감_글흐름.md:45-47
+~/sobaegi-lead/results/voice-rootcause/독후감_자연스러운_법률문장.md:51-55
+~/sobaegi-lead/results/rewrite02-review-1115/독후감_반영대목.md:5-30

@@ -1,0 +1,5 @@
+# video: the owner's video words as read in 좋은영상의근본 독후감
+~/sobaegi-lead/results/video-goodness-1112/261113_좋은영상의근본_독후감.md:7-7
+~/sobaegi-lead/results/video-goodness-1112/261113_좋은영상의근본_독후감.md:13-13
+~/sobaegi-lead/results/video-goodness-1112/261113_좋은영상의근본_독후감.md:19-19
+~/sobaegi-lead/results/video-goodness-1112/261113_좋은영상의근본_독후감.md:31-31
