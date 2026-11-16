@@ -63,10 +63,14 @@ export interface Note {
   readonly sum: string;
 }
 
-/** Every `*독후감*.md` under `root`, one per content (copies by md5 dropped), copies and backups left out. */
+/**
+ * Every `*독후감*.md` under `root`, one per content, copies and backups left out. Of files with the same text (md5)
+ * the one with the shortest path below `root` stays, the alphabetically first on a tie, whatever order the disk lists
+ * them in. Notes come back in path order.
+ */
 export function loadNotes(root: string): Note[] {
-  const notes: Note[] = [];
-  const seen = new Set<string>();
+  const kept = new Map<string, Note>();
+  const below = (path: string): string => relative(root, path);
   const walk = (dir: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const name = e.name.normalize("NFC");
@@ -76,25 +80,25 @@ export function loadNotes(root: string): Note[] {
       else if (name.endsWith(".md") && name.includes("독후감") && !name.includes("색인")) {
         const text = readFileSync(path, "utf8");
         const sum = createHash("md5").update(text).digest("hex");
-        if (seen.has(sum)) continue;
-        seen.add(sum);
+        const nfc = path.normalize("NFC");
+        const other = kept.get(sum);
+        // Of two files with the same text, the path below the root that is shorter, or as long and first, stays.
+        const [a, b] = [below(nfc), other ? below(other.path) : ""];
+        if (other && !(a.length < b.length || (a.length === b.length && a < b))) continue;
         const lines = text.split("\n");
         const heads = lines.filter((l) => /^#{1,3} /.test(l)).join(" ");
-        const tagText = relative(root, path)
-          .normalize("NFC")
-          .replace(/[-_/.]/g, " ");
-        notes.push({
-          path: path.normalize("NFC"),
+        kept.set(sum, {
+          path: nfc,
           lines,
           head: bagOf(`${heads} ${text.slice(0, 800)}`),
-          tag: bagOf(tagText),
+          tag: bagOf(below(nfc).replace(/[-_/.]/g, " ")),
           sum,
         });
       }
     }
   };
   if (existsSync(root)) walk(root);
-  return notes;
+  return [...kept.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /** How often each note (by md5 of its text) is cited in DORI_HOME/briefs and DORI_HOME/writer-cases, `skip` aside. */

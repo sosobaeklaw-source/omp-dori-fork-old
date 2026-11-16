@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { bestPassage, briefQuery, citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
 import { buildRequest, readRange } from "../src/writer-request.ts";
 
@@ -39,8 +39,25 @@ test("Korean words are matched with their particle stripped and by their two-let
 });
 
 test("notes: copies and backups are left out, the index is not a note", () => {
-  const paths = loadNotes(tree()).map((n) => n.path.split("/").slice(-2).join("/"));
-  expect(paths.sort()).toEqual(["cardnews-1112/독후감_카드뉴스.md", "fax-1110/독후감_팩스.md", "video-1111/독후감.md"]);
+  const root = tree();
+  const paths = loadNotes(root).map((n) => relative(root, n.path));
+  // copy/ is not a backup name; it goes because its text is the shorter cardnews path's.
+  expect(paths).toEqual(["cardnews-1112/독후감_카드뉴스.md", "fax-1110/독후감_팩스.md", "video-1111/독후감.md"]);
+});
+
+test("of files with the same text the shortest path stays, then the first by name, in any write order", () => {
+  const rels = ["zz/독후감.md", "aa-longer/독후감.md", "b1/독후감.md", "a1/독후감.md", "a1/deep/독후감.md"];
+  for (const order of [rels, [...rels].reverse(), [rels[2]!, rels[0]!, rels[4]!, rels[1]!, rels[3]!]]) {
+    const root = mkdtempSync(join(tmpdir(), "dok-dup-"));
+    for (const rel of order) {
+      mkdirSync(join(root, rel, ".."), { recursive: true });
+      writeFileSync(join(root, rel), `# 독후감 — 같은 글\n\n${filler("같은", 2).join("\n")}\n`);
+    }
+    // zz, b1 and a1 are the shortest; a1 is first by name. Without it, b1; a1/deep is longer than both.
+    expect(loadNotes(root).map((n) => relative(root, n.path))).toEqual(["a1/독후감.md"]);
+    rmSync(join(root, "a1", "독후감.md"));
+    expect(loadNotes(root).map((n) => relative(root, n.path))).toEqual(["b1/독후감.md"]);
+  }
 });
 
 test("the brief's topic ranks first, and the passage is the section that shares its words", () => {
