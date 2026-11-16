@@ -1,0 +1,156 @@
+/**
+ * Picks the writing seat for one Argon/Hydrogen request: whichever web-Gemini account is free right now.
+ *
+ * Seats are the lines of `<home>/writer-seats.txt`, `<aside account> <google mail prefix>` (e.g. `u0 sosobaeklaw`),
+ * tried in that order. A seat is busy while its `state/carbon-<account>.lock` is held (the lock carbon-lock.sh and
+ * every lane already use), and resting only after the runner saw a limit notice on the screen: the notice text and
+ * the reset time it shows go to `state/writer-rest-<account>.json`, and the seat is tried again from that time.
+ * Slowness without a notice never rests a seat. Only when every seat is busy or resting does the request wait.
+ *
+ * The runner (gemini_web_runner.mjs) exits 16 when a limit notice kept it from picking `<model> 높음` before sending:
+ * nothing was sent, so the same request goes to the next seat. Any other exit is the request's result as it stands;
+ * a sent request is never sent again.
+ */
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { holder, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
+import { Refusal } from "./refusal.ts";
+import type { Writer } from "./writer-request.ts";
+
+export type Seat = { account: string; expect: string };
+export type Rest = { limitText: string; resetAt: string | null; seenAt: string; until: string };
+export type SeatEnv = OwnerEnv & {
+  sleep: (ms: number) => Promise<void>;
+  /** Runs the runner with these arguments and returns its exit code. */
+  run: (args: readonly string[]) => Promise<number>;
+  log: (line: string) => void;
+};
+export type SendOpts = {
+  home: string;
+  lane: string;
+  model: Writer;
+  prompt: string;
+  out: string;
+  meta: string;
+  timeout: number;
+};
+
+/** A notice with no time on it rests the seat this long; the next try reads the screen again (an unsent abort). */
+export const UNDATED_REST_MS = 30 * 60_000;
+export const BUSY_POLL_MS = 20_000;
+/** The runner's exit code for a limit notice seen before sending (nothing sent). */
+export const LIMIT_PRESEND = 16;
+
+export const seatsPath = (home: string): string => join(home, "writer-seats.txt");
+export const restPath = (home: string, account: string): string => join(home, "state", `writer-rest-${account}.json`);
+const lockName = (account: string): string => `carbon-${account}`;
+
+export function readSeats(home: string): Seat[] {
+  const path = seatsPath(home);
+  if (!existsSync(path)) throw new Refusal(`${path} is missing: one "<aside account> <mail prefix>" line per seat`);
+  const seats = readFileSync(path, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l, i) => {
+      const m = /^(u\d)\s+([^\s@]+)$/.exec(l);
+      if (!m) throw new Refusal(`${path} line ${i + 1} is not "<u0-u9> <mail prefix>": ${l}`);
+      return { account: m[1]!, expect: m[2]! };
+    });
+  if (seats.length === 0) throw new Refusal(`${path} names no seat`);
+  return seats;
+}
+
+export function readRest(home: string, account: string): Rest | undefined {
+  const path = restPath(home, account);
+  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Rest) : undefined;
+}
+
+/** The time a seat rests until, or undefined once that time has passed (or it never rested). */
+export function restingUntil(home: string, account: string, now: number): number | undefined {
+  const rest = readRest(home, account);
+  const until = rest ? Date.parse(rest.until) : Number.NaN;
+  return until > now ? until : undefined;
+}
+
+/** Rests the seat when the runner's meta carries a limit notice from the screen; returns the rest written, if any. */
+export function noteLimit(home: string, account: string, metaPath: string, now: number): Rest | undefined {
+  if (!existsSync(metaPath)) return undefined;
+  const meta = JSON.parse(readFileSync(metaPath, "utf8")) as { limitText?: string; limitResetAt?: string | null };
+  if (!meta.limitText) return undefined;
+  const reset = meta.limitResetAt ? Date.parse(meta.limitResetAt) : Number.NaN;
+  const until = reset > now ? reset : now + UNDATED_REST_MS;
+  const rest: Rest = {
+    limitText: meta.limitText,
+    resetAt: meta.limitResetAt ?? null,
+    seenAt: new Date(now).toISOString(),
+    until: new Date(until).toISOString(),
+  };
+  writeFileSync(restPath(home, account), `${JSON.stringify(rest, null, 1)}\n`);
+  return rest;
+}
+
+/** Adds the seat to the runner's meta, so every result names the account it went to and the label it ran under. */
+function stampMeta(metaPath: string, seat: Seat, pickedAt: number, waitedMs: number, tried: string[]): void {
+  if (!existsSync(metaPath)) return;
+  const meta = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+  meta["seat"] = {
+    account: seat.account,
+    expect: seat.expect,
+    pickedAt: new Date(pickedAt).toISOString(),
+    waitedMs,
+    tried,
+  };
+  writeFileSync(metaPath, `${JSON.stringify(meta, null, 1)}\n`);
+}
+
+/**
+ * Sends the request on the first free, unrested seat, waiting only while none is. Returns the runner's exit code and
+ * the seat it ran on. A presend limit (exit 16) rests that seat and moves the same request to the next one.
+ */
+export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: number; seat: Seat }> {
+  const seats = readSeats(o.home);
+  const start = env.now();
+  const tried: string[] = [];
+  let waitNoted = "";
+  for (;;) {
+    const now = env.now();
+    const open = seats.filter((s) => restingUntil(o.home, s.account, now) === undefined);
+    for (const seat of open) {
+      const got = tryTake(env, lockName(seat.account), o.lane, env.log);
+      if ("busy" in got) continue;
+      let code: number;
+      const pickedAt = env.now();
+      env.log(
+        `SEAT ${seat.account} (${seat.expect}) for ${o.model}${tried.length ? `, after ${tried.join(", ")}` : ""}`,
+      );
+      try {
+        // biome-ignore format: one flag and its value per pair
+        code = await env.run([
+          "--model", o.model, "--account", seat.account, "--expect-account", seat.expect,
+          "--prompt", o.prompt, "--out", o.out, "--meta", o.meta, "--timeout", String(o.timeout),
+        ]);
+      } finally {
+        release(env.root, lockName(seat.account), got.owner);
+      }
+      tried.push(seat.account);
+      stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
+      const rest = noteLimit(o.home, seat.account, o.meta, env.now());
+      if (rest) env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);
+      if (code === LIMIT_PRESEND && rest) break;
+      return { code, seat };
+    }
+    const next = Math.min(...seats.map((s) => restingUntil(o.home, s.account, env.now()) ?? env.now() + BUSY_POLL_MS));
+    const why = seats
+      .map((s) => {
+        const r = restingUntil(o.home, s.account, env.now());
+        return r
+          ? `${s.account} resting until ${new Date(r).toISOString()}`
+          : `${s.account} busy (${holder(env.root, lockName(s.account))?.owner ?? "?"})`;
+      })
+      .join("; ");
+    if (why !== waitNoted) env.log(`WAIT ${why}`);
+    waitNoted = why;
+    await env.sleep(Math.max(1_000, Math.min(next - env.now(), BUSY_POLL_MS)));
+  }
+}
