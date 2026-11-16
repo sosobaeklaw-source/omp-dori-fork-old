@@ -27,15 +27,16 @@ say owner-direct "$out"
 out=$("$RSYNC" -rtpiu --info=skip1 --chmod=F444 -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' \
   --include='*/' --include='*독후감*.md' --include='*독후감*.txt' --include='*반영대목*.md' --include='기자팁원리.md' \
   --include='어휘표*.md' --include='*단어*.md' --include='*어휘*.md' --exclude='*' --prune-empty-dirs \
-  macmini:sobaegi-lead/results/ "$HOME/sobaegi-lead/results/" 2>&1) || out="FAILED $out"
+  macmini:sobaegi-lead/results/ "$HOME/sobaegi-lead/results/" 2>&1); rc=$?
 newer=$(printf '%s\n' "$out" | grep ' is newer$' | sort)
 out=$(printf '%s\n' "$out" | grep -v ' is newer$')
-say 독후감 "$out"
-NEWER=$H/state/owner-sync.newer
-case "$out" in
-  FAILED*) ;;
-  *) if [ "$newer" != "$(cat "$NEWER" 2>/dev/null)" ]; then
-       printf '%s\n' "$newer" > "$NEWER"
-       say 독후감 "맥북이 더 새 것 $(printf '%s' "$newer" | grep -c .)개, 목록 $NEWER"
-     fi ;;
-esac
+if [ "$rc" -ne 0 ]; then
+  say 독후감 "FAILED rc=$rc $out"
+else
+  say 독후감 "$out"
+  NEWER=$H/state/owner-sync.newer
+  if [ "$newer" != "$(cat "$NEWER" 2>/dev/null)" ]; then
+    printf '%s\n' "$newer" > "$NEWER"
+    say 독후감 "맥북이 더 새 것 $(printf '%s' "$newer" | grep -c .)개, 목록 $NEWER"
+  fi
+fi
