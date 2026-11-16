@@ -10,9 +10,10 @@
  * never counts. A note that other briefs and writer-cases already cite gets a lift by how often it was cited.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { caseLines } from "./writer-request.ts";
 
 const COMMON = new Set(
   "the and for are not our you was its can all use run to of in on is it be as at by or an if do no we that this with from have will when your their before after into only must should work using then fix check make add update new also any need keep get see md txt png json html http https com www 독후감".split(
@@ -99,12 +100,13 @@ export function loadNotes(root: string): Note[] {
 /** How often each note (by md5 of its text) is cited in DORI_HOME/briefs and DORI_HOME/writer-cases, `skip` aside. */
 export function citations(home: string, skip?: string): Map<string, number> {
   const count = new Map<string, number>();
+  const self = skip && existsSync(skip) ? realpathSync(resolve(skip)) : undefined;
   for (const sub of ["briefs", "writer-cases"]) {
     const dir = join(home, sub);
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
       const file = join(dir, f);
-      if (file === skip || !/\.(md|txt)$/.test(f)) continue;
+      if (!/\.(md|txt)$/.test(f) || realpathSync(file) === self) continue;
       const cited = new Set<string>();
       for (const c of readFileSync(file, "utf8").match(CITE) ?? []) {
         const path = c.startsWith("~/") ? join(homedir(), c.slice(2)) : c.slice(c.indexOf("/"));
@@ -134,7 +136,8 @@ export function rank(query: string, notes: readonly Note[], cited: ReadonlyMap<s
     for (const t of new Set([...note.head.keys(), ...note.tag.keys()])) df.set(t, (df.get(t) ?? 0) + 1);
   const avgHead = notes.reduce((a, x) => a + sizeOf(x.head), 0) / n;
   const avgTag = notes.reduce((a, x) => a + sizeOf(x.tag), 0) / n;
-  const asked = [...new Set(terms(query))].filter((t) => (df.get(t) ?? 0) > 0 && df.get(t)! * 2 <= n);
+  // With fewer than three notes, "more than half" would drop every shared word.
+  const asked = [...new Set(terms(query))].filter((t) => (df.get(t) ?? 0) > 0 && (n < 3 || df.get(t)! * 2 <= n));
   return notes
     .map((note) => {
       const h = norm(sizeOf(note.head), avgHead);
@@ -157,22 +160,30 @@ export interface Passage {
   readonly chars: number;
 }
 
-/** The note's section (split at `#`–`###` headings) sharing most of the query's words, cut to `maxChars`. */
-export function bestPassage(note: Note, query: string, maxChars: number): Passage {
+/**
+ * The note's section (split at `#`–`###` headings) sharing most of the query's words, cut to `maxChars`. Only
+ * sections holding a case line (writer-request's `caseLines`) count, and the cut always keeps the section's first
+ * case line, so `writer_request` never refuses the range. A note with no case line gives none.
+ */
+export function bestPassage(note: Note, query: string, maxChars: number): Passage | undefined {
   const asked = new Set(terms(query));
   const cuts = [0, ...note.lines.flatMap((l, i) => (i > 0 && /^#{1,3} /.test(l) ? [i] : [])), note.lines.length];
-  let best = { start: 0, end: note.lines.length, hit: -1 };
+  let best: { start: number; end: number; hit: number } | undefined;
   for (let i = 0; i + 1 < cuts.length; i++) {
     const section = note.lines.slice(cuts[i], cuts[i + 1]);
-    if (section.join("").trim().length < 40) continue;
+    if (caseLines({ label: "", lines: section }).length === 0) continue;
     const hit = new Set(terms(section.join("\n")).filter((t) => asked.has(t))).size;
-    if (hit > best.hit) best = { start: cuts[i]!, end: cuts[i + 1]!, hit };
+    if (!best || hit > best.hit) best = { start: cuts[i]!, end: cuts[i + 1]!, hit };
   }
+  if (!best) return undefined;
   let end = best.start;
   let chars = 0;
-  while (end < best.end && (end === best.start || chars + note.lines[end]!.length + 1 <= maxChars))
+  let hasCase = false;
+  while (end < best.end && (!hasCase || chars + note.lines[end]!.length + 1 <= maxChars)) {
+    hasCase ||= caseLines({ label: "", lines: [note.lines[end]!] }).length > 0;
     chars += note.lines[end++]!.length + 1;
-  while (end - 1 > best.start && !note.lines[end - 1]!.trim()) chars -= note.lines[--end]!.length + 1;
+  }
+  while (!note.lines[end - 1]!.trim()) chars -= note.lines[--end]!.length + 1;
   return { path: note.path, start: best.start + 1, end, chars };
 }
 
@@ -192,6 +203,7 @@ export function recall(query: string, ranked: readonly Scored[], limit: number, 
   let used = 0;
   for (const { note } of ranked) {
     const p = bestPassage(note, query, Math.floor(maxChars / limit));
+    if (!p) continue;
     if (over.length === 0 && kept.length < limit && used + p.chars <= maxChars) {
       kept.push(p);
       used += p.chars;
@@ -201,7 +213,7 @@ export function recall(query: string, ranked: readonly Scored[], limit: number, 
 }
 
 /** A brief's own words: everything above the harness's standing sections. */
-export const briefQuery = (brief: string): string => brief.split(/\n## (?:Lane rules|STOP WHEN)/)[0]!;
+export const briefQuery = (brief: string): string => brief.split(/\n## (?:Lane rules|STOP WHEN|Lessons for )/)[0]!;
 
 /** `~/`-relative when under the home, so the lines read the same on both Macs. */
 export const label = (p: Passage): string => {

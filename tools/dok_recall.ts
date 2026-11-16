@@ -28,6 +28,7 @@ try {
   if (notes.length === 0) throw new Refusal("no 독후감 notes under the root");
   const query = briefQuery(readFileSync(brief, "utf8"));
   const { kept, over } = recall(query, rank(query, notes, citations(defaultHome(), brief)), limit, maxChars);
+  if (kept.length === 0) console.error(`no 독후감 passage matches ${brief} (${notes.length} notes read)`);
   for (const p of kept) console.log(label(p));
   for (const p of over) console.log(`# over budget: ${label(p)}`);
 } catch (e) {

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
-import { readRange } from "../src/writer-request.ts";
+import { bestPassage, briefQuery, citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
+import { buildRequest, readRange } from "../src/writer-request.ts";
 
 const filler = (topic: string, n: number) =>
   Array.from({ length: n }, (_, i) => `${topic} 이야기를 ${i}번째로 적은 줄이다. 다른 일과 겹치지 않는 내용이다.`);
@@ -82,7 +82,8 @@ test("a note other briefs and writer-cases cite ranks higher; the brief being re
   writeFileSync(join(home, "briefs", "old.md"), `읽을 것: ${fax} 와 ${fax}\n`);
   const self = join(home, "briefs", "me.md");
   writeFileSync(self, `읽을 것: ${join(root, "video-1111/독후감.md")}\n`);
-  const cited = citations(home, self);
+  // The brief named another way (relative, with ..) is still itself.
+  const cited = citations(home, join(home, "briefs", "..", "briefs", "me.md"));
   const sum = (dir: string) => notes.find((n) => n.path.includes(dir))!.sum;
   expect(cited.get(sum("fax-1110"))).toBe(2);
   expect(cited.has(sum("video-1111"))).toBe(false);
@@ -92,4 +93,48 @@ test("a note other briefs and writer-cases cite ranks higher; the brief being re
   const scoreOf = (list: typeof plain) => list.find((s) => s.note.sum === sum("fax-1110"))!.score;
   expect(scoreOf(lifted)).toBeCloseTo(scoreOf(plain) * (1 + Math.log(3)));
   expect(lifted[0]!.note.sum).toBe(sum("fax-1110"));
+});
+
+test("a section whose one paragraph is longer than the budget still gives a range writer_request takes", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-long-")), "results");
+  mkdirSync(join(root, "hearing-1116"), { recursive: true });
+  const long = "소음성 난청 장해등급은 귀마다 6분법 평균을 낸다. ".repeat(60);
+  expect(long.length).toBeGreaterThan(1600);
+  const lines = ["# 독후감 — 난청", "", "## 난청 등급 읽기", "", long, "", "## 끝", "짧다"];
+  writeFileSync(join(root, "hearing-1116", "독후감.md"), `${lines.join("\n")}\n`);
+  const [note] = loadNotes(root);
+  const p = bestPassage(note!, "난청 등급", 300)!;
+  expect([p.start, p.end]).toEqual([3, 5]);
+  const home = mkdtempSync(join(tmpdir(), "dok-build-"));
+  const task = join(home, "task.md");
+  writeFileSync(task, "난청 글을 다시 쓴다\n");
+  const lane = join(home, "lane");
+  const built = buildRequest({
+    home,
+    kind: "seo",
+    model: "argon",
+    laneDir: lane,
+    tasks: [task],
+    cases: [`${p.path}:${p.start}-${p.end}`],
+  });
+  expect(built.dok).toBe(1);
+});
+
+test("a note with no case line gives no passage; two notes keep their shared words", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-few-")), "results");
+  mkdirSync(join(root, "a-1110"), { recursive: true });
+  mkdirSync(join(root, "b-1110"), { recursive: true });
+  writeFileSync(join(root, "a-1110", "독후감.md"), "# 독후감 — 팩스\n\n## 팩스\n짧다\n");
+  writeFileSync(join(root, "b-1110", "독후감.md"), `# 독후감 — 팩스 보내기\n\n${filler("팩스", 2).join("\n")}\n`);
+  const notes = loadNotes(root);
+  const ranked = rank("팩스", notes);
+  expect(ranked).toHaveLength(2);
+  const { kept, over } = recall("팩스", ranked, 5, 5000);
+  expect(kept.map((p) => p.path)).toEqual([join(root, "b-1110", "독후감.md")]);
+  expect(over).toEqual([]);
+});
+
+test("the brief's words stop at the harness's standing sections", () => {
+  for (const tail of ["Lane rules", "STOP WHEN (파쿠리)", "Lessons for omp-dori"])
+    expect(briefQuery(`# 일\n난청 글\n## ${tail}\n팩스`)).toBe("# 일\n난청 글");
 });
