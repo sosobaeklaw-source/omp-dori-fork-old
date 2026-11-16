@@ -6,12 +6,20 @@
 # 토큰은 DORI_HOME/discord-token(옴프도리 봇). 토큰은 출력하지 않는다.
 set -euo pipefail
 home="${DORI_HOME:-$HOME/.omp-dori}"
-DORI_DISCORD_TOKEN="$(cat "$home/discord-token")"
+token_file="$home/discord-token"
+[ -r "$token_file" ] || { echo "FAIL no-token $token_file"; exit 1; }
 ch="${DISCORD_CHANNEL:-1571013138764140544}"
+api="${DISCORD_API:-https://discord.com/api/v10}"
 text="$1"; shift
-args=(-F "payload_json=$(python3 -c 'import json,sys;d={"content":sys.argv[1]};r=sys.argv[2]
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# payload_json goes in from a file: with -F "payload_json=<text>" curl reads any ; in the text as a field parameter
+# separator and cuts the message there. allowed_mentions:[] keeps @everyone or <@id> in a result from pinging.
+python3 -c 'import json,sys;d={"content":sys.argv[1],"allowed_mentions":{"parse":[]}};r=sys.argv[2]
 if r: d["message_reference"]={"message_id":r,"fail_if_not_exists":True}
-print(json.dumps(d))' "$text" "${REPLY_TO:-}")")
+open(sys.argv[3],"w").write(json.dumps(d))' "$text" "${REPLY_TO:-}" "$tmp/payload.json"
+args=(-F "payload_json=<$tmp/payload.json;type=application/json")
 i=0; for f in "$@"; do args+=(-F "files[$i]=@\"$f\""); i=$((i+1)); done
-r=$(curl -s -m 120 -X POST "https://discord.com/api/v10/channels/$ch/messages" -H "Authorization: Bot $DORI_DISCORD_TOKEN" "${args[@]}")
+# The token goes in through a header file, not argv, so it never shows in ps.
+printf 'Authorization: Bot %s\n' "$(cat "$token_file")" > "$tmp/auth"; chmod 600 "$tmp/auth"
+r=$(curl -s -m 120 -X POST "$api/channels/$ch/messages" -H @"$tmp/auth" "${args[@]}")
 printf '%s' "$r" | python3 -c "import json,sys;d=json.load(sys.stdin);print('SENT',d['id']) if 'id' in d else (print('FAIL',d.get('code'),d.get('message')),sys.exit(1))"
