@@ -4,9 +4,10 @@
 # 2) ~/.omp-dori/반복지적.md (the MacBook writes it) → macmini ~/.omp-dori/반복지적.md. Skipped while the file does not exist.
 # 3) New owner Discord messages → appended as original words to macmini inbox/ompdori/owner-direct.md (owner-direct-forward.py).
 # 4) macmini ~/sobaegi-lead/results/ 독후감·단어장(어휘표) md/txt → same path on the MacBook, files read-only (444), no delete.
-#    -u keeps a MacBook file that is newer than the macmini one (a MacBook edit that never went back). Backups, evidence/ and json are left out.
+#    -p re-applies 444 to files that already existed. -u keeps a MacBook file that is newer than the macmini one (a MacBook edit that never went back);
+#    --info=skip1 puts each such skipped file in the log ("… is newer"). Backups, evidence/ and json are left out.
 #    The writer case lists (~/.omp-dori/writer-cases/*.txt) point at these paths, so a passage opens the same sentence on both Macs. rootfix-pr4-1116.
-# The log gets a line only when something was copied or failed.
+# The log gets a line only when something was copied, kept as newer, or failed.
 set -uo pipefail
 SSH='ssh -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 -o BatchMode=yes'
 CANON=/Users/son-won-il/.omo/memory/agents/sanjai-agent-1e565cbf/repo/system/owner-now.md
@@ -22,7 +23,7 @@ if [ -f "$H/반복지적.md" ]; then
 fi
 out=$(/usr/bin/python3 "$H/bin/owner-direct-forward.py" 2>&1) || out="FAILED $out"
 say owner-direct "$out"
-out=$("$RSYNC" -rtiu --chmod=F444 -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' \
+out=$("$RSYNC" -rtpiu --info=skip1 --chmod=F444 -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' \
   --include='*/' --include='*독후감*.md' --include='*독후감*.txt' --include='*반영대목*.md' --include='기자팁원리.md' \
   --include='어휘표*.md' --include='*단어*.md' --include='*어휘*.md' --exclude='*' --prune-empty-dirs \
   macmini:sobaegi-lead/results/ "$HOME/sobaegi-lead/results/" 2>&1) || out="FAILED $out"
