@@ -1,4 +1,4 @@
-import { afterEach } from "bun:test";
+import { onTestFinished } from "bun:test";
 import {
   chmodSync,
   mkdirSync,
@@ -31,7 +31,10 @@ const environmentKeys = [
   "DORI_OMP_ULW_PATH",
 ];
 const environment = new Map<string, string | undefined>();
-afterEach(() => {
+// A module-level afterEach binds only to the first test file that imports this module (bun test shares one module
+// instance across files), so later files would keep the fixture HOME/DORI_* for every following test file.
+// Each fixture() call schedules the restore for the test that made it instead.
+function restore(): void {
   for (const [key, value] of environment) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -47,7 +50,7 @@ afterEach(() => {
     writable(root);
     rmSync(root, { recursive: true, force: true });
   }
-});
+}
 
 export type TarEntry = {
   readonly name: string;
@@ -114,6 +117,7 @@ export type ConsumerFixture = {
 
 export function fixture(): ConsumerFixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-consumer-")));
+  if (roots.length === 0) onTestFinished(restore);
   roots.push(root);
   const paths = consumerPaths(join(root, "home"));
   for (const key of environmentKeys) {
