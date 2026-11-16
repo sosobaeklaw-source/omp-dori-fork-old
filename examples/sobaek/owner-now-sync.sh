@@ -5,9 +5,10 @@
 # 3) New owner Discord messages → appended as original words to macmini inbox/ompdori/owner-direct.md (owner-direct-forward.py).
 # 4) macmini ~/sobaegi-lead/results/ 독후감·단어장(어휘표) md/txt → same path on the MacBook, files read-only (444), no delete.
 #    -p re-applies 444 to files that already existed. -u keeps a MacBook file that is newer than the macmini one (a MacBook edit that never went back);
-#    --info=skip1 puts each such skipped file in the log ("… is newer"). Backups, evidence/ and json are left out.
+#    --info=skip1 reports each such skipped file ("… is newer"); the sorted list goes to $H/state/owner-sync.newer and the log gets one count line
+#    only when that list changes. Backups, evidence/ and json are left out.
 #    The writer case lists (~/.omp-dori/writer-cases/*.txt) point at these paths, so a passage opens the same sentence on both Macs. rootfix-pr4-1116.
-# The log gets a line only when something was copied, kept as newer, or failed.
+# The log gets a line only when something was copied, the kept-as-newer list changed, or a step failed.
 set -uo pipefail
 SSH='ssh -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 -o BatchMode=yes'
 CANON=/Users/son-won-il/.omo/memory/agents/sanjai-agent-1e565cbf/repo/system/owner-now.md
@@ -27,4 +28,14 @@ out=$("$RSYNC" -rtpiu --info=skip1 --chmod=F444 -e "$SSH" --exclude='_bak*' --ex
   --include='*/' --include='*독후감*.md' --include='*독후감*.txt' --include='*반영대목*.md' --include='기자팁원리.md' \
   --include='어휘표*.md' --include='*단어*.md' --include='*어휘*.md' --exclude='*' --prune-empty-dirs \
   macmini:sobaegi-lead/results/ "$HOME/sobaegi-lead/results/" 2>&1) || out="FAILED $out"
+newer=$(printf '%s\n' "$out" | grep ' is newer$' | sort)
+out=$(printf '%s\n' "$out" | grep -v ' is newer$')
 say 독후감 "$out"
+NEWER=$H/state/owner-sync.newer
+case "$out" in
+  FAILED*) ;;
+  *) if [ "$newer" != "$(cat "$NEWER" 2>/dev/null)" ]; then
+       printf '%s\n' "$newer" > "$NEWER"
+       say 독후감 "맥북이 더 새 것 $(printf '%s' "$newer" | grep -c .)개, 목록 $NEWER"
+     fi ;;
+esac
