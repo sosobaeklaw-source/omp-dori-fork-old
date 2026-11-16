@@ -89,6 +89,15 @@ console.log(JSON.stringify({ result }));
   record.oldToolchain = record.toolchain!;
   const persist = (value: DeploymentRecord): void => saveRestartIntent(config, value);
   persist(record);
+  // Production monitors keep runtime health fresh; slow CI runners outlast the 5 s window without a live writer.
+  const whileHealthFresh = async <T>(work: Promise<T>): Promise<T> => {
+    const pulse = setInterval(() => f.writeHealth({ ...health, updatedAt: new Date().toISOString() }), 1_000);
+    try {
+      return await work;
+    } finally {
+      clearInterval(pulse);
+    }
+  };
   return {
     ...f,
     config,
@@ -97,6 +106,7 @@ console.log(JSON.stringify({ result }));
     persist,
     effect,
     writeObservation,
+    whileHealthFresh,
     journal: join(record.directory, "deployment.json"),
   };
 }
