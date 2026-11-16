@@ -10,10 +10,19 @@
 #   - one finished lane's whole 결과.md as the shape of the result (PARUKURI_EXAMPLE, default
 #     DORI_HOME/results/parksilro-build-1116/결과.md, a copy is examples/sobaek/parukuri-result-example.md).
 #     It is a real example, not a rule list.
+#
+# PUBLIC_REPLY_TO=<owner message id>: the lead sets it only for public-material work that came from an owner Discord
+# message (never for case work). The brief then opens with the two lines `public: true` and `원글: <id>`, written here,
+# not by the model, so tools/ready_reply.ts answers that message when the lane is READY. Unset, the brief has neither.
 set -euo pipefail
 out=${1:?usage: plan-fable.sh <out-file> < request.md}
 model=${PLAN_MODEL:-anthropic/claude-fable-5-2}
 home=${DORI_HOME:-$HOME/.omp-dori}
+reply_to=${PUBLIC_REPLY_TO:-}
+if [ -n "$reply_to" ] && ! [[ "$reply_to" =~ ^1[0-9]{17,19}$ ]]; then
+  echo "plan-fable: PUBLIC_REPLY_TO is not a Discord message id: $reply_to" >&2
+  exit 1
+fi
 req=$(cat)
 parukuri=${PARUKURI:-}
 if [ -z "$parukuri" ] && printf '%s' "$req" | grep -qiE '파쿠리|parukuri'; then parukuri=1; fi
@@ -43,7 +52,7 @@ print(json.dumps({"model": os.environ["MODEL"], "max_tokens": 32000, "reasoning_
 if [ -n "${PLAN_DRY_RUN:-}" ]; then printf '%s\n' "$body" > "$out"; echo "$out"; exit 0; fi
 resp=$(curl -sS -m 600 -H 'authorization: Bearer opencodex-loopback' -H 'content-type: application/json' \
   http://127.0.0.1:10100/v1/chat/completions -d "$body")
-RESP="$resp" python3 -c '
+RESP="$resp" REPLY_TO="$reply_to" python3 -c '
 import json, os, sys
 d = json.loads(os.environ["RESP"])
 if "choices" not in d:
@@ -52,6 +61,8 @@ c = d["choices"][0]
 text = (c.get("message") or {}).get("content")
 if not text or not text.strip():
     sys.exit("plan-fable: empty plan (finish_reason=%s)" % c.get("finish_reason"))
+if os.environ["REPLY_TO"]:
+    text = "public: true\n원글: %s\n\n%s" % (os.environ["REPLY_TO"], text)
 print(text)' > "$out"
 printf '\n<!-- planner: %s · reviewed by lead (Opus) before start -->\n' "$model" >> "$out"
 echo "$out"
