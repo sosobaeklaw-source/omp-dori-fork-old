@@ -69,10 +69,10 @@ class RedteamTest(unittest.TestCase):
         self.assertEqual(redteam.read_back(self.out / "none.md")["status"], "missing")
 
     def test_merge_counts_only_real_branches(self):
-        reply = [{"location": "1장", "problem": "a", "evidence": "e", "models": ["gpt_web", "pirate__s__m", "ghost"]},
-                 {"location": "2장", "problem": "b", "evidence": "e", "models": ["gpt_web", "gpt_web"]}]
+        reply = [{"location": "1장", "problem": "a", "evidence": "e", "models": ["carbon_web", "pirate__s__m", "ghost"]},
+                 {"location": "2장", "problem": "b", "evidence": "e", "models": ["carbon_web", "carbon_web"]}]
         fake = FakeHttp({redteam.OCX: {"model": "opus", "choices": [{"message": {"content": "앞말 " + json.dumps(reply)}}]}})
-        results = [{"branch": "gpt_web", "text": "x"}, {"branch": "pirate__s__m", "text": "y"}, {"branch": "carbon_web", "text": ""}]
+        results = [{"branch": "carbon_web", "text": "x"}, {"branch": "pirate__s__m", "text": "y"}, {"branch": "pirate__s__n", "text": ""}]
         with mock.patch.object(redteam, "http_json", fake):
             self.assertEqual(redteam.merge(self.out, results), 2)
         merged = (self.out / "merged.md").read_text().splitlines()
@@ -83,13 +83,13 @@ class RedteamTest(unittest.TestCase):
     def test_merge_with_no_answers_calls_nothing(self):
         fake = FakeHttp({})
         with mock.patch.object(redteam, "http_json", fake):
-            self.assertEqual(redteam.merge(self.out, [{"branch": "gpt_web", "text": ""}]), 0)
+            self.assertEqual(redteam.merge(self.out, [{"branch": "carbon_web", "text": ""}]), 0)
         self.assertEqual(fake.calls, [])
 
     def test_unparseable_merge_reply_raises(self):
         fake = FakeHttp({redteam.OCX: {"choices": [{"message": {"content": "no json"}}]}})
         with mock.patch.object(redteam, "http_json", fake), self.assertRaises(ValueError):
-            redteam.merge(self.out, [{"branch": "gpt_web", "text": "x"}])
+            redteam.merge(self.out, [{"branch": "carbon_web", "text": "x"}])
 
 
 if __name__ == "__main__":

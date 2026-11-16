@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Red-team one artifact with web GPT 6 Pro, web Carbon and every pirate-ship model at once.
+"""Red-team one artifact with web Carbon and every pirate-ship model at once.
 
 Usage:
   redteam.py --target FILE [--target FILE ...] --kind card|blog --material public|client \
-             --out DIR [--gpt-account u0|u1|u2] [--carbon-account u1:<profile>] [--lane KEY]
+             --out DIR [--carbon-account u1:<profile>] [--lane KEY]
 
 Branches (started together, same instruction for every model):
-  (a) gpt_web.md     ChatGPT web, Pro mode, via tikitaka2 tk2.py under carbon-lock <acct>.
-                     Without --gpt-account the file records "blocked: no ChatGPT login".
-  (b) carbon_web.md  Gemini web Carbon via carbon-web-1114/run.js under carbon-lock <acct>.
-  (c) pirate__*.md   every model in the tokenmaxx and OpenCode Go lists, highest reasoning first.
+  (a) carbon_web.md  Gemini web Carbon via carbon-web-1114/run.js under carbon-lock <acct>.
+  (b) pirate__*.md   every model in the tokenmaxx and OpenCode Go lists, highest reasoning first.
                      Google models are never called (recorded as skipped). With --material client
                      the whole branch is skipped and recorded.
+No GPT branch: web GPT is not used for red-team or delivery review (owner decision, 2026-11-16).
 Then merged.md groups the same finding across models (Opus via local ocx) with a model count.
 """
 from __future__ import annotations
@@ -30,7 +29,6 @@ from pathlib import Path
 
 HOME = Path.home()
 LOCK = HOME / ".omp-dori/bin/carbon-lock.sh"
-TK2 = HOME / ".agents/skills/tikitaka2/scripts/tk2.py"
 CARBON_RUN = HOME / "sobaegi-lead/results/carbon-web-1114/run.js"
 OCX = "http://127.0.0.1:10100/v1/chat/completions"
 MERGE_MODEL = "anthropic/claude-opus-5-5"
@@ -61,35 +59,7 @@ def write_model_file(path: Path, head: dict, text: str) -> None:
     path.write_text("\n".join(lines) + "\n\n" + text.strip() + "\n")
 
 
-# ---------- (a) GPT web ----------
-def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str) -> dict:
-    dst = out / "gpt_web.md"
-    if not acct:
-        write_model_file(dst, {"branch": "gpt_web", "status": "blocked: no ChatGPT login"},
-                         "u0/u1/u2 ChatGPT 웹에 로그인된 세션이 없어 돌리지 않았다. 다른 모델로 대신하지 않았다.")
-        return {"branch": "gpt_web", "status": "blocked", "model": "-", "chars": 0}
-    raw = out / "raw_gpt_web"
-    led = raw / "ledger.json"
-    # tk2 never resends a lane its ledger already holds (ok, SENT, UNAVAILABLE): keep any earlier attempt aside
-    # so this run sends the current prompt.
-    if raw.exists():
-        raw.rename(out / f"raw_gpt_web.prev-{time.strftime('%H%M%S')}")
-    t0 = time.time()
-    proc = subprocess.run([str(LOCK), acct, lane, "--", sys.executable, str(TK2), "run", "--prompt", str(prompt_file),
-                           "--out", str(raw), "--only", f"gpt6pro_{acct}", "--deadline-min", "45"],
-                          capture_output=True, text=True)
-    rec = {}
-    if led.exists():
-        rec = json.loads(led.read_text())["lanes"].get(f"gpt6pro_{acct}", {})
-    text = (raw / "lanes" / rec["output"]).read_text() if rec.get("status") == "ok" else ""
-    model = rec.get("mode_evidence", "-")
-    head = {"branch": "gpt_web", "account": acct, "status": rec.get("status", f"exit {proc.returncode}"),
-            "model_shown": model, "chat_url": rec.get("url", "-"), "chars": len(text), "seconds": round(time.time() - t0)}
-    write_model_file(dst, head, text or (proc.stdout[-3000:] + proc.stderr[-2000:]))
-    return {"branch": "gpt_web", "status": head["status"], "model": model, "chars": len(text), "text": text}
-
-
-# ---------- (b) Carbon web ----------
+# ---------- (a) Carbon web ----------
 def run_carbon(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
     if not acct:
         write_model_file(out / "carbon_web.md", {"branch": "carbon_web", "status": f"blocked: {blocked}"},
@@ -113,7 +83,7 @@ def run_carbon(out: Path, prompt_file: Path, acct: str | None, lane: str, blocke
     return {"branch": "carbon_web", "status": head["status"], "model": model, "chars": len(text), "text": text}
 
 
-# ---------- (c) pirate ships ----------
+# ---------- (b) pirate ships ----------
 def http_json(url: str, headers: dict, body: dict | None = None, timeout: int = 60) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data, {"user-agent": UA, "content-type": "application/json", **headers})
@@ -233,11 +203,10 @@ def main() -> int:
     ap.add_argument("--kind", choices=sorted(KIND_FOCUS), required=True)
     ap.add_argument("--material", choices=["public", "client"], required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--gpt-account", choices=["u0", "u1", "u2"])
     ap.add_argument("--carbon-account", help="aside account for Gemini Carbon, e.g. u1:<profile>; omitted = branch recorded as blocked")
     ap.add_argument("--carbon-blocked", default="no logged-in Gemini account given", help="reason written when --carbon-account is omitted")
     ap.add_argument("--lane", default="redteam-path-1116")
-    ap.add_argument("--only", default="gpt,carbon,pirates",
+    ap.add_argument("--only", default="carbon,pirates",
                     help="branches to (re)run; the others are read back from their files in --out and merged again")
     a = ap.parse_args()
     only = set(a.only.split(","))
@@ -254,18 +223,16 @@ def main() -> int:
         except Exception as e:
             write_model_file(out / f"{branch}.md", {"branch": branch, "status": "error", "error": repr(e)}, repr(e))
             return {"branch": branch, "status": "error", "model": "-", "chars": 0, "text": ""}
-    with cf.ThreadPoolExecutor(3) as ex:
-        fg = ex.submit(run_gpt, out, pf, a.gpt_account, a.lane) if "gpt" in only else None
+    with cf.ThreadPoolExecutor(2) as ex:
         fc = ex.submit(run_carbon, out, pf, a.carbon_account, a.lane, a.carbon_blocked) if "carbon" in only else None
         fp = ex.submit(run_pirates, out, prompt, a.material) if "pirates" in only else None
-        gpt = settle(fg, "gpt_web") if fg else read_back(out / "gpt_web.md")
         carbon = settle(fc, "carbon_web") if fc else read_back(out / "carbon_web.md")
         if fp:
             pirates = settle(fp, "pirates_error")
             pirates = pirates if isinstance(pirates, list) else [pirates]
         else:
             pirates = [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
-    results = [gpt, carbon, *pirates]
+    results = [carbon, *pirates]
     code, merged = 0, None
     try:
         merged = merge(out, results)
@@ -276,7 +243,7 @@ def main() -> int:
                                                  + [{"merged": merged}], ensure_ascii=False, indent=1))
     def short(r): return f"{r['model']} {r['chars']}" if r["chars"] else f"{r['status']}"
     ok = [r for r in pirates if r["chars"]]
-    print(f"GPT웹 {short(gpt)} | Carbon {short(carbon)} | 해적선 "
+    print(f"Carbon {short(carbon)} | 해적선 "
           + ", ".join(f"{r['model']}:{r['chars']}" for r in ok) + f" | 병합 지적 {merged if merged is not None else '실패'}건")
     return code
 
