@@ -1,5 +1,6 @@
-// The lane board `dori status` prints: open lanes first, the longest without progress on top, closed lanes folded into
-// one line each, every line within WIDTH terminal columns except a key, ref, link or id wider than that, kept whole.
+// The lane board `dori status` prints: open lanes first, those waiting on someone on top, then READY ones waiting for the
+// lead, then working ones, each group longest without progress first; closed lanes fold into one line each. Every line
+// stays within WIDTH terminal columns except a key, ref, link or id wider than that, kept whole.
 import { ageText, fitEnd, hhmm, indented, oneLine, padCols, WIDTH, wrap } from "./fit.ts";
 import { progressOf, waitingOn, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { refText } from "./refs.ts";
@@ -59,10 +60,13 @@ function closedLine(status: string, lanes: readonly Lane[], now: number): string
   return fitEnd(`${status} ${lanes.length} (latest ${latest.key}, ${ageText(now - at)} ago)`, WIDTH);
 }
 
+/** Board order of open lanes: someone else must act on a waiting lane, the lead on a READY one, nobody on a working one. */
+const OPEN_RANK: Partial<Record<Lane["status"], number>> = { waiting: 0, ready: 1, working: 2 };
+
 export function laneBoard(lanes: readonly Lane[], now: number): string[] {
   const open = lanes
-    .filter((l) => l.status === "working" || l.status === "waiting" || l.status === "ready")
-    .sort((a, b) => progressOf(a) - progressOf(b));
+    .filter((l) => OPEN_RANK[l.status] !== undefined)
+    .sort((a, b) => (OPEN_RANK[a.status] ?? 3) - (OPEN_RANK[b.status] ?? 3) || progressOf(a) - progressOf(b));
   const widest = (cols: (l: Lane) => string) => Math.max(0, ...open.map((l) => Bun.stringWidth(cols(l))));
   const cols = { key: widest((l) => l.key), ref: widest((l) => refText(l.sessionRef)) };
   const lines = open.flatMap((l) => laneLine(l, now, cols));

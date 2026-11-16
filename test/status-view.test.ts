@@ -50,6 +50,26 @@ describe("the lane board", () => {
     expect(lines.at(-1)).toBe("done 2 (latest new-done, 35m ago)");
   });
 
+  test("a lane waiting on someone tops the board even when a READY or working lane has gone longer without progress", () => {
+    const lines = laneBoard(
+      [
+        lane("old-ready", "ready", 500),
+        lane("old-working", "working", 400),
+        lane("new-wait", "waiting", 3),
+        lane("old-wait", "waiting", 60),
+        lane("new-ready", "ready", 10),
+      ],
+      NOW,
+    );
+    expect(lines.map((l) => l.split(" ")[0])).toEqual([
+      "old-wait",
+      "new-wait",
+      "old-ready",
+      "new-ready",
+      "old-working",
+    ]);
+  });
+
   test("every line fits 120 columns, wide text included, and is cut on a whole character", () => {
     // Fullwidth letters take two terminal columns each, like CJK text; the sample is neutral filler.
     const long =
