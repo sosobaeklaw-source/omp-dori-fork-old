@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { firstParagraph, loadCaseNames, ownerMessages, planReply } from "../src/ready-reply.ts";
+import { firstParagraph, loadCaseNames, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
 
 const ROOM = "1571013138764140544";
 const OWNER_MSG = "1571675313379737672";
@@ -139,6 +139,23 @@ test("firstParagraph prefers the summary section, skips headings, tables, lists,
 test("a summary heading inside a code fence never picks the reply", () => {
   expect(firstParagraph("# r\n\n```\n## 요약\n\nsecret code line\n```\n\n바뀐 것.")).toBe("바뀐 것.");
   expect(firstParagraph("# r\n\n<!--\n## 결론\n\n숨긴 말\n-->\n\n바뀐 것.")).toBe("바뀐 것.");
+});
+
+test("OCR without the Korean data counts as unreadable, so the picture blocks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ocr-nokor-"));
+  const fake = join(dir, "tesseract");
+  // What tesseract does with `kor` missing: exit 0, English-only text, and this line on stderr.
+  const stderr = "Error opening data file kor.traineddata\\nFailed loading language 'kor'";
+  writeFileSync(fake, `#!/bin/sh\necho "AVY 7ELTCt hello"\nprintf '${stderr}\\n' >&2\nexit 0\n`, { mode: 0o755 });
+  const before = process.env["DORI_TESSERACT"];
+  process.env["DORI_TESSERACT"] = fake;
+  try {
+    expect(ocrPicture(join(dir, "비교.png"))).toBeUndefined();
+    expect(plan(brief(OWNER_MSG), lane(RESULT, ["비교.png"]), NAMES, ocrPicture).post).toBe(false);
+  } finally {
+    if (before === undefined) delete process.env["DORI_TESSERACT"];
+    else process.env["DORI_TESSERACT"] = before;
+  }
 });
 
 /** A DORI_HOME with one lane k1 that is ready to reply, and the env to run the hook against it (no live home leaks in). */

@@ -126,11 +126,16 @@ export function pictureOf(dir: string): string | undefined {
   return undefined;
 }
 
-/** The text in a picture by OCR (`tesseract`, Korean and English; DORI_TESSERACT overrides), undefined if it fails. */
+/**
+ * The text in a picture by OCR (`tesseract`, Korean and English; DORI_TESSERACT overrides), undefined if it fails or
+ * cannot read Korean: tesseract exits 0 when the `kor` data is missing and reads English only, which would drop a
+ * Korean name, so a `Failed loading language` line on stderr counts as unreadable too.
+ */
 export function ocrPicture(path: string): string | undefined {
   try {
     const r = Bun.spawnSync([process.env["DORI_TESSERACT"] ?? "tesseract", path, "-", "-l", "kor+eng"]);
-    return r.exitCode === 0 ? r.stdout.toString() : undefined;
+    if (r.exitCode !== 0 || /Failed loading language/i.test(r.stderr.toString())) return undefined;
+    return r.stdout.toString();
   } catch {
     return undefined;
   }
