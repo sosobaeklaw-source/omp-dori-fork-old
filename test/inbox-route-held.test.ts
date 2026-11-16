@@ -86,9 +86,9 @@ test("a send whose write fails lets go of the route: a later send is not kept wa
     if (String(file) === lock) throw new Error("disk full");
     return (real as (...a: unknown[]) => unknown)(file, ...rest);
   }) as never);
-  await expect(s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "lost write" })).rejects.toThrow(
-    "disk full",
-  );
+  await expect(
+    s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "lost write" }, false),
+  ).rejects.toThrow("disk full");
   mock.restore();
   expect(fs.existsSync(`${s.d.store.inboxPath(href("w1:p2"))}.route`)).toBe(false);
 });
@@ -102,7 +102,7 @@ test("a send waiting for a held route does not stop the process: other work runs
     waiting.resolve();
     await wake.promise;
   });
-  const sent = s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "waited" });
+  const sent = s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "waited" }, false);
   // The route's holder is this process's own other work: it can only let go while the waiting send has yielded.
   await waiting.promise;
   free();

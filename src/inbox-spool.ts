@@ -125,15 +125,15 @@ export type Queued = { kind: "queued"; at: SessionRef } | { kind: "kept" };
  * under the route: a migration or a lane switch that finished while the caller was between resolving and taking the
  * route moves the message to the session it now names, at once. The route is held until the message is written (queued
  * or spooled), so a migration cannot drain between the write and the redirect's removal. A held route is waited for
- * briefly, without blocking the process; then a message for the lead (`lead`: the session the lead role names) is kept
- * for it like an owed notice ("kept": payLead moves it once the route is free), so a report, READY or held-delivery
- * notice is never dropped, and a send to any other session is refused.
+ * briefly, without blocking the process; then a message addressed to the logical lead role (`namedLead`) is kept for
+ * it like an owed notice ("kept": payLead moves it once the route is free), even if that role changed or disappeared.
+ * Reports, READYs and held-delivery notices are never dropped; an explicit session send is refused instead.
  */
 export async function queueMessage(
   root: string,
   ref: SessionRef,
   msg: QueuedMessage,
-  lead: boolean,
+  namedLead: boolean,
   recheck?: () => SessionRef,
 ): Promise<Queued> {
   let target = ref;
@@ -156,7 +156,7 @@ export async function queueMessage(
       continue;
     }
     if (tries++ >= ROUTE_TRIES) {
-      if (lead) {
+      if (namedLead) {
         spoolMessage(owedFile(root), msg);
         return { kind: "kept" };
       }
