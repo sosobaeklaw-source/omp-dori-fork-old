@@ -204,4 +204,13 @@ describe("writer request", () => {
     writeFileSync(sheetPath, "[a]\nx\n[a]\ny\n");
     expect(() => readSheet(sheetPath, END)).toThrow("more than once");
   });
+
+  test("a closing remark or code fence after the last slot is refused, not drawn into the figure", () => {
+    const sheet = { text: "", keys: ["a", "b"] };
+    expect(() => fillSheet(sheet, "[a]\nA\n[b]\nB\n\n이상입니다. 더 고칠 곳이 있으면 말씀해 주세요.\n")).toThrow(
+      "[b] goes on after a blank line",
+    );
+    expect(() => fillSheet(sheet, "```\n[a]\nA\n[b]\nB\n```\n")).toThrow("[b] holds a code fence");
+    expect(fillSheet(sheet, "[a]\nA 첫 줄\nA 둘째 줄\n\n[b]\nB\n\n")).toEqual({ a: "A 첫 줄\nA 둘째 줄", b: "B" });
+  });
 });

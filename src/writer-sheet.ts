@@ -51,6 +51,8 @@ export function readSheet(path: string, end: string): Sheet {
 /**
  * The writer's words per slot, in sheet order. Text under a `[key]` line up to the next one, trimmed; a `[key]` the
  * sheet does not have, a missing one or an empty one is refused, so a figure is never drawn from a partial answer.
+ * A slot's words are one block: text after a blank line or a code fence line is the writer's own remark, not the
+ * slot's, and is refused rather than drawn into the figure.
  */
 export function fillSheet(sheet: Sheet, answer: string): Record<string, string> {
   const got = new Map<string, string[]>();
@@ -68,6 +70,8 @@ export function fillSheet(sheet: Sheet, answer: string): Record<string, string> 
   const missing: string[] = [];
   for (const k of sheet.keys) {
     const words = got.get(k)?.join("\n").trim();
+    if (words && /^\s*```/m.test(words)) throw new Refusal(`the answer's [${k}] holds a code fence`);
+    if (words && /\n\s*\n/.test(words)) throw new Refusal(`the answer's [${k}] goes on after a blank line`);
     if (words) out[k] = words;
     else missing.push(k);
   }
