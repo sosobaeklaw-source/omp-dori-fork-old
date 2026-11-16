@@ -24,8 +24,9 @@ const COMMON = new Set(
 const PARTICLE =
   /^(\p{Script=Hangul}{2,}?)(?:에서|으로|까지|부터|에게|한테|처럼|보다|은|는|이|가|을|를|에|의|도|로|와|과|만)$/u;
 // Copies, drafts and backups of a note, and the working folders its drafts sit in: the index skips most of them
-// too, and they crowd out the note itself.
-const COPY = /bak|backup|_old|_v\d|_r\d+\.md$|원본\.md$|before|보관_|사용금지_|사본|^_?work$|^dok-work$|^src$/i;
+// too, and they crowd out the note itself. A folder or file name holding any of these is left out.
+const COPY =
+  /bak|backup|_old|_v\d|_r\d+\.md$|원본\.md$|before|보관_|사용금지_|사본|초안|검수전|수정전|교정전|_보존|집필요청|한도종료|_읽기자료|^_?work$|^dok-work$|^src$/i;
 const CITE = /[~/\w.-]*sobaegi-lead\/results\/[^\s)`'"]*독후감[^\s)`'":]*\.md/gu;
 
 /** Words of `text`: Korean words keep their two-letter pieces too, since Korean compounds have no spaces. */
