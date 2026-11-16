@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { ids, withDiscordCli } from "./discord-fakes.ts";
 
 const guild = { environment: { DORI_DISCORD_GUILD_ID: ids.guild } };
@@ -203,3 +205,26 @@ test("Discord reactions add and remove the bot's own encoded Unicode or custom e
     }
   });
 }, 60_000);
+
+test("a Discord send logs its post, lane and kind after SENT, refuses an unknown kind, and never fails on the log", async () => {
+  await withDiscordCli(async (f) => {
+    const log = join(dirname(f.tmp), "discord-sent.log");
+    const send = (extra: string[], lane: string | undefined) =>
+      f.invoke(["send", "discord", "--to", ids.text, "--text", "결과물", ...extra], {
+        environment: { DORI_LANE: lane },
+      });
+    const card = await send(["--kind", "card"], "card-lane");
+    const plain = await send([], undefined);
+    expect([card.code, card.out, plain.code, plain.out]).toEqual([0, `SENT ${ids.message}`, 0, `SENT ${ids.message}`]);
+    expect(readFileSync(log, "utf8")).toBe(`${ids.message}\tcard-lane\tcard\n${ids.message}\t-\t-\n`);
+    const wrong = await send(["--kind", "blog"], "card-lane");
+    expect([wrong.code, wrong.keys]).toEqual([1, []]);
+    expect(wrong.err).toContain("--kind must be seo, card, video, legal or all, not blog");
+    rmSync(log);
+    mkdirSync(log);
+    const unlogged = await send(["--kind", "seo"], "seo-lane");
+    expect(unlogged.code).toBe(0);
+    expect(unlogged.out.split("\n")[0]).toBe(`SENT ${ids.message}`);
+    expect(unlogged.out.split("\n")[1]).toStartWith(`WARN sent-log ${ids.message}: `);
+  });
+});

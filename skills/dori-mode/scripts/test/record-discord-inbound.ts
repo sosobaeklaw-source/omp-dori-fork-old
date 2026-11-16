@@ -13,6 +13,20 @@ const message = (id: string, author: string, content: string, bot = false) => ({
   content,
 });
 const history: TestDiscordMessage[] = [message("100", "10", "private baseline history")];
+// Owner replies with Discord-sized ids (the ledger dates entries from them) to bot posts the test may log as sent.
+const reply = (id: string, to: string, content: string): TestDiscordMessage => ({
+  ...message(id, "10", content),
+  type: 19,
+  message_reference: { message_id: to },
+  referenced_message: { id: to, author: { id: "99" }, content: "bot post" },
+});
+const ledgerReplies = [
+  reply("1571500000000000001", "1571400000000000001", "카드 다시 해"),
+  reply("1571500000000000002", "1571400000000000002", "ㄱ"),
+  reply("1571500000000000003", "1571400000000000009", "남의 글"),
+  reply("1571500000000000004", "1571400000000000001", ""),
+  reply("1571500000000000005", "1571400000000000003", "영상 다시"),
+];
 
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   requests++;
@@ -32,7 +46,8 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       polls++;
       if (polls === 1)
         history.push(message("101", "10", "first owner text"), message("102", "11", "private other user"));
-      if (polls === 2) {
+      if (polls === 2 && scenario === "ledger") history.push(...ledgerReplies);
+      else if (polls === 2) {
         history.push(
           { ...message("103", "10", "owner reply"), type: 19, message_reference: { message_id: "101" } },
           message("104", "99", "private self bot", true),

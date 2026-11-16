@@ -1,14 +1,19 @@
 import { expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileDiscordInboundStore } from "../src/messenger/discord-inbound-state.ts";
 import { withState } from "./fakes.ts";
 
-const inboundCli = async (args: string[], environment: Record<string, string> = {}) => {
+const inboundCli = async (
+  args: string[],
+  environment: Record<string, string> = {},
+  around: { prepare?: (dir: string) => void; inspect?: (dir: string) => void } = {},
+) => {
   const state = withState();
   try {
     const config = join(state.dir, "config.json");
     writeFileSync(config, JSON.stringify({ stateDir: state.dir, runtime: "herdr", hooks: {} }));
+    around.prepare?.(state.dir);
     const child = Bun.spawn(
       [
         process.execPath,
@@ -24,6 +29,7 @@ const inboundCli = async (args: string[], environment: Record<string, string> = 
           HOME: state.dir,
           PATH: "/usr/bin:/bin",
           DORI_CONFIG: config,
+          DORI_HOME: state.dir,
           DORI_STATE_DIR: state.dir,
           DORI_DISCORD_TOKEN: "synthetic-inbound-token",
           DORI_DISCORD_OWNER_ID: "10",
@@ -43,6 +49,7 @@ const inboundCli = async (args: string[], environment: Record<string, string> = 
     const path = join(state.dir, "discord-inbound", "20.json");
     const cursor = existsSync(path) ? fileDiscordInboundStore(state.dir, "20").load() : undefined;
     expect(`${out}\n${err}`).not.toMatch(/synthetic-inbound-token|private|Authorization/);
+    around.inspect?.(state.dir);
     return { out, err, code, cursor };
   } finally {
     state.done();
@@ -99,4 +106,52 @@ test("invalid owner, authentication, permission and content-intent setup never a
     expect(err.trim().split("\n")).toHaveLength(1);
     expect(err).not.toContain("invalid-token");
   }
+});
+
+const ledgerSeed = '# 장부\n\n## 2026-11-15 21:00 · video · msg 1571500000000000005 · post -\n원문: "영상 다시"\n';
+
+test("owner replies to logged result posts go into the ledger once, verbatim, under the post's kind", async () => {
+  let ledger = "";
+  const { out, err, code } = await inboundCli(
+    [],
+    { DORI_TEST_DISCORD_CASE: "ledger" },
+    {
+      prepare: (dir) => {
+        writeFileSync(join(dir, "반복지적.md"), ledgerSeed);
+        writeFileSync(
+          join(dir, "discord-sent.log"),
+          "1571400000000000001\tcard-lane\tcard\n1571400000000000002\tstatus-lane\t-\n1571400000000000003\tvideo-lane\tvideo\n",
+        );
+      },
+      inspect: (dir) => {
+        ledger = readFileSync(join(dir, "반복지적.md"), "utf8");
+      },
+    },
+  );
+  expect({ code, err }).toEqual({ code: 0, err: "" });
+  // Only the card post's reply: not the reply under a post sent without --kind, one under a post we never logged,
+  // an empty reply, or a message the ledger already holds.
+  expect(out.split("\n").filter((line) => line.startsWith("LEDGER") || line.startsWith("WARN"))).toEqual([
+    "LEDGER ## 2026-11-15 21:19 · card · msg 1571500000000000001 · post 1571400000000000001",
+  ]);
+  expect(ledger).toBe(
+    `${ledgerSeed}\n## 2026-11-15 21:19 · card · msg 1571500000000000001 · post 1571400000000000001\n원문: "카드 다시 해"\n`,
+  );
+});
+
+test("a ledger that cannot be read only warns, and intake still commits its cursor", async () => {
+  const { out, err, code, cursor } = await inboundCli(
+    [],
+    { DORI_TEST_DISCORD_CASE: "ledger" },
+    {
+      prepare: (dir) => {
+        mkdirSync(join(dir, "반복지적.md"));
+        writeFileSync(join(dir, "discord-sent.log"), "1571400000000000001\tcard-lane\tcard\n");
+      },
+    },
+  );
+  expect({ code, err, cursor }).toEqual({ code: 0, err: "", cursor: "1571500000000000005" });
+  expect(out.split("\n").filter((line) => line.startsWith("WARN ledger"))).toEqual([
+    expect.stringMatching(/^WARN ledger 1571500000000000001: /),
+  ]);
 });

@@ -77,8 +77,13 @@ export const sendDiscord: Command = async ({ need, opt, config }) => {
   }
   if (edit) return await dc.edit(target, edit, text);
   const id = await dc.send(target, text);
-  recordSent(config.stateDir, id, process.env["DORI_LANE"], kind);
+  // The post is out: print its id before the log line so a log fault never hides it and invites a duplicate send.
   console.log(`SENT ${id}`);
+  try {
+    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind);
+  } catch (e) {
+    console.log(`WARN sent-log ${id}: ${(e as Error).message}`);
+  }
 };
 
 export const threadDiscord: Command = async ({ positionals, need, strings, values }) => {
