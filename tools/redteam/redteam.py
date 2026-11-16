@@ -199,6 +199,15 @@ def merge(out: Path, results: list[dict]) -> int:
     return len(groups)
 
 
+def read_back(path: Path) -> dict:
+    """A model file written earlier by write_model_file: '- key: value' head, blank line, body."""
+    head_txt, _, body = path.read_text().partition("\n\n")
+    head = dict(line[2:].split(": ", 1) for line in head_txt.splitlines() if ": " in line)
+    ok = head.get("status") == "ok"
+    return {"branch": path.stem, "status": head.get("status", "?"), "model": head.get("model_shown", "-"),
+            "chars": int(head.get("chars", 0)) if ok else 0, "text": body.strip() if ok else ""}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", action="append", required=True)
@@ -209,23 +218,29 @@ def main() -> int:
     ap.add_argument("--carbon-account", help="aside account for Gemini Carbon, e.g. u1:<profile>; omitted = branch recorded as blocked")
     ap.add_argument("--carbon-blocked", default="no logged-in Gemini account given", help="reason written when --carbon-account is omitted")
     ap.add_argument("--lane", default="redteam-path-1116")
+    ap.add_argument("--only", default="gpt,carbon,pirates",
+                    help="branches to (re)run; the others are read back from their files in --out and merged again")
     a = ap.parse_args()
+    only = set(a.only.split(","))
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     prompt = build_prompt(a.kind, [Path(t) for t in a.target])
     pf = out / "prompt.txt"
     pf.write_text(prompt)
     with cf.ThreadPoolExecutor(3) as ex:
-        fg = ex.submit(run_gpt, out, pf, a.gpt_account, a.lane)
-        fc = ex.submit(run_carbon, out, pf, a.carbon_account, a.lane, a.carbon_blocked)
-        fp = ex.submit(run_pirates, out, prompt, a.material)
-        results = [fg.result(), fc.result(), *fp.result()]
+        fg = ex.submit(run_gpt, out, pf, a.gpt_account, a.lane) if "gpt" in only else None
+        fc = ex.submit(run_carbon, out, pf, a.carbon_account, a.lane, a.carbon_blocked) if "carbon" in only else None
+        fp = ex.submit(run_pirates, out, prompt, a.material) if "pirates" in only else None
+        gpt = fg.result() if fg else read_back(out / "gpt_web.md")
+        carbon = fc.result() if fc else read_back(out / "carbon_web.md")
+        pirates = fp.result() if fp else [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
+    results = [gpt, carbon, *pirates]
     n = merge(out, results)
     (out / "summary.json").write_text(json.dumps([{k: v for k, v in r.items() if k != "text"} for r in results] + [{"merged": n}],
                                                  ensure_ascii=False, indent=1))
     def short(r): return f"{r['model']} {r['chars']}" if r["chars"] else f"{r['status']}"
-    ok = [r for r in results if r["branch"].startswith("pirate") and r["chars"]]
-    print(f"GPT웹 {short(results[0])} | Carbon {short(results[1])} | 해적선 "
+    ok = [r for r in pirates if r["chars"]]
+    print(f"GPT웹 {short(gpt)} | Carbon {short(carbon)} | 해적선 "
           + ", ".join(f"{r['model']}:{r['chars']}" for r in ok) + f" | 병합 지적 {n}건")
     return 0
 
