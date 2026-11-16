@@ -11,7 +11,7 @@
  * nothing was sent, so the same request goes to the next seat. Any other exit is the request's result as it stands;
  * a sent request is never sent again.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { holder, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
 import { Refusal } from "./refusal.ts";
@@ -124,6 +124,9 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
       env.log(
         `SEAT ${seat.account} (${seat.expect}) for ${o.model}${tried.length ? `, after ${tried.join(", ")}` : ""}`,
       );
+      // A meta left by an earlier run (this request on another seat, or a reused --meta path) is not this run's: a
+      // runner that dies before writing one must leave none, so its limit can never rest this seat.
+      rmSync(o.meta, { force: true });
       try {
         // biome-ignore format: one flag and its value per pair
         code = await env.run([

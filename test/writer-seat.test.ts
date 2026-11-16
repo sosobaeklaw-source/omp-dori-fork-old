@@ -13,7 +13,8 @@ function setup() {
   const meta = join(home, "r.meta.json");
   const calls: string[] = [];
   let t = NOW;
-  const env = (runMeta: (account: string) => [number, object]): SeatEnv => ({
+  // runMeta gives the runner's exit code and its meta fields, or null for a runner that dies before writing a meta.
+  const env = (runMeta: (account: string) => [number, object | null]): SeatEnv => ({
     root: home,
     pid: process.pid,
     now: () => t,
@@ -27,7 +28,7 @@ function setup() {
       calls.push(account);
       expect(existsSync(join(lockDir(home, `carbon-${account}`), "owner"))).toBe(true);
       const [code, m] = runMeta(account);
-      writeFileSync(meta, JSON.stringify({ status: code ? "fail" : "ok", modelLabel: "Argon 높음", ...m }));
+      if (m) writeFileSync(meta, JSON.stringify({ status: code ? "fail" : "ok", modelLabel: "Argon 높음", ...m }));
       return code;
     },
   });
@@ -68,6 +69,33 @@ describe("writer seat", () => {
       opts,
     );
     expect(calls).toEqual(["u2"]);
+  });
+
+  test("the limited seat's meta never rests the next seat whose runner died before writing its own", async () => {
+    const { home, meta, calls, env, opts } = setup();
+    const limit = {
+      limitText: "한도가 11월 16일 오후 12:23에 초기화됩니다",
+      limitResetAt: "2026-11-16T15:23:00+09:00",
+    };
+    const { code, seat } = await sendOnSeat(
+      env((a) => (a === "u0" ? [16, limit] : [130, null])),
+      opts,
+    );
+    expect([code, seat.account, calls]).toEqual([130, "u2", ["u0", "u2"]]);
+    expect(readRest(home, "u0")?.limitText).toBe(limit.limitText);
+    expect(readRest(home, "u2")).toBeUndefined();
+    // No meta from u2's run, so nothing of u0's run is stamped as u2's.
+    expect(existsSync(meta)).toBe(false);
+  });
+
+  test("a reused --meta path from an earlier request is not read as this run's", async () => {
+    const { home, meta, env, opts } = setup();
+    writeFileSync(meta, JSON.stringify({ limitText: "한도가 11월 16일 오후 12:23에 초기화됩니다" }));
+    const { code } = await sendOnSeat(
+      env(() => [2, null]),
+      opts,
+    );
+    expect([code, readRest(home, "u0"), existsSync(meta)]).toEqual([2, undefined, false]);
   });
 
   test("a slow or failed run without a limit notice never rests the seat or resends", async () => {
