@@ -22,8 +22,14 @@ const HIDDEN_BLOCK = /^```[\s\S]*?(?:^```[^\n]*$|(?![\s\S]))|<!--[\s\S]*?(?:-->|
 /** Case and private folders, the same set `private-read-deny.sb` keeps away from non-subscription models. */
 const CASE_PATH =
   /LegalData|sanjai-agent(?:-wt\/[^/\s]+)?\/(?:cases|private|library\/sources\/private)(?:\/|\b)|\.omp-dori\/quarantine/;
-/** Resident (7th digit 1-4) and foreigner (5-8) registration numbers led by a real YYMMDD date; text has no spaces. */
-const RRN = /(?<!\d)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[-\u2010-\u2015\u2212]?[1-8]\d{6}(?!\d)/;
+/**
+ * Resident (7th digit 1-4) and foreigner (5-8) registration numbers led by a real YYMMDD date, any dash. Two looks,
+ * either blocks: on the text with whitespace removed, with no digit guard (a neighbouring number such as `2026` glues
+ * on there); on the NFKC text with spaces allowed inside the number and digits not allowed right next to it.
+ */
+const RRN_FLAT = /\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[-\u2010-\u2015\u2212]?[1-8]\d{6}/;
+const RRN_SPACED =
+  /(?<!\d)\d\s*\d\s*(?:0\s*[1-9]|1\s*[0-2])\s*(?:0\s*[1-9]|[12]\s*\d|3\s*[01])\s*[-\u2010-\u2015\u2212]?\s*[1-8](?:\s*\d){6}(?!\d)/;
 const INVISIBLE = /\u034f|[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
 
 const MSG_ID = /\b1[0-9]{17,19}\b/g;
@@ -61,7 +67,9 @@ const squeeze = (s: string) => s.normalize("NFKC").replace(INVISIBLE, "").replac
 function caseReason(label: string, text: string, names: readonly string[]): string | undefined {
   const flat = squeeze(text);
   if (CASE_PATH.test(text.normalize("NFKC"))) return `${label} points into case folders`;
-  if (RRN.test(flat)) return `${label} holds a registration number`;
+  if (RRN_FLAT.test(flat) || RRN_SPACED.test(text.normalize("NFKC").replace(INVISIBLE, ""))) {
+    return `${label} holds a registration number`;
+  }
   if (names.some((n) => squeeze(n).length >= 2 && flat.includes(squeeze(n)))) return `${label} holds a client name`;
   return undefined;
 }

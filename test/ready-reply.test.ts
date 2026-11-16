@@ -89,6 +89,16 @@ describe("planReply", () => {
     expect(plan(brief(OWNER_MSG), l, NAMES, () => "자막 전후 비교").post).toBe(true);
   });
 
+  test("a registration number next to another number still blocks, in the text or the picture", () => {
+    for (const body of ["2026 800101-1234567 이다.", "800101-1234567 2026년 접수"]) {
+      expect(plan(brief(OWNER_MSG), lane(`# r\n\n${body}\n`)).post).toBe(false);
+    }
+    const l = lane(RESULT, ["비교.png"]);
+    for (const ocr of ["접수번호 2026\n800101-1234567\n성명", "생년월일 1980.01.01 800101-1234567"]) {
+      expect(plan(brief(OWNER_MSG), l, NAMES, () => ocr).post).toBe(false);
+    }
+  });
+
   test("without a readable client-name list no lane posts (fail closed)", () => {
     const l = lane(RESULT);
     const noList = { brief: brief(OWNER_MSG), resultsDir: l.dir, owners: l.owners, readPicture: () => "" };
