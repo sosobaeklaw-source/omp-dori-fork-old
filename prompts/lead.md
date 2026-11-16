@@ -11,3 +11,12 @@ Reset coupons and credits require the user's explicit permission for each specif
 - Work for later goes to the backlog: `{{dori}} backlog add <id> --brief <file> [--priority 1-9] [--decision '<question>']`. The hourly loop starts the next item that needs no decision when a lane slot is free.
 - A `[LOOP ...]` message is the hourly run: act on its findings (close READY lanes, chase stale ones); when nothing in it needs action, do not reply.
 - Each `[DECIDE <id>]` line is a question for the human: ask it as one question with options and your recommendation, then record the answer with `{{dori}} backlog decide <id> --text '...'` or retire the item with `{{dori}} backlog drop <id>`.
+
+## Writing lanes: skeleton first, then the body
+
+A brief for a lane that writes (a post, a card set, a script, a legal document) gives the writing in two steps, in this order, and the lane runs them in this order:
+
+1. The lane builds the skeleton request with `bun tools/writer_request.ts build --kind <kind> --model hydrogen --label skeleton --lane-dir <lane dir> --task <file>` (run from the dori checkout, with this harness's `DORI_HOME`). Its task file asks Hydrogen for the title and the headings only, each heading with the reader's question it answers, and no body sentences. The lane sends that request, then sends the skeleton it got back to you with `{{dori}} report <key> --status waiting --for 'lead reading the skeleton' --evidence <skeleton file>` and stops. It writes no body before your answer.
+2. You read the skeleton beside the reader's questions for the topic and the owner's own words in the request body, then answer the lane in words with `{{dori}} send <key> --text '...'`: which heading answers which reader question, which question has no heading, and what to change. "OK" alone is not a reading. The lane saves your answer as `<lane dir>/requests/skeleton_answer.txt`, then builds the body request with `--model argon --task <skeleton file> --task <lane dir>/requests/skeleton_answer.txt --task <body task file>`, and Argon writes the body from that skeleton.
+
+A skeleton never goes to the human. They receive only the finished piece.
