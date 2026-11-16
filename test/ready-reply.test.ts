@@ -99,6 +99,13 @@ describe("planReply", () => {
     }
   });
 
+  test("a registration number split by any one non-digit still blocks", () => {
+    const l = lane(RESULT, ["비교.png"]);
+    for (const ocr of ["800101.1234567", "800101/1234567", "800101_1234567", "800101~1234567", "800101 . 1234567"]) {
+      expect(plan(brief(OWNER_MSG), l, NAMES, () => ocr).post).toBe(false);
+    }
+  });
+
   test("without a readable client-name list no lane posts (fail closed)", () => {
     const l = lane(RESULT);
     const noList = { brief: brief(OWNER_MSG), resultsDir: l.dir, owners: l.owners, readPicture: () => "" };
@@ -127,6 +134,11 @@ test("firstParagraph prefers the summary section, skips headings, tables, lists,
   const long = firstParagraph("가".repeat(3000)) ?? "";
   expect(long.length).toBeLessThanOrEqual(2000);
   expect(long.endsWith("(결과.md에 이어짐)")).toBe(true);
+});
+
+test("a summary heading inside a code fence never picks the reply", () => {
+  expect(firstParagraph("# r\n\n```\n## 요약\n\nsecret code line\n```\n\n바뀐 것.")).toBe("바뀐 것.");
+  expect(firstParagraph("# r\n\n<!--\n## 결론\n\n숨긴 말\n-->\n\n바뀐 것.")).toBe("바뀐 것.");
 });
 
 /** A DORI_HOME with one lane k1 that is ready to reply, and the env to run the hook against it (no live home leaks in). */
