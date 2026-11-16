@@ -10,8 +10,9 @@
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
  * `SENT <id>`. A lane that gets no reply prints `SKIP <why>` and tells nobody: it stays inbox-only as before.
- * The client-name list for the case-lane check is DORI_CASE_NAMES (default `<home>/case-names.json`, a JSON array or
- * one name per line); without a readable list every lane stays inbox-only. The picture is read by OCR (`tesseract`).
+ * Only a lane whose brief carries the line `public: true` (written by the lead for public-material work) is answered;
+ * the reply text and the picture's OCR text are checked against DORI_CASE_NAMES (default `<home>/case-names.json`, a
+ * JSON array or one name per line); without a readable list no lane is answered. OCR is `tesseract`.
  * Every outcome (reply, skip, failure) is appended to `<stateDir>/ready-reply.log`, and a failure, including a sender
  * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
  * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.

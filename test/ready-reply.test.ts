@@ -27,7 +27,7 @@ function lane(result?: string, pictures: readonly string[] = []) {
   return { dir, owners: ownerMessages(log) };
 }
 
-const brief = (top: string) => `# 레인\n\n${top}\n\n## STOP WHEN\n원문 ${STANDING} 파쿠리 네 칸.\n`;
+const brief = (top: string) => `# 레인\n\npublic: true\n\n${top}\n\n## STOP WHEN\n원문 ${STANDING} 파쿠리 네 칸.\n`;
 const RESULT = `# 결과\n\n회장님 원문(${OWNER_MSG}): "…"\n\n| 칸 | 경로 |\n|---|---|\n\n쇼츠 자막을 박실로식으로 바꿨다.\n둘째 줄.\n\n다음 단락.\n`;
 /** A made-up client-name list (no real names). */
 const NAMES = ["가나다", "라마바"];
@@ -36,15 +36,9 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const plan = (
   b: string,
   l: { dir: string; owners: Map<string, string> },
-  ...names: [readonly string[] | undefined] | []
-) =>
-  planReply({
-    brief: b,
-    resultsDir: l.dir,
-    owners: l.owners,
-    caseNames: names.length ? names[0] : NAMES,
-    readPicture: () => "",
-  });
+  names: readonly string[] | undefined = NAMES,
+  read: (path: string) => string | undefined = () => "",
+) => planReply({ brief: b, resultsDir: l.dir, owners: l.owners, caseNames: names, readPicture: read });
 
 describe("planReply", () => {
   test("an owner message in the brief gets the first prose paragraph and the phone-width picture", () => {
@@ -75,69 +69,32 @@ describe("planReply", () => {
     expect(plan(brief(OWNER_MSG), lane()).post).toBe(false);
   });
 
-  test("a case lane stays inbox-only: case folders, registration numbers or client names anywhere in the folder", () => {
-    const l = lane(RESULT);
-    expect(plan(brief(`${OWNER_MSG} ~/sanjai-agent/cases/2026/x.pdf`), l)).toEqual({
-      post: false,
-      why: "case lane: brief points into case folders",
-    });
-    expect(plan(brief(`${OWNER_MSG} ~/sanjai-agent-wt/a-1116/library/sources/private/y`), l).post).toBe(false);
-    for (const number of ["800101-1234567", "8001015234567"]) {
-      expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n번호 ${number}\n`))).toEqual({
-        post: false,
-        why: "case lane: 결과.md holds a registration number",
-      });
+  test("a brief not marked public: true stays inbox-only, whatever the lane holds", () => {
+    const l = lane(RESULT, ["비교.png"]);
+    const unmarked = `# 레인\n\n회장님 원글 ${OWNER_MSG}\n\n## STOP WHEN\npublic: true\n`;
+    for (const b of [unmarked, unmarked.replace("# 레인", "# 레인\npublic: false"), `# public: true ${OWNER_MSG}\n`]) {
+      expect(plan(b, l)).toEqual({ post: false, why: "the brief is not marked public: true" });
     }
-    const nameElsewhere = lane(RESULT);
-    mkdirSync(join(nameElsewhere.dir, "work"));
-    writeFileSync(join(nameElsewhere.dir, "work", "facts.md"), "진술: 가나다 씨가 말했다.");
-    expect(plan(brief(OWNER_MSG), nameElsewhere)).toEqual({
-      post: false,
-      why: `case lane: ${join("work", "facts.md")} holds a client name`,
-    });
-    // A name counts at the start of a Hangul run, whatever is glued on after it, but not inside a word ("아가나다").
-    expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n아가나다 표, 마라마바 칸.\n`)).post).toBe(true);
-    for (const named of [
-      "의뢰인 라마바에게 물었다.",
-      "성명: 가나다",
-      "라마바님께 전화",
-      "세 가나다 본 것",
-      "라마바 요건",
-    ]) {
-      expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n${named}\n`)).post).toBe(false);
-    }
-    expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n시각 1794536700000\n`)).post).toBe(true);
   });
 
-  test("a client name standing bare, in a file name or in any file, keeps the lane inbox-only", () => {
-    // The reviewer's case: the office names files YYMMDD_실명_서류명 and writes facts with the bare name.
-    const l = lane("# 결과\n\n## 한 줄\n\n재해경위서를 직원 원본 틀에 넣었다.\n", ["비교.png"]);
-    writeFileSync(join(l.dir, "261113_가나다_재해경위서.md"), "");
-    expect(plan(brief(OWNER_MSG), l)).toEqual({
-      post: false,
-      why: "case lane: 261113_가나다_재해경위서.md holds a client name",
-    });
-    const facts = lane(RESULT);
-    writeFileSync(join(facts.dir, "사실표.md"), "가나다는 2019년 입사했다. 가나다의 주소는 서울.");
-    expect(plan(brief(OWNER_MSG), facts)).toEqual({ post: false, why: "case lane: 사실표.md holds a client name" });
-    expect(plan(brief(OWNER_MSG), lane(`# 결과\n\n라마바 재해경위서를 직원 원본 틀에 넣었다.\n`)).post).toBe(false);
-  });
-
-  test("a document the check cannot read as text keeps the lane inbox-only", () => {
-    for (const doc of ["261113_재해경위서.hwpx", "a.hwp", "b.pdf", "c.docx", "d.xlsx"]) {
-      const l = lane(RESULT);
-      writeFileSync(join(l.dir, doc), "x");
-      expect(plan(brief(OWNER_MSG), l)).toEqual({
-        post: false,
-        why: `case lane: ${doc} is not a type the check can read`,
-      });
+  test("a public lane whose reply text or picture holds a name or number stays inbox-only", () => {
+    const l = lane(RESULT, ["비교.png"]);
+    // What OCR makes of a form cut: the label glued to the name, or the name spaced out.
+    for (const ocr of ["성명가나다 사업장 소백건설", "재해자 라 마 바", "800101-1 234567"]) {
+      expect(plan(brief(OWNER_MSG), l, NAMES, () => ocr).post).toBe(false);
     }
+    expect(plan(brief(OWNER_MSG), l, NAMES, () => undefined).post).toBe(false);
+    expect(plan(brief(OWNER_MSG), lane("# r\n\n의뢰인가나다 재해경위서를 고쳤다.\n")).post).toBe(false);
+    expect(plan(brief(OWNER_MSG), lane("# r\n\n~/sanjai-agent/cases/2026/x.pdf 를 읽었다.\n")).post).toBe(false);
+    expect(plan(brief(OWNER_MSG), l, NAMES, () => "자막 전후 비교").post).toBe(true);
   });
 
   test("without a readable client-name list no lane posts (fail closed)", () => {
-    expect(plan(brief(OWNER_MSG), lane(RESULT), undefined)).toEqual({
+    const l = lane(RESULT);
+    const noList = { brief: brief(OWNER_MSG), resultsDir: l.dir, owners: l.owners, readPicture: () => "" };
+    expect(planReply({ ...noList, caseNames: undefined })).toEqual({
       post: false,
-      why: "case lane: no readable client-name list, so the lane cannot be judged",
+      why: "no readable client-name list, so the reply cannot be checked",
     });
     expect(loadCaseNames(join(tmpdir(), "no-such-names.json"))).toBeUndefined();
     const file = join(mkdtempSync(join(tmpdir(), "names-")), "n.json");
@@ -150,6 +107,8 @@ describe("planReply", () => {
 
 test("firstParagraph prefers the summary section, skips headings, tables, lists, quotes and meta lines, and cuts", () => {
   expect(firstParagraph("# h\n\n- a\n\n> q\n\n1. x\n\n본문")).toBe("본문");
+  expect(firstParagraph("# r\n\n```\ncode1\n\ncode2\n```\n\n본문.")).toBe("본문.");
+  expect(firstParagraph("# r\n\n<!-- a\n\nb -->\n\n본문.")).toBe("본문.");
   expect(firstParagraph("# t\n\n폴더는 /r/k/ 이다.\n\n앞말.\n\n## 한 줄\n\n핵심.\n\n## 다음\n\n뒷말.", ["/r/k"])).toBe(
     "핵심.",
   );
@@ -164,11 +123,11 @@ test("firstParagraph prefers the summary section, skips headings, tables, lists,
 function hookHome(sender: string) {
   const home = mkdtempSync(join(tmpdir(), "ready-hook-"));
   for (const d of ["briefs", "state", "results/k1"]) mkdirSync(join(home, d), { recursive: true });
-  writeFileSync(join(home, "briefs", "k1.md"), `# k1 (회장님 ${OWNER_MSG})\n\n## STOP WHEN\n`);
+  writeFileSync(join(home, "briefs", "k1.md"), `# k1 (회장님 ${OWNER_MSG})\npublic: true\n\n## STOP WHEN\n`);
   writeFileSync(join(home, "results", "k1", "결과.md"), "# r\n\n바뀐 것.\n");
   writeFileSync(join(home, "state", "inbound.log"), `INBOUND discord ${ROOM} ${OWNER_MSG} from=owner ref=- "x"\n`);
   writeFileSync(join(home, "case-names.json"), JSON.stringify(NAMES));
-  const { DORI_STATE_DIR: _s, DORI_CONFIG: _c, ...rest } = process.env;
+  const { DORI_STATE_DIR: _s, DORI_CONFIG: _c, DORI_LANE: _l, ...rest } = process.env;
   const env = { ...rest, DORI_HOME: home, DORI_SEND_FILE: sender, DORI_CASE_NAMES: join(home, "case-names.json") };
   return { home, env, tool: join(import.meta.dir, "..", "tools", "ready_reply.ts") };
 }
@@ -204,4 +163,19 @@ test("a sender that does not exist is a recorded failure, with what became of te
   const log = readFileSync(join(home, "state", "ready-reply.log"), "utf8");
   expect(log).toContain(`FAIL k1 ${OWNER_MSG}: cannot run ${missing}`);
   expect(log).toContain("(lead: not told, no lead session registered");
+});
+
+test("a reply that went up is a success even when the lead cannot be told, and a lane is answered once", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-once-"));
+  const sender = join(dir, "send.sh");
+  writeFileSync(sender, `#!/bin/sh\necho x >> "${dir}/posts"\necho "SENT 42"\n`, { mode: 0o755 });
+  const { home, env, tool } = hookHome(sender);
+  const run = () => Bun.spawnSync(["bun", tool, "k1"], { env });
+  expect(run().exitCode).toBe(0);
+  const log = () => readFileSync(join(home, "state", "ready-reply.log"), "utf8");
+  expect(log()).toContain(`REPLIED k1 ${OWNER_MSG} 42`);
+  expect(log()).not.toContain("FAIL");
+  expect(run().exitCode).toBe(0);
+  expect(readFileSync(join(dir, "posts"), "utf8")).toBe("x\n");
+  expect(log()).toContain(`SKIP k1: already replied to ${OWNER_MSG}`);
 });
