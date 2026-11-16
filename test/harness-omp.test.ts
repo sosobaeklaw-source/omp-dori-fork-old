@@ -1,16 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { up } from "../src/cli-up.ts";
 import { review } from "../src/gate.ts";
-import { agentCommand, defaultDeps, harnessLaunchEnv } from "../src/harness.ts";
+import { shq } from "../src/delivery.ts";
+import { agentCommand, defaultAgentCmd, defaultDeps, harnessLaunchEnv } from "../src/harness.ts";
+import { installBundle } from "../src/release/install.ts";
+import { releasePath } from "../src/release/state.ts";
 import { startLane } from "../src/lanes.ts";
 import { ompStateDir } from "../src/runtime/omp.ts";
 import { ConfigError } from "../src/runtime/select.ts";
 import { World } from "./fake.ts";
 import { setup } from "./harness-setup.ts";
 import { captureIo } from "./inbox-setup.ts";
+import { fixture } from "./release-consumer-setup.ts";
+import { boundRelease } from "./release-native-recovery-setup.ts";
 
 describe("OMP harness launches", () => {
   for (const runtime of ["herdr", "hc"] as const) {
@@ -111,6 +116,37 @@ describe("OMP harness launches", () => {
       expect(defaultDeps().agentCmd).not.toBe("omp");
       process.env["DORI_AGENT_CMD"] = "custom-agent --model x";
       expect(defaultDeps().agentCmd).toBe("custom-agent --model x");
+    } finally {
+      keys.forEach((key, i) => {
+        if (before[i] === undefined) delete process.env[key];
+        else process.env[key] = before[i];
+      });
+    }
+  });
+
+  test("a consumer release re-pins config.json's installed wrapper to its fenced native command", async () => {
+    const f = fixture();
+    const release = boundRelease(f, "agent");
+    const state = await installBundle(f.paths, release.bundle, undefined);
+    const sourceRoot = releasePath(f.paths, state.current);
+    expect(JSON.parse(readFileSync(f.paths.config, "utf8")).agentCommand[0]).toBe(join(f.paths.dori, "bin/omp"));
+    expect(defaultAgentCmd(f.paths.dori, { home: f.paths.home, sourceRoot })).toBe(
+      [join(sourceRoot, "scripts/consumer/omp"), "--no-extensions", "-e", join(sourceRoot, "extension")]
+        .map(shq)
+        .join(" "),
+    );
+  });
+
+  test("a bare omp in config.json still yields to the marked installation's wrapper", () => {
+    const keys = ["DORI_AGENT_CMD", "DORI_AGENT_ARGV"];
+    const before = keys.map((key) => process.env[key]);
+    for (const key of keys) delete process.env[key];
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-bare-omp-")));
+    try {
+      writeFileSync(join(root, "config.json"), JSON.stringify({ agentCommand: ["omp", "{prompt}"] }));
+      expect(defaultAgentCmd(root)).toBe("omp");
+      writeFileSync(join(root, ".omp-dori"), "primary\n");
+      expect(defaultAgentCmd(root)).toBe(shq(join(root, "bin/omp")));
     } finally {
       keys.forEach((key, i) => {
         if (before[i] === undefined) delete process.env[key];

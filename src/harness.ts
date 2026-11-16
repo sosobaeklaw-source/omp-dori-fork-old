@@ -62,24 +62,9 @@ export const defaultDeps = (): Deps => {
     exec: spawnExec,
     ompRunDir: OMP_RUN_DIR,
     now: Date.now,
-    // Precedence: the managed argv, an explicit DORI_AGENT_CMD, the installed OMP wrapper config.json names (a loop
-    // pane opened by `up` gets only DORI_HOME), then the consumer/side default. Read on first use, so a command that
-    // starts no agent never reads config.json for it; an invalid config.json is a ConfigError here as for every other
-    // reader of it.
+    // Read on first use, so a command that starts no agent never reads config.json for it.
     get agentCmd() {
-      agent ??= (() => {
-        const selected = processOmpCommand();
-        if (selected) return selected.map(shq).join(" ");
-        if (process.env["DORI_AGENT_CMD"] !== undefined) return process.env["DORI_AGENT_CMD"];
-        const configured = configuredOmp(store.root);
-        if (configured !== undefined) return configured;
-        const command = resolveConsumerOmpCommand(["omp"]);
-        return command[0] !== "omp"
-          ? command.map(shq).join(" ")
-          : existsSync(join(store.root, ".omp-dori"))
-            ? shq(join(store.root, "bin/omp"))
-            : "omp";
-      })();
+      agent ??= defaultAgentCmd(store.root);
       return agent;
     },
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,
@@ -87,6 +72,24 @@ export const defaultDeps = (): Deps => {
     usage: new Telemetry(store.root),
   };
 };
+
+/**
+ * The agent command a default harness launches. Precedence: the managed argv, an explicit DORI_AGENT_CMD, the consumer
+ * release's fenced native command, then the OMP wrapper config.json names (a side install's, for a loop pane `up` opens
+ * with only DORI_HOME; a bare `omp` there names nothing), then the marked installation's `bin/omp`, finally `omp`. An
+ * invalid config.json is a ConfigError here as for every other reader of it. `release` locates the consumer release
+ * this harness runs from (tests point it at a fixture).
+ */
+export function defaultAgentCmd(root: string, release?: { home?: string; sourceRoot?: string }): string {
+  const selected = processOmpCommand();
+  if (selected) return selected.map(shq).join(" ");
+  if (process.env["DORI_AGENT_CMD"] !== undefined) return process.env["DORI_AGENT_CMD"];
+  const command = resolveConsumerOmpCommand(["omp"], release);
+  if (command[0] !== "omp") return command.map(shq).join(" ");
+  const configured = configuredOmp(root);
+  if (configured !== undefined && configured !== "omp") return configured;
+  return existsSync(join(root, ".omp-dori")) ? shq(join(root, "bin/omp")) : "omp";
+}
 
 /** Recognize an OMP executable through quoted paths, environment assignments and the env utility. */
 export function isOmpAgentCommand(command: string): boolean {
