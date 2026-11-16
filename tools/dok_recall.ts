@@ -2,12 +2,15 @@
 /**
  * Print the case-note (독후감) passages a brief needs, as `PATH:START-END` lines for `writer_request --cases` or
  * `DORI_HOME/writer-cases/<kind>.txt`. See src/dok-recall.ts. The harness home is DORI_HOME (default ~/.dori).
+ * The passages go to a writing model, so one holding a client name is left out: the list is DORI_CASE_NAMES, else
+ * `DORI_HOME/case-names.json`, else sanjai-agent's `~/.sobaek/pii/name_denylist.json`; with none readable nothing prints.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { need, one, parse } from "../src/cli-args.ts";
 import { briefQuery, citations, label, loadNotes, rank, recall } from "../src/dok-recall.ts";
+import { loadCaseNames } from "../src/ready-reply.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
 
@@ -15,7 +18,8 @@ const USAGE = `usage:
   dok_recall BRIEF [--root DIR] [--limit N] [--max-chars CHARS]
       -> up to N passages (default 10) of at most CHARS/N characters each, CHARS in all (default 8000), best
          first, one PATH:START-END a line; then the notes the budget left out, as "# over budget: PATH:START-END"
-         lines. DIR defaults to ~/sobaegi-lead/results. Notes cited in DORI_HOME/briefs and writer-cases rank higher.`;
+         lines. DIR defaults to ~/sobaegi-lead/results. Notes cited in DORI_HOME/briefs and writer-cases rank higher.
+         Passages holding a client name, registration or phone number or case-folder path are left out.`;
 
 try {
   const a = parse(process.argv.slice(2));
@@ -27,7 +31,11 @@ try {
   const notes = loadNotes(one(a, "root") ?? join(homedir(), "sobaegi-lead", "results"));
   if (notes.length === 0) throw new Refusal("no 독후감 notes under the root");
   const query = briefQuery(readFileSync(brief, "utf8"));
-  const { kept, over } = recall(query, rank(query, notes, citations(defaultHome(), brief)), limit, maxChars);
+  const lists = [join(defaultHome(), "case-names.json"), join(homedir(), ".sobaek", "pii", "name_denylist.json")];
+  const names = loadCaseNames(process.env["DORI_CASE_NAMES"] ?? lists.find((p) => existsSync(p)));
+  if (!names) throw new Refusal(`no readable client-name list (DORI_CASE_NAMES, or ${lists.join(" or ")})`);
+  const ranked = rank(query, notes, citations(defaultHome(), brief));
+  const { kept, over } = recall(query, ranked, limit, maxChars, names);
   if (kept.length === 0) console.error(`no 독후감 passage matches ${brief} (${notes.length} notes read)`);
   for (const p of kept) console.log(label(p));
   for (const p of over) console.log(`# over budget: ${label(p)}`);

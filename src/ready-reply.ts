@@ -113,7 +113,7 @@ function holdsName(flat: string, names: NameHashes): boolean {
  * Why `text` (one of the two things posted) must not go out, or undefined. A name counts anywhere, glued to a label
  * ("성명가나다", what OCR makes of a form) or spaced out ("가 나 다"): a wrong block only costs an automatic reply.
  */
-function caseReason(label: string, text: string, names: NameHashes): string | undefined {
+export function caseReason(label: string, text: string, names: NameHashes): string | undefined {
   const flat = squeeze(text);
   if (CASE_PATH.test(text.normalize("NFKC"))) return `${label} points into case folders`;
   if (RRN_FLAT.test(flat) || RRN_SPACED.test(text.normalize("NFKC").replace(INVISIBLE, ""))) {

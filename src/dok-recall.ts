@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { caseReason } from "./ready-reply.ts";
 import { caseLines } from "./writer-request.ts";
 
 const COMMON = new Set(
@@ -27,7 +28,11 @@ const PARTICLE =
 // its drafts sit in: the index skips most of them too, and they crowd out the note itself. A folder or file name
 // holding any of these is left out.
 const COPY =
-  /bak|backup|_old|_v\d|_r\d+\.md$|원본\.md$|before|사본|백업|보관|보존|사용금지_|미사용|초안|초고|후보|검토중|(?:검수|수정|교정|대조|조사|정정)전|요청|지시\.md$|브리프|프롬프트|입력기록|stdout|한도종료|_읽기자료|failed|^attempt$|^_?work$|^dok-work$|^src$/i;
+  /bak|backup|_old|_v\d|_r\d+\.md$|원본\.md$|before|사본|백업|보관|보존|사용금지_|미사용|초안|초고|후보|검토중|(?:검수|수정|교정|대조|조사|정정)전|요청|지시\.md$|브리프|프롬프트|입력기록|stdout|한도종료|_읽기자료|failed|^attempt$|^_?work$|^dok-work$|^src$|^pack$|^__none__$/i;
+// Reading copies other lanes gathered from elsewhere (the same notes, a line or two apart).
+const GATHERED = /(?:^|\/)research\/local$/;
+// A phone number (pii_guard.py's pattern, with no digit glued on either side so long ids do not match).
+const PHONE = /(?<!\d)0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}(?!\d)/;
 const CITE = /[~/\w.-]*sobaegi-lead\/results\/[^\s)`'"]*독후감[^\s)`'":]*\.md/gu;
 
 /** Words of `text`: Korean words keep their two-letter pieces too, since Korean compounds have no spaces. */
@@ -77,7 +82,7 @@ export function loadNotes(root: string): Note[] {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const name = e.name.normalize("NFC");
       const path = join(dir, e.name);
-      if (name.startsWith(".") || name === "node_modules" || COPY.test(name)) continue;
+      if (name.startsWith(".") || name === "node_modules" || COPY.test(name) || GATHERED.test(below(path))) continue;
       if (e.isDirectory()) walk(path);
       else if (name.endsWith(".md") && name.includes("독후감") && !name.includes("색인")) {
         const text = readFileSync(path, "utf8");
@@ -201,15 +206,28 @@ export interface Recall {
 
 /**
  * Keep passages of the ranked notes in order until `limit` notes or `maxChars` characters would be crossed. Each
- * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget.
+ * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget. The passages
+ * go to a writing model, so one holding a name of `names` (the client-name list), a registration number, a phone
+ * number or a case-folder path is left out, and so is one whose text a kept or listed passage already has.
  */
-export function recall(query: string, ranked: readonly Scored[], limit: number, maxChars: number): Recall {
+export function recall(
+  query: string,
+  ranked: readonly Scored[],
+  limit: number,
+  maxChars: number,
+  names: readonly string[],
+): Recall {
   const kept: Passage[] = [];
   const over: Passage[] = [];
+  const seen = new Set<string>();
   let used = 0;
   for (const { note } of ranked) {
     const p = bestPassage(note, query, Math.floor(maxChars / limit));
     if (!p) continue;
+    const text = note.lines.slice(p.start - 1, p.end).join("\n");
+    if (seen.has(text)) continue;
+    seen.add(text);
+    if (caseReason("", text, names) || PHONE.test(text)) continue;
     if (over.length === 0 && kept.length < limit && used + p.chars <= maxChars) {
       kept.push(p);
       used += p.chars;

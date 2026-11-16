@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { bestPassage, briefQuery, citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
+import { loadCaseNames } from "../src/ready-reply.ts";
 import { buildRequest, readRange } from "../src/writer-request.ts";
 
 const filler = (topic: string, n: number) =>
@@ -41,6 +42,9 @@ function tree(): string {
     "r109/109차_독후감_11-12절_카본보정후보.md",
     "r111/carbon/독후감_3_실행stdout.md",
     "pd/독후감_최종집필_지시.md",
+    "incident-multi-1115/pack/독후감_직업력표.md",
+    "legal-lexicon-r84/__none__/독후감.md",
+    "design-thinking-1112/research/local/books/독후감_학습하는법.md",
   ].entries())
     note(rel, [`# 독후감 — 카드뉴스 초안 ${i}`, ...filler(`초안${i}`, 3)]);
   note("video-1111/독후감.md", ["# 독후감 — 영상 컷", "", ...filler("영상", 5)]);
@@ -82,7 +86,7 @@ test("the brief's topic ranks first, and the passage is the section that shares 
   const query = "카드뉴스 문구를 법률가 말로 다시 쓴다";
   const ranked = rank(query, notes);
   expect(ranked[0]!.note.path).toEndWith("cardnews-1112/독후감_카드뉴스.md");
-  const { kept } = recall(query, ranked, 1, 2000);
+  const { kept } = recall(query, ranked, 1, 2000, []);
   expect(kept).toHaveLength(1);
   expect(kept[0]!.start).toBe(7);
   expect(readRange(`${kept[0]!.path}:${kept[0]!.start}-${kept[0]!.end}`).lines[0]).toBe(
@@ -95,13 +99,13 @@ test("the budget keeps notes in rank order and names the next ones as over budge
   const query = "카드뉴스 영상 팩스";
   const ranked = rank(query, notes);
   expect(ranked).toHaveLength(3);
-  const roomy = recall(query, ranked, 3, 100_000);
+  const roomy = recall(query, ranked, 3, 100_000, []);
   expect(roomy.kept.map((p) => p.path)).toEqual(ranked.map((s) => s.note.path));
   expect(roomy.over).toEqual([]);
-  const tight = recall(query, ranked, 2, 100_000);
+  const tight = recall(query, ranked, 2, 100_000, []);
   expect(tight.kept.map((p) => p.path)).toEqual(ranked.slice(0, 2).map((s) => s.note.path));
   expect(tight.over.map((p) => p.path)).toEqual([ranked[2]!.note.path]);
-  for (const p of recall(query, ranked, 3, 300).kept) expect(p.chars).toBeLessThanOrEqual(100);
+  for (const p of recall(query, ranked, 3, 300, []).kept) expect(p.chars).toBeLessThanOrEqual(100);
 });
 
 test("a note other briefs and writer-cases cite ranks higher; the brief being recalled for is not counted", () => {
@@ -162,7 +166,7 @@ test("a note with no case line gives no passage; two notes keep their shared wor
   const notes = loadNotes(root);
   const ranked = rank("팩스", notes);
   expect(ranked).toHaveLength(2);
-  const { kept, over } = recall("팩스", ranked, 5, 5000);
+  const { kept, over } = recall("팩스", ranked, 5, 5000, []);
   expect(kept.map((p) => p.path)).toEqual([join(root, "b-1110", "독후감.md")]);
   expect(over).toEqual([]);
 });
@@ -170,4 +174,47 @@ test("a note with no case line gives no passage; two notes keep their shared wor
 test("the brief's words stop at the harness's standing sections", () => {
   for (const tail of ["Lane rules", "STOP WHEN (파쿠리)", "Lessons for omp-dori"])
     expect(briefQuery(`# 일\n난청 글\n## ${tail}\n팩스`)).toBe("# 일\n난청 글");
+});
+
+test("a passage holding a client name, registration number, phone number or case path is left out", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-pii-")), "results");
+  const note = (dir: string, line: string) => {
+    mkdirSync(join(root, dir), { recursive: true });
+    writeFileSync(join(root, dir, "독후감.md"), `# 독후감 — 경력표\n\n${[...filler("경력표", 2), line].join("\n")}\n`);
+  };
+  note("name-1113", "내가 만든 홍 길 순 재해경위서 표는 원본을 빌린 것이다.");
+  note("rrn-1113", "주민번호 900101-1234567 칸을 넓혔다.");
+  note("phone-1113", "연락처 010-1234-5678 칸은 오른쪽에 둔다.");
+  note("path-1113", "원본은 ~/LegalData/cases/x 에 있다.");
+  note("clean-1113", "회장님 지시대로 2026년 11월 13일에 칸을 맞췄다.");
+  // Each folder name is in one note only, so every note ranks (a word more than half the notes hold never counts).
+  const query = "name rrn phone path clean";
+  const ranked = rank(query, loadNotes(root));
+  expect(ranked).toHaveLength(5);
+  // sanjai-agent's name_denylist.json shape, the list dok_recall falls back to.
+  const list = join(root, "name_denylist.json");
+  writeFileSync(list, JSON.stringify({ _note: "실명 사전", names: ["홍길순", "x"] }));
+  const names = loadCaseNames(list)!;
+  expect(names).toEqual(["홍길순"]);
+  const { kept, over } = recall(query, ranked, 10, 100_000, names);
+  expect([...kept, ...over].map((p) => relative(root, p.path))).toEqual(["clean-1113/독후감.md"]);
+});
+
+test("of two copies one line apart, the passage they share is given once", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-dup-")), "results");
+  const body = (first: string) =>
+    `# 독후감 — 팩스\n\n## 처음\n${first}\n\n## 팩스 보내기\n${filler("팩스", 3).join("\n")}\n`;
+  for (const [dir, first] of [
+    ["a-1110", "처음 판에서 쓴 줄이다."],
+    ["b-1110", "고친 판에서 쓴 줄이다."],
+  ]) {
+    mkdirSync(join(root, dir!), { recursive: true });
+    writeFileSync(join(root, dir!, "독후감.md"), body(first!));
+  }
+  const ranked = rank("팩스 보내기", loadNotes(root));
+  expect(ranked).toHaveLength(2);
+  const { kept, over } = recall("팩스 보내기", ranked, 5, 5000, []);
+  expect(kept).toHaveLength(1);
+  expect(kept[0]!.start).toBe(6);
+  expect(over).toEqual([]);
 });
