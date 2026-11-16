@@ -3,10 +3,12 @@
  *
  * `dori send discord` appends one line per post to `<stateDir>/discord-sent.log`: `<post id>\t<lane>\t<kind>`, the
  * lane from DORI_LANE and the kind from `--kind seo|card|video|legal|all`; a post sent without `--kind` (a status
- * line, an answer) is logged as `-`. Only a reply to a post logged with a kind goes into the harness home's owner
- * ledger (`반복지적.md`), verbatim through `addEntry` under that kind: the ledger feeds writing-model requests, so an
- * approval, a payment answer or a case remark under any other post must never reach it. A reply to a post not in the
- * log (the other Mac's bot, someone else, an older post) stays out until that sender writes the same log.
+ * line, an answer) is logged as `-`. Every owner reply to a post logged as `seo`, `card` or `video` goes into the
+ * harness home's owner ledger (`반복지적.md`), verbatim through `addEntry` under that kind — an approval like "ㄱ"
+ * included, since nothing reads the words. `legal` and `all` posts are logged but their replies stay out: the ledger is
+ * copied into outside writing-model requests, and a reply there can carry a client's name or case facts, which only a
+ * person may put in (`writer_request add`). A reply to a post not in the log (the other Mac's bot, someone else, an
+ * older post) stays out until that sender writes the same log.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,8 +42,8 @@ export const sentKind = (stateDir: string, postId: string): string | undefined =
 };
 
 /**
- * The ledger line added for an owner reply to one of our result posts, or undefined when the message is not such a
- * reply, has no words, or the home has no ledger. A message already in the ledger is left as it is.
+ * The ledger line added for an owner reply to one of our `seo`, `card` or `video` posts, or undefined when the message
+ * is not such a reply, has no words, or the home has no ledger. A message already in the ledger is left as it is.
  */
 export const ledgerReply = (
   home: string,
@@ -52,7 +54,8 @@ export const ledgerReply = (
   const post = message.replyTo;
   if (!post || post.author === ownerId || message.text.trim() === "") return undefined;
   const kind = sentKind(stateDir, post.id);
-  if (kind === undefined || kind === "-" || !existsSync(ledgerPath(home))) return undefined;
+  if (kind !== "seo" && kind !== "card" && kind !== "video") return undefined;
+  if (!existsSync(ledgerPath(home))) return undefined;
   if (readFileSync(ledgerPath(home), "utf8").includes(` · msg ${message.message} · `)) return undefined;
   return addEntry({
     home,

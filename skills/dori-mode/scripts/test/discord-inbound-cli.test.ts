@@ -120,7 +120,7 @@ test("owner replies to logged result posts go into the ledger once, verbatim, un
         writeFileSync(join(dir, "반복지적.md"), ledgerSeed);
         writeFileSync(
           join(dir, "discord-sent.log"),
-          "1571400000000000001\tcard-lane\tcard\n1571400000000000002\tstatus-lane\t-\n1571400000000000003\tvideo-lane\tvideo\n",
+          "1571400000000000001\tcard-lane\tcard\n1571400000000000002\tstatus-lane\t-\n1571400000000000003\tvideo-lane\tvideo\n1571400000000000004\tlegal-lane\tlegal\n",
         );
       },
       inspect: (dir) => {
@@ -129,13 +129,16 @@ test("owner replies to logged result posts go into the ledger once, verbatim, un
     },
   );
   expect({ code, err }).toEqual({ code: 0, err: "" });
-  // Only the card post's reply: not the reply under a post sent without --kind, one under a post we never logged,
-  // an empty reply, or a message the ledger already holds.
+  // The card post's replies go in, its "ㄱ" approval too, since nothing reads the words. Out: the reply under a post sent
+  // without --kind, one under a post we never logged, one under a legal post (case facts), an empty reply, and a
+  // message the ledger already holds.
   expect(out.split("\n").filter((line) => line.startsWith("LEDGER") || line.startsWith("WARN"))).toEqual([
     "LEDGER ## 2026-11-15 21:19 · card · msg 1571500000000000001 · post 1571400000000000001",
+    "LEDGER ## 2026-11-15 21:19 · card · msg 1571500000000000006 · post 1571400000000000001",
   ]);
   expect(ledger).toBe(
-    `${ledgerSeed}\n## 2026-11-15 21:19 · card · msg 1571500000000000001 · post 1571400000000000001\n원문: "카드 다시 해"\n`,
+    `${ledgerSeed}\n## 2026-11-15 21:19 · card · msg 1571500000000000001 · post 1571400000000000001\n원문: "카드 다시 해"\n` +
+      `\n## 2026-11-15 21:19 · card · msg 1571500000000000006 · post 1571400000000000001\n원문: "ㄱ"\n`,
   );
 });
 
@@ -150,8 +153,9 @@ test("a ledger that cannot be read only warns, and intake still commits its curs
       },
     },
   );
-  expect({ code, err, cursor }).toEqual({ code: 0, err: "", cursor: "1571500000000000005" });
+  expect({ code, err, cursor }).toEqual({ code: 0, err: "", cursor: "1571500000000000007" });
   expect(out.split("\n").filter((line) => line.startsWith("WARN ledger"))).toEqual([
     expect.stringMatching(/^WARN ledger 1571500000000000001: /),
+    expect.stringMatching(/^WARN ledger 1571500000000000006: /),
   ]);
 });
