@@ -130,7 +130,7 @@ describe("a message queued while another process rewrites the same inbox", () =>
   test("a message spooled while a flush holds the lock is in the queue once the flush lets go", async () => {
     const s = setup();
     const release = s.d.store.lockInbox(href("w1:p2"), s.d.now())!;
-    await s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "waits" });
+    await s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "waits" }, false);
     release();
     expect(readQueue(s.d.store.inboxPath(href("w1:p2"))).map((m) => m.text)).toEqual(["waits"]);
     expect(readdirSync(`${s.d.store.inboxPath(href("w1:p2"))}.spool`)).toEqual([]);
@@ -144,7 +144,7 @@ describe("a message queued while another process rewrites the same inbox", () =>
       if (String(to).startsWith(dir) && String(to).endsWith(".jsonl")) release();
       return REAL_RENAME(from, to);
     });
-    await s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "late" });
+    await s.d.store.enqueue(href("w1:p2"), { at: s.d.now(), from: "cli", text: "late" }, false);
     mock.restore();
     expect(readQueue(s.d.store.inboxPath(href("w1:p2"))).map((m) => m.text)).toEqual(["late"]);
     expect(readdirSync(dir)).toEqual([]);

@@ -103,12 +103,11 @@ export class Store {
 
   /**
    * Appends under its lock to the inbox `ref` resolves to (the live redirect of a running migration, inbox-spool.ts),
-   * or keeps it for the lead. `recheck` is the sender's name resolved again under the route (a lane or role that
-   * switched meanwhile).
+   * or keeps it for the logical lead role (`namedLead`), independent of the current role/session mapping. `recheck`
+   * is the sender's name resolved again under the route (a lane or role that switched meanwhile).
    */
-  enqueue(ref: SessionRef, msg: QueuedMessage, recheck?: () => SessionRef): Promise<Queued> {
-    const lead = this.roles().lead;
-    return queueMessage(this.root, ref, msg, lead !== undefined && sameSession(lead, ref), recheck);
+  enqueue(ref: SessionRef, msg: QueuedMessage, namedLead: boolean, recheck?: () => SessionRef): Promise<Queued> {
+    return queueMessage(this.root, ref, msg, namedLead, recheck);
   }
 
   /**

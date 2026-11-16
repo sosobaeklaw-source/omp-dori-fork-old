@@ -42,7 +42,7 @@ test("an id-less spool entry settled before an interrupted rewrite is never deli
   const s = setup();
   const release = s.d.store.lockInbox(OLD, s.d.now());
   if (release === undefined) throw new Error("fixture inbox locked");
-  await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "once" });
+  await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "once" }, false);
   release();
   const path = s.d.store.inboxPath(OLD);
   let stopped = false;
@@ -65,8 +65,8 @@ test("an id-less spool entry settled before an interrupted rewrite is never deli
 
 test("enumeration during a locked partial rewrite does not abort delivery to another inbox", async () => {
   const s = setup();
-  await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "rewriting" });
-  await s.d.store.enqueue(href("w1:p1"), { at: s.d.now(), from: "cli", text: "unrelated" });
+  await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "rewriting" }, false);
+  await s.d.store.enqueue(href("w1:p1"), { at: s.d.now(), from: "cli", text: "unrelated" }, false);
   const release = s.d.store.lockInbox(OLD, s.d.now());
   if (release === undefined) throw new Error("fixture inbox locked");
   const path = s.d.store.inboxPath(OLD);
@@ -84,7 +84,7 @@ test("enumeration during a locked partial rewrite does not abort delivery to ano
 
 test("a flush that finds the queue part way through a locked rewrite waits for the holder, without throwing", async () => {
   const s = setup();
-  await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "rewriting" });
+  await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "rewriting" }, false);
   const release = s.d.store.lockInbox(OLD, s.d.now());
   if (release === undefined) throw new Error("fixture inbox locked");
   const path = s.d.store.inboxPath(OLD);

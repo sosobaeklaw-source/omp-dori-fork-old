@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { lockEnv } from "../src/lock.ts";
 import { holder, lockDir, tryTake } from "../src/lock-owner.ts";
 import { enqueue, take, tickets } from "../src/lock-queue.ts";
@@ -72,8 +72,12 @@ test("a takeover whose claimer died is finished by the next waiter, and nothing 
   const dead = "gone 2026-11-14 09:00:00 pid=66";
   shellLock(w.root, dead);
   // A claimer (pid 5) took the claim on that dead owner line and was killed before it cleared the lock.
-  const digest = createHash("sha256").update(dead).digest("hex").slice(0, 16);
-  fs.writeFileSync(join(w.root, "state", `${NAME}.lock.claim-${digest}`), "pid=5 x");
+  const digest = createHash("sha256")
+    .update(basename(lockDir(w.root, NAME)))
+    .update("\0")
+    .update(dead)
+    .digest("hex");
+  fs.writeFileSync(join(w.root, "state", `.lock-claim-${digest}`), "pid=5 x");
 
   const got = tryTake(w.env(6), NAME, "next", () => {});
 
