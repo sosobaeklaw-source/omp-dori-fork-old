@@ -5,7 +5,9 @@ import type { GatewayClock, GatewaySocket } from "./messenger/discord-gateway.ts
 import { discordInbound, formatDiscordInbound } from "./messenger/discord-inbound.ts";
 import { discordInboundLive } from "./messenger/discord-inbound-live.ts";
 import { discordInboundEnv, fileDiscordInboundStore } from "./messenger/discord-inbound-state.ts";
+import { ledgerReply } from "./messenger/discord-sent.ts";
 import { fetchHttp } from "./messenger/http.ts";
+import { defaultHome } from "../../../../src/test-home.ts";
 import { realClock } from "./run.ts";
 
 export const openDiscordSocket = (url: string): GatewaySocket => {
@@ -64,7 +66,17 @@ export const discordInboundCommand = async (stateDir: string, gateway: boolean, 
     { ownerId, channelIds: [...new Set(channelIds)], all },
   );
   const watching = all ? "all" : intake.channels().join(",");
-  const emit = (message: Parameters<typeof formatDiscordInbound>[0]) => console.log(formatDiscordInbound(message));
+  const home = defaultHome();
+  // The owner's reply to a post lands in the ledger verbatim; a ledger fault is reported and never holds intake.
+  const emit = (message: Parameters<typeof formatDiscordInbound>[0]) => {
+    console.log(formatDiscordInbound(message));
+    try {
+      const head = ledgerReply(home, stateDir, ownerId, message);
+      if (head) console.log(`LEDGER ${head}`);
+    } catch (e) {
+      console.log(`WARN ledger ${message.message}: ${(e as Error).message}`);
+    }
+  };
   console.log(
     `INBOUND_READY discord owner=${ownerId} channel=${watching} bot=${intake.botId}${gateway ? " mode=gateway" : ""}`,
   );

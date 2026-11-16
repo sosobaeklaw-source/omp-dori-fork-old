@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { type Command, die } from "./cli-context.ts";
 import { type DcChannel, Discord, isForumType } from "./messenger/discord.ts";
 import { discordInboundEnv } from "./messenger/discord-inbound-state.ts";
+import { postKind, recordSent } from "./messenger/discord-sent.ts";
 import { fetchHttp } from "./messenger/http.ts";
 import { TranscriptionError } from "./messenger/voice.ts";
 import { realClock } from "./run.ts";
@@ -59,11 +60,12 @@ const tagIds = (forum: DcChannel, names: readonly string[]): string[] =>
     );
   });
 
-export const sendDiscord: Command = async ({ need, opt }) => {
+export const sendDiscord: Command = async ({ need, opt, config }) => {
   const thread = opt("thread");
   const to = thread === undefined ? need("to") : undefined;
   const text = need("text");
   const edit = opt("edit");
+  const kind = postKind(opt("kind"));
   const dc = client();
   let target: string;
   if (thread !== undefined) target = discordInboundEnv("--thread", thread);
@@ -73,8 +75,15 @@ export const sendDiscord: Command = async ({ need, opt }) => {
       die(`${channel.id} is a forum: post with dori thread discord create, or pass --thread`);
     target = channel.id;
   }
-  if (edit) await dc.edit(target, edit, text);
-  else console.log(`SENT ${await dc.send(target, text)}`);
+  if (edit) return await dc.edit(target, edit, text);
+  const id = await dc.send(target, text);
+  // The post is out: print its id before the log line so a log fault never hides it and invites a duplicate send.
+  console.log(`SENT ${id}`);
+  try {
+    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind);
+  } catch (e) {
+    console.log(`WARN sent-log ${id}: ${(e as Error).message}`);
+  }
 };
 
 export const threadDiscord: Command = async ({ positionals, need, strings, values }) => {
