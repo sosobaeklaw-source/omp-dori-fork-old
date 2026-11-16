@@ -40,6 +40,8 @@ flowchart TD
 
 macOS와 hc는 CI 범위와 소스 `main`의 어댑터를 유지하며 실제 소비자 preview 지원 대상에서는 제외됩니다. Slack과 Telegram은 소스 기능으로 남아 있습니다. 이 지원 범위가 독립 외부 사용자 beta 완료나 모든 provider·기능의 검증을 뜻하지는 않습니다.
 
+**현재 소스 `main`:** 기본 설치는 검증된 소스로 수정 OMP 18.20.0과 고정된 b215 ULW overlay를 준비합니다. PATH의 stock OMP는 필수 조건도 대체품도 아닙니다. 같은 버전의 공식 native addon을 사용하며 Cargo는 필요하지 않습니다. 생성된 `omp` wrapper를 사용하고, 사용자 toolchain은 명시적 override로 취급합니다. [소스 bundle 계약](docs/releases.md#current-source-bundle). 아래의 변경 불가 `v0.1.2` 배포물과 과거 요구 조건은 그대로입니다.
+
 ## 시작하기
 
 ### 1. 사전 준비와 버전 확인

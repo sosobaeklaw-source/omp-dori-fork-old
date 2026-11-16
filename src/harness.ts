@@ -1,9 +1,10 @@
-import { accessSync, readFileSync } from "node:fs";
+import { accessSync, existsSync, readFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { join, resolve } from "node:path";
 import { shq } from "./delivery.ts";
 import { memFreePct } from "./host.ts";
 import { OMP_RUN_DIR } from "./lane-services.ts";
+import { doriLaunchEnv, processOmpCommand, resolveConsumerOmpCommand } from "./release/runtime.ts";
 import { type Exec, spawnExec } from "./runtime/exec.ts";
 import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
@@ -61,11 +62,24 @@ export const defaultDeps = (): Deps => {
     exec: spawnExec,
     ompRunDir: OMP_RUN_DIR,
     now: Date.now,
-    // A loop pane opened by `up` gets only DORI_HOME; its config names the installed OMP wrapper, not the bare binary.
-    // Read on first use, so a command that starts no agent never reads config.json for it; an invalid config.json is a
-    // ConfigError here as for every other reader of it.
+    // Precedence: the managed argv, an explicit DORI_AGENT_CMD, the installed OMP wrapper config.json names (a loop
+    // pane opened by `up` gets only DORI_HOME), then the consumer/side default. Read on first use, so a command that
+    // starts no agent never reads config.json for it; an invalid config.json is a ConfigError here as for every other
+    // reader of it.
     get agentCmd() {
-      agent ??= process.env["DORI_AGENT_CMD"] ?? configuredOmp(store.root) ?? "omp";
+      agent ??= (() => {
+        const selected = processOmpCommand();
+        if (selected) return selected.map(shq).join(" ");
+        if (process.env["DORI_AGENT_CMD"] !== undefined) return process.env["DORI_AGENT_CMD"];
+        const configured = configuredOmp(store.root);
+        if (configured !== undefined) return configured;
+        const command = resolveConsumerOmpCommand(["omp"]);
+        return command[0] !== "omp"
+          ? command.map(shq).join(" ")
+          : existsSync(join(store.root, ".omp-dori"))
+            ? shq(join(store.root, "bin/omp"))
+            : "omp";
+      })();
       return agent;
     },
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,
@@ -97,6 +111,15 @@ export const agentCommand = (d: Deps, role: "dori" | "lane"): string =>
   isOmpAgentCommand(d.agentCmd) && !/(?:^|\s)--dori-role(?:[=\s]|$)/.test(d.agentCmd)
     ? `${d.agentCmd} --dori-role ${role}`
     : d.agentCmd;
+
+/** Native agents and loop controllers keep this home's selection across the terminal server. */
+export function harnessLaunchEnv(d: Deps): Record<string, string> {
+  const configFile = process.env["DORI_CONFIG"] ?? join(d.store.root, "config.json");
+  return doriLaunchEnv(process.env, configFile, {
+    doriHome: d.store.root,
+    stateDir: ompStateDir({ ...process.env, DORI_CONFIG: configFile }),
+  });
+}
 
 /** `DORI_PROMPTS_DIR` when set, else the repo's `prompts/`. */
 export const promptsDir = (): string => process.env["DORI_PROMPTS_DIR"] || PROMPTS;

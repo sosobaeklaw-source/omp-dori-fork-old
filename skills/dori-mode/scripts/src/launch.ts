@@ -129,7 +129,7 @@ const startLane = async (
   const group = deps.config.laneWorkspace || undefined;
   let env: Record<string, string>;
   try {
-    env = laneLaunchEnv(process.env, configPath());
+    env = laneLaunchEnv(process.env, configPath(), deps.config);
   } catch (e) {
     throw e instanceof TokenFileError ? new LaunchError(`token file refused: ${e.message}`) : e;
   }

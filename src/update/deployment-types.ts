@@ -1,3 +1,4 @@
+import type { NativeReceipt } from "../release/native.ts";
 import type { SourceManifest } from "./types.ts";
 
 export type DeploymentConfig = {
@@ -9,7 +10,8 @@ export type DeploymentConfig = {
   /** Dori's pane/monitor metadata root; native session files stay where they are. */
   readonly stateDir: string;
   readonly bun: string;
-  readonly omp: string;
+  /** Omitted selects the release-bound native source; an absolute path is an explicit external-toolchain override. */
+  readonly omp?: string;
   readonly legacyOmp?: string;
   /** Absent runtime remains herdr and retains legacy journal hashes; hc opts into its own binary and terminal. */
   readonly runtime?: "herdr" | "hc";
@@ -67,6 +69,9 @@ export type ToolchainReceipt = {
   readonly ompEntryHash: string;
   readonly bunHash: string;
   readonly nativeConfig: string;
+  readonly nativeSource?: NativeReceipt;
+  readonly nativeOverride?: true;
+  readonly ompUlw?: { readonly source: string; readonly identity: string; readonly directory: string };
   readonly nativeConfigHash: string;
 };
 export type MonitorSpec = {

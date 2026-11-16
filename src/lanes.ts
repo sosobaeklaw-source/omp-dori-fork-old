@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { prepareLessons } from "../skills/dori-mode/scripts/src/lessons.ts";
 import { shq } from "./delivery.ts";
 import { oneName } from "./fit.ts";
-import { agentCommand, isOmpAgentCommand, prompt, type Deps } from "./harness.ts";
+import { agentCommand, harnessLaunchEnv, isOmpAgentCommand, prompt, type Deps } from "./harness.ts";
 import { settled, tellLead, type SendResult } from "./inbox.ts";
 import { Refusal } from "./refusal.ts";
 import { stopLaneServices } from "./lane-services.ts";
@@ -63,7 +63,7 @@ export async function startLane(
   const modelArgs = model ? ` --model ${shq(model)}${thinking ? ` --thinking ${shq(thinking)}` : ""}` : "";
   const ref = await openSession(
     rt,
-    { name: key, role: "lane", container: "tab", cwd, env: { DORI_LANE: key, DORI_HOME: d.store.root }, group },
+    { name: key, role: "lane", container: "tab", cwd, env: { ...harnessLaunchEnv(d), DORI_LANE: key }, group },
     `${command}${modelArgs} ${shq(kickoff)}`,
   );
   if (pin) rmSync(pin.path, { force: true });
