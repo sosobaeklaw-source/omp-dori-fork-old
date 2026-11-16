@@ -1,0 +1,8 @@
+# card: lexicon passage (11-10 owner quote, 법문서 작성 215쪽, same-name rule), headline notes, r3 word table, instagram notes. 독후감은 macmini 원문 경로(owner-now-sync 미러) (rootfix-pr4-1116)
+~/sobaegi-lead/results/lexicon-natural-1110/독후감_자연스러운말.md:12-12
+~/sobaegi-lead/results/lexicon-natural-1110/독후감_자연스러운말.md:20-22
+~/sobaegi-lead/results/copy-1114/독후감.md:7-15
+~/.omp-dori/results/cardmag-hybrid-1116/r3/문구표_r3.md:12-53
+~/.omp-dori/results/insta-jaehae-1116/ref/instagram-cardnews-principles-20261103.md:1-45
+~/sobaegi-lead/results/channels-8-1110/독후감_인스타.md:1-11
+~/sobaegi-lead/results/insta-ref2-1109/독후감.md:1-64
