@@ -46,7 +46,7 @@ const start = async (
   const sessionFile = join(dir, `${at.replace(/:/g, "-").replace(".", "-")}_${id}.jsonl`);
   writeFileSync(
     sessionFile,
-    [
+    `${[
       { type: "session", id, timestamp: at, cwd: "/repo" },
       {
         type: "message",
@@ -62,7 +62,7 @@ const start = async (
       },
     ]
       .map((entry) => JSON.stringify(entry))
-      .join("\n") + "\n",
+      .join("\n")}\n`,
   );
   world = newWorld();
   world.screen = options.screen ?? "Working (12s)\nprompt\nGoal: ...";

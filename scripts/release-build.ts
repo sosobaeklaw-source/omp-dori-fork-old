@@ -102,7 +102,7 @@ export async function buildRelease(root: string, output: string, prerelease: boo
         "-",
       ],
       temporary,
-      [...paths].sort().join("\0") + "\0",
+      `${[...paths].sort().join("\0")}\0`,
     );
     const archive = await command(["gzip", "-n", "-9", "-c"], temporary, tar);
     if (!sameManifest(observed, sourceManifest(source))) throw new Error("Source changed during release packaging");

@@ -170,9 +170,9 @@ describe("native staged-update model admission", () => {
     for (const role of ROLES) {
       for (const argv of [
         ["omp", "--model", MODEL, "--thinking", "high", "-p", "{prompt}"],
-        ["omp", "--model=" + MODEL, "--mode=json", "--", "{prompt}"],
+        ["omp", `--model=${MODEL}`, "--mode=json", "--", "{prompt}"],
         ["omp", "--mode", "json", "--model", MODEL, "{prompt}"],
-        ["omp", "--mode=json", "--model=" + MODEL, "--mode", "json", "--", "{prompt}"],
+        ["omp", "--mode=json", `--model=${MODEL}`, "--mode", "json", "--", "{prompt}"],
         ["/opt/native-client", "--model", MODEL, "--tools=read,grep", "{prompt}"],
       ]) {
         expect(f.load(argv, role, "omp")[role].argv).toEqual(argv);
@@ -192,14 +192,14 @@ describe("native staged-update model admission", () => {
     ["variable model", ["--model={model}"]],
     ["prompt consumed as model", ["--model={prompt}"]],
     ["duplicate separate model", ["--model", MODEL, "--model", MODEL]],
-    ["duplicate mixed model", ["--model=" + MODEL, "--model", MODEL]],
+    ["duplicate mixed model", [`--model=${MODEL}`, "--model", MODEL]],
     ["separate provider", ["--provider", "anthropic", "--model", MODEL]],
-    ["inline provider", ["--provider=anthropic", "--model=" + MODEL]],
+    ["inline provider", ["--provider=anthropic", `--model=${MODEL}`]],
     ["separate model scope", ["--models", MODEL, "--model", MODEL]],
-    ["inline model scope", ["--models=" + MODEL, "--model=" + MODEL]],
-    ["model after positional separator", ["--", "--model=" + MODEL]],
+    ["inline model scope", [`--models=${MODEL}`, `--model=${MODEL}`]],
+    ["model after positional separator", ["--", `--model=${MODEL}`]],
     ["separate model swallowed by another flag", ["--smol", "--model", MODEL]],
-    ["inline model swallowed by another flag", ["--smol", "--model=" + MODEL]],
+    ["inline model swallowed by another flag", ["--smol", `--model=${MODEL}`]],
     ["dangling value flag before task", ["--model", MODEL, "--thinking"]],
     ["separator consumed as a value", ["--model", MODEL, "--thinking", "--"]],
     ["profile consumes the model flag", ["--profile", "--model", MODEL]],
