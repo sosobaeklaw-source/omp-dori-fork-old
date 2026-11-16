@@ -53,6 +53,20 @@ def check_bytes(doc, items):
                             + ". 검수 뒤 바뀌었거나 검수에 넣지 않은 것이다. 다시 검수받고 reviewed.json을 새로 남겨라")
 
 
+def check_texts(doc, items):
+    """items: [(이름, 글자)]. 제목·요약·대체 글·설명은 읽은 파일(기록한 뒤 바뀌지 않은 것) 안에 그대로 있어야 한다."""
+    read = {f["sha256"] for f in doc["files"]}
+    bodies = []
+    for f in doc["files"]:
+        p = Path(f["path"])
+        if p.is_file() and sha(p.read_bytes()) in read:
+            bodies.append(p.read_text(encoding="utf-8", errors="replace"))
+    unread = [name for name, text in items if text.strip() and not any(text in b for b in bodies)]
+    if unread:
+        raise ReviewMissing(f"읽히지 않았다({len(unread)}개): " + ", ".join(unread)
+                            + ". 이 글자가 검수한 파일 안에 없다. 검수에 넣고 reviewed.json을 새로 남겨라")
+
+
 def first_paragraph(doc):
     text = Path(doc["findings"]).read_text(encoding="utf-8").strip()
     paras = [p.strip() for p in text.split("\n\n") if p.strip() and not p.strip().startswith(("#", "<!--"))]

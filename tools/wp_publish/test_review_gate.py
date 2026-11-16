@@ -41,8 +41,12 @@ class FakeOpener:
 
 class ReviewGateTest(unittest.TestCase):
     def setUp(self):
+        self.guarded = []
+        orig, w.assert_clean = w.assert_clean, lambda payload, context="": self.guarded.append(context)
+        self.addCleanup(setattr, w, "assert_clean", orig)
         self.dir = Path(tempfile.mkdtemp())
-        self.body = f'<p>추가상병 불승인 처분에 대한 불복 절차</p>\n<img src="{IMG}" alt="순서">\n'
+        self.title = "추가상병 불승인 처분에 대한 불복 절차"
+        self.body = f'<p>{self.title}</p>\n<img src="{IMG}" alt="순서">\n'
         self.img, self.cover = b"PNG-flow-v1", b"JPG-cover-v1"
         (self.dir / "본문.html").write_text(self.body, encoding="utf-8")
         (self.dir / "flow.png").write_bytes(self.img)
@@ -112,15 +116,63 @@ class ReviewGateTest(unittest.TestCase):
         self.record("본문.html", "flow.png", "cover.jpg")
         self.assertBlocked(self.client(ack="  "), "ack", {"content": self.body})
 
-    def test_rest_route_and_wp_admin_writes_are_gated_too(self):
-        c = self.client()
-        self.assertBlocked(c, "reviewed.json이 없다", {"content": "x"}, url=w.BASE + "/?rest_route=/wp/v2/posts/299")
+    def test_rest_route_wp_admin_batch_and_other_methods_are_refused(self):
         self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        for url in (w.BASE + "/?rest_route=/wp/v2/posts/299", w.BASE + "/wp-json/batch/v1", w.API + "/users/1",
+                    w.API + "/posts/299?status=publish"):
+            self.assertBlocked(c, "보낼 수 있는 곳이 아니다", {"content": self.body}, url=url)
+        for method in ("DELETE", "PUT", "PATCH"):
+            req = urllib.request.Request(w.API + "/posts/299", method=method, headers={"Content-Type": "application/json"})
+            with self.assertRaisesRegex(ReviewMissing, "보낼 수 있는 곳이 아니다"):
+                c._open(req)
         form = urllib.request.Request(w.BASE + "/wp-admin/post.php", data=urllib.parse.urlencode({"content": "x"}).encode(),
                                       headers={"Content-Type": "application/x-www-form-urlencoded"})
-        with self.assertRaisesRegex(ReviewMissing, "JSON·그림 밖 본문"):
+        with self.assertRaisesRegex(ReviewMissing, "보낼 수 있는 곳이 아니다"):
             c._open(form)
         self.assertEqual(c.op.sent, [])
+
+    def test_payload_shapes_that_skip_the_body_check_are_refused(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        self.assertBlocked(c, "content는 글자", {"content": {"raw": "<p>읽지 않은 본문</p>"}})
+        self.assertBlocked(c, "dict", [{"content": self.body}])
+        self.assertBlocked(c, "dict", {})
+        self.assertBlocked(c, "확인하지 않는 칸.*slug", {"slug": "x"})
+        self.assertBlocked(c, "확인하지 않는 칸.*meta", {"meta": {"rank_math_description": "읽지 않은 설명"}})
+
+    def test_public_text_fields_must_be_in_a_read_file(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        self.assertBlocked(c, r"읽히지 않았다\(2개\): title, excerpt", {"title": "읽지 않은 제목", "excerpt": "읽지 않은 요약"})
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        self.assertBlocked(c, "rank_math_description", {"objectType": "post", "objectID": 299,
+                                                         "meta": {"rank_math_description": "읽지 않은 설명"}}, url=rm)
+        st, _ = self.post(c, {"objectType": "post", "objectID": 299,
+                              "meta": {"rank_math_description": self.title}}, url=rm)
+        self.assertEqual(st, 200)
+        st, _ = self.post(c, {"title": self.title})
+        self.assertEqual(st, 200)
+
+    def test_status_other_than_draft_is_refused_and_brand_guard_runs_on_direct_open(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        self.assertBlocked(c, "status는 draft만", {"content": self.body, "status": "publish"})
+        st, _ = self.post(c, {"content": self.body})
+        self.assertEqual(st, 200)
+        self.assertEqual(self.guarded, ["POST " + w.API + "/posts/299"])
+
+    def test_every_image_shape_in_the_body_is_checked(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        other = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/other.png"
+        c.op.files[other] = b"PNG-unread"
+        for body in (f"<img src='{other}'>", f"<img src={other}>", f'<img src="{IMG}" data-src="{other}">',
+                     f'<img src="{IMG}" srcset="{other} 2x">', f'<video poster="{other}"></video>'):
+            self.assertBlocked(c, r"본문 그림 other\.png", {"content": body})
+        for body in (f'<div style="background:url({other})"></div>', f'<iframe src="{other}"></iframe>',
+                     "<style>p{background:url(x)}</style>"):
+            self.assertBlocked(c, "확인할 수 없는", {"content": body})
 
     def test_reads_need_no_review(self):
         c = w.WP()
@@ -129,6 +181,12 @@ class ReviewGateTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewMissing, r"WP\(reviewed=...\)"):
             self.post(c, {"content": "x"})
         self.assertEqual(c.op.sent, [])
+
+    def test_check_texts_ignores_files_changed_after_record(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        (self.dir / "본문.html").write_text(self.body + "<p>나중에 끼운 문장</p>", encoding="utf-8")
+        with self.assertRaisesRegex(ReviewMissing, "title"):
+            review_gate.check_texts(review_gate.load(self.reviewed), [("title", "나중에 끼운 문장")])
 
 
 if __name__ == "__main__":
