@@ -10,6 +10,10 @@
 #   - one finished lane's whole 결과.md as the shape of the result (PARUKURI_EXAMPLE, default
 #     DORI_HOME/results/parksilro-build-1116/결과.md, a copy is examples/sobaek/parukuri-result-example.md).
 #     It is a real example, not a rule list.
+#   - taking apart is done with the installed tools and leaves files: rea (apps, binaries, source), hycli (websites,
+#     deterministic recon/probe only), rea-video (videos, no remake-run), craft-anything-cli (--deep triage of a file).
+#     The brief names the tool and target for each thing to take apart and where its output file goes, so the result
+#     can show command, target, file and size. Paid or AI-credit modes (hycli prepare, rea-video remake-run) stay out.
 #
 # PUBLIC_REPLY_TO=<owner message id>: the lead sets it only for public-material work that came from an owner Discord
 # message (never for case work). The brief then opens with the two lines `public: true` and `원글: <id>`, written here,
@@ -44,7 +48,13 @@ if os.environ["EXAMPLE"]:
                "today, with where the number comes from. When the request gives no number, say so, and make measuring it once "
                "the first step of 순서, before anything is taken apart. If nothing of ours fits, the brief says the lane may close "
                "with a written reason instead. 산출물 is one 결과.md shaped like the example below: its first paragraph says "
-               "what changed for the owner, because it is posted as the reply to the owner\x27s message.")
+               "what changed for the owner, because it is posted as the reply to the owner\x27s message. "
+               "Taking apart is done with the tools installed here, not by reading a README: rea for apps, binaries and "
+               "source (rea analyze, rea import-reference-source), hycli for websites (hycli recon / hycli probe), rea-video for "
+               "videos (rea-video decompose / summary / tiles), craft-anything-cli --deep triage for a single file. In 순서, "
+               "name the tool and target for each thing taken apart and the file its output is saved to, so the result can "
+               "show command, target, file and byte size. Every part found is matched to the job it could go into; parts "
+               "not used get a one-line reason. Paid or AI-credit modes (hycli prepare, rea-video remake-run) are not used.")
     user += ("\n\n---\n결과 모양 예시: 끝난 레인 하나의 결과.md 전문이다. 규칙 목록이 아니라 잘 된 실물 하나다.\n\n"
              + os.environ["EXAMPLE"])
 print(json.dumps({"model": os.environ["MODEL"], "max_tokens": 32000, "reasoning_effort": os.environ.get("PLAN_EFFORT", "xhigh"),
