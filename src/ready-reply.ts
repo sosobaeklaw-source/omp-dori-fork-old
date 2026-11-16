@@ -116,28 +116,24 @@ function folderText(dir: string): { files: { name: string; text: string }[] } | 
   return { files };
 }
 
-/** What marks a word as a person in case writing: a title after it, or a label before it. */
+/** A title glued onto a name ("가나다님께"), or a particle ("가나다는", "가나다의"): the run is still that name. */
 const TITLE_AFTER = /^(?:씨|님)[가-힣]{0,2}$/;
-const LABEL_BEFORE = /(?:성명|이름|의뢰인|재해자|근로자|피재자|망인|망|원고|피고|청구인|신청인|진술인)\s*[:：]?\s*$/;
-const PARTICLE = /^(?:은|는|이|가|을|를|의|과|와|도|에게|께서|한테|이다|으로|로)$/;
+const PARTICLE = /^(?:은|는|이|가|을|를|의|과|와|도|만|에|에게|에서|께서|한테|하고|이고|이며|이다|으로|로)$/;
+/** Documents the check cannot read as text (`hwp`, `hwpx`, `pdf`, office files): a case file may be inside. */
+const DOC_FILE = /\.(?:hwpx?|pdf|docx?|xlsx?|pptx?)$/i;
 
 /**
- * Whether a client name stands in `s` as a person: a whole Hangul word that is the name (or the name with a title
- * glued on, "가나다님"), with a title after it ("가나다 씨가") or a label before it ("재해자 가나다", "성명: 가나다").
- * Not a substring, and not a bare word: the client-name list is cut from case file names and holds three-syllable
- * pieces that are also ordinary words, so the person marker is what tells a client from prose.
+ * Whether a client name stands in `s` as a word of its own: a Hangul run (cut at `_`, `-`, `.`, spaces and the like,
+ * so `261113_가나다_재해경위서` counts) that is the name, or the name with a particle or title glued on. A name
+ * embedded in a longer word ("아가나다", "가나다라마") does not count. Bare words count even though the list, cut from
+ * case file names, also holds ordinary words: a false match only keeps the lane inbox-only.
  */
 function hasName(s: string, names: ReadonlySet<string>): boolean {
-  const text = s.normalize("NFC");
-  for (const m of text.matchAll(/[가-힣]+/g)) {
-    const run = m[0];
+  for (const [run] of s.normalize("NFC").matchAll(/[가-힣]+/g)) {
     const name = [run, run.slice(0, 4), run.slice(0, 3), run.slice(0, 2)].find((n) => names.has(n));
     if (!name) continue;
     const glued = run.slice(name.length);
-    if (TITLE_AFTER.test(glued)) return true;
-    if (glued && !PARTICLE.test(glued)) continue;
-    if (!glued && /^ (?:씨|님)(?![가-힣]{3})/.test(text.slice(m.index + run.length))) return true;
-    if (LABEL_BEFORE.test(text.slice(Math.max(0, m.index - 12), m.index))) return true;
+    if (!glued || PARTICLE.test(glued) || TITLE_AFTER.test(glued)) return true;
   }
   return false;
 }
@@ -145,8 +141,8 @@ function hasName(s: string, names: ReadonlySet<string>): boolean {
 /**
  * Why this lane must stay inbox-only because of case material, or undefined when it may post. Fails closed: with no
  * readable client-name list, or a results folder that cannot be read whole, the lane is treated as a case lane.
- * Checked: the brief, and every text file and file name in the results folder, for case-folder paths, resident or
- * foreigner registration numbers (hyphen optional) and client names.
+ * Checked: the brief, and every file name and text file in the results folder, for case-folder paths, resident or
+ * foreigner registration numbers (hyphen optional) and client names; a document it cannot read also blocks.
  */
 export function caseReason(
   brief: string,
@@ -163,6 +159,7 @@ export function caseReason(
       if (RRN.test(s)) return `${name} holds a registration number`;
       if (hasName(s, nameSet)) return `${name} holds a client name`;
     }
+    if (DOC_FILE.test(name)) return `${name} is a document the check cannot read`;
   }
   return undefined;
 }

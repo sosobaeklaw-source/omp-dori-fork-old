@@ -87,15 +87,43 @@ describe("planReply", () => {
       post: false,
       why: `case lane: ${join("work", "facts.md")} holds a client name`,
     });
-    // A name counts beside a person marker (title after, label before), not as a bare or embedded word: the list is
-    // cut from case file names and its three-syllable pieces are also ordinary words.
-    expect(
-      plan(brief(OWNER_MSG), lane(`${RESULT}\n라마바 요건, 아가나다 표, 가나다라마 칸, 세 가나다 본 것.\n`)).post,
-    ).toBe(true);
-    for (const marked of ["의뢰인 라마바에게 물었다.", "성명: 가나다", "라마바님께 전화"]) {
-      expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n${marked}\n`)).post).toBe(false);
+    // A name counts as a word of its own (bare, or with a particle or title glued on), not embedded in a longer word.
+    expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n아가나다 표, 가나다라마 칸.\n`)).post).toBe(true);
+    for (const named of [
+      "의뢰인 라마바에게 물었다.",
+      "성명: 가나다",
+      "라마바님께 전화",
+      "세 가나다 본 것",
+      "라마바 요건",
+    ]) {
+      expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n${named}\n`)).post).toBe(false);
     }
     expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n시각 1794536700000\n`)).post).toBe(true);
+  });
+
+  test("a client name standing bare, in a file name or in any file, keeps the lane inbox-only", () => {
+    // The reviewer's case: the office names files YYMMDD_실명_서류명 and writes facts with the bare name.
+    const l = lane("# 결과\n\n## 한 줄\n\n재해경위서를 직원 원본 틀에 넣었다.\n", ["비교.png"]);
+    writeFileSync(join(l.dir, "261113_가나다_재해경위서.md"), "");
+    expect(plan(brief(OWNER_MSG), l)).toEqual({
+      post: false,
+      why: "case lane: 261113_가나다_재해경위서.md holds a client name",
+    });
+    const facts = lane(RESULT);
+    writeFileSync(join(facts.dir, "사실표.md"), "가나다는 2019년 입사했다. 가나다의 주소는 서울.");
+    expect(plan(brief(OWNER_MSG), facts)).toEqual({ post: false, why: "case lane: 사실표.md holds a client name" });
+    expect(plan(brief(OWNER_MSG), lane(`# 결과\n\n라마바 재해경위서를 직원 원본 틀에 넣었다.\n`)).post).toBe(false);
+  });
+
+  test("a document the check cannot read as text keeps the lane inbox-only", () => {
+    for (const doc of ["261113_재해경위서.hwpx", "a.hwp", "b.pdf", "c.docx", "d.xlsx"]) {
+      const l = lane(RESULT);
+      writeFileSync(join(l.dir, doc), "x");
+      expect(plan(brief(OWNER_MSG), l)).toEqual({
+        post: false,
+        why: `case lane: ${doc} is a document the check cannot read`,
+      });
+    }
   });
 
   test("without a readable client-name list no lane posts (fail closed)", () => {
