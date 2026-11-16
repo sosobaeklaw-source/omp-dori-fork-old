@@ -67,8 +67,10 @@ function loadSalt(path: string): string | undefined {
 }
 
 /**
- * The hash file the macmini exports (`{"scheme", "lengths": [2, 3, 4], "hashes": ["<hex>", …]}`) with its salt file.
- * Undefined when either is missing or broken, the scheme differs, or nothing is listed: then nothing can be checked.
+ * The hash file the macmini exports (`{"scheme", "check", "lengths": [2, 3, 4], "hashes": ["<hex>", …]}`) with its
+ * salt file. `check` is the salt's own hash of the scheme string, so a salt that is not the one the file was made with
+ * (rotated on the macmini, or only one of the two files copied) is refused instead of silently matching nothing.
+ * Undefined when either is missing or broken, the scheme or check differs, or nothing is listed.
  */
 export function loadNameHashes(hashFile: string, saltFile: string): NameHashes | undefined {
   const salt = loadSalt(saltFile);
@@ -76,8 +78,9 @@ export function loadNameHashes(hashFile: string, saltFile: string): NameHashes |
   try {
     const raw: unknown = JSON.parse(readFileSync(hashFile, "utf8"));
     if (typeof raw !== "object" || raw === null) return undefined;
-    const { scheme, lengths, hashes } = raw as Record<string, unknown>;
-    if (scheme !== NAME_HASH_SCHEME || !Array.isArray(lengths) || !Array.isArray(hashes)) return undefined;
+    const { scheme, check, lengths, hashes } = raw as Record<string, unknown>;
+    if (scheme !== NAME_HASH_SCHEME || check !== nameHash(salt, NAME_HASH_SCHEME)) return undefined;
+    if (!Array.isArray(lengths) || !Array.isArray(hashes)) return undefined;
     const lens = lengths.filter((n): n is number => Number.isInteger(n) && n >= 2 && n <= 32);
     const set = new Set(hashes.filter((h): h is string => typeof h === "string" && /^[0-9a-f]{64}$/.test(h)));
     // A file that lists no length or no hash judges nothing: the same as no file.

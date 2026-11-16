@@ -153,31 +153,36 @@ describe("planReply", () => {
     writeFileSync(f.saltFile, " \n");
     expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
     writeFileSync(f.saltFile, FAKE_SALT);
-    // A broken hash file, another scheme, an empty list, or a malformed entry.
+    // A broken hash file, another scheme, no or a wrong check, an empty list, or a malformed entry.
     const scheme = NAME_HASH_SCHEME;
+    const check = nameHash(FAKE_SALT, scheme);
     const h = nameHash(FAKE_SALT, "가나다");
     for (const bad of [
       "{not json",
       JSON.stringify(["가나다"]),
-      JSON.stringify({ scheme: "sha256:v0", lengths: [3], hashes: [h] }),
-      JSON.stringify({ scheme, lengths: [3], hashes: [] }),
-      JSON.stringify({ scheme, lengths: [], hashes: [h] }),
-      JSON.stringify({ scheme, lengths: [3], hashes: [h, "가나다"] }),
+      JSON.stringify({ scheme: "sha256:v0", check, lengths: [3], hashes: [h] }),
+      JSON.stringify({ scheme, lengths: [3], hashes: [h] }),
+      JSON.stringify({ scheme, check: h, lengths: [3], hashes: [h] }),
+      JSON.stringify({ scheme, check, lengths: [3], hashes: [] }),
+      JSON.stringify({ scheme, check, lengths: [], hashes: [h] }),
+      JSON.stringify({ scheme, check, lengths: [3], hashes: [h, "가나다"] }),
     ]) {
       writeFileSync(f.hashes, bad);
       expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
     }
   });
 
-  test("a name is caught by its salted hash, and only under the salt it was hashed with", () => {
+  test("a name is caught by its salted hash, and a salt that is not the file's own is refused", () => {
     const l = lane(RESULT, ["비교.png"]);
     for (const ocr of ["성명가나다", "가 나 다 님", "가\u200b나다", "ＡＢ가나다"]) {
       expect(plan(brief(OWNER_MSG), l, NAMES, () => ocr).post).toBe(false);
     }
-    // The same file read under another salt matches nothing: the salt is part of every hash.
+    // The same file read under another salt (salt rotated, or only one file copied) is refused, not silently empty.
     const f = hashFiles();
     writeFileSync(f.saltFile, "another-fake-salt");
-    expect(plan(brief(OWNER_MSG), l, loadNameHashes(f.hashes, f.saltFile), () => "성명가나다").post).toBe(true);
+    expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
+    const wrongSalt = { brief: brief(OWNER_MSG), resultsDir: l.dir, owners: l.owners, readPicture: () => "" };
+    expect(planReply({ ...wrongSalt, caseNames: loadNameHashes(f.hashes, f.saltFile) }).post).toBe(false);
     // Names of several lengths, including a Latin one compared in lower case.
     const mixed = hashFiles(["가나", "라마바사", "abc"]);
     const names = loadNameHashes(mixed.hashes, mixed.saltFile);
@@ -189,6 +194,10 @@ describe("planReply", () => {
 
   test("the hash is HMAC-SHA256 of the squeezed name, the vector scripts/export_client_name_hashes.py pins", () => {
     expect(nameHash(FAKE_SALT, "가나다")).toBe("8c258ccd2dfa83393d2597cdf70eeff7c337d3705db6f0f4213175ed5252306c");
+    // The file's `check`: the salt's hash of the scheme string.
+    expect(nameHash(FAKE_SALT, NAME_HASH_SCHEME)).toBe(
+      "3bea87113a07d73ed4274b34a60e61b79c186cd2de9c5636391705cea626e09f",
+    );
   });
 });
 

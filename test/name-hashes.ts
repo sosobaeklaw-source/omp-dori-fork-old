@@ -16,7 +16,12 @@ export function hashFiles(names: readonly string[] = ["가나다", "라마바"],
   const lengths = [...new Set(names.map((n) => Array.from(n).length))];
   writeFileSync(
     hashes,
-    JSON.stringify({ scheme: NAME_HASH_SCHEME, lengths, hashes: names.map((n) => nameHash(salt, n)) }),
+    JSON.stringify({
+      scheme: NAME_HASH_SCHEME,
+      check: nameHash(salt, NAME_HASH_SCHEME),
+      lengths,
+      hashes: names.map((n) => nameHash(salt, n)),
+    }),
   );
   writeFileSync(saltFile, `${salt}\n`, { mode: 0o600 });
   return { hashes, saltFile };
