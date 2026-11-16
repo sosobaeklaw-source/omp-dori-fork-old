@@ -31,6 +31,7 @@ Needs: Bun 1.4.4+, OMP 18.18.8+, herdr or hc, git, and the GitHub CLI (`gh`) for
 | `startupWaitSeconds` | 180 | `launch`: how long after the start it waits for the agent's ready status and goal; raise it on a slow host. A value that is not a nonnegative number uses the default |
 | `sessionsDir` | `~/.omp/agent/sessions` | OMP session-id lookup |
 | `ompUlwPath` | `~/.dori/omp-ulw/index.ts` | nonempty paths retain the role-gated import; consumers use their manifest-bound cache pin, while `scripts/install-source.sh` sets `""` and loads the selected checkout once as an OMP extension (globally for primary, explicitly for side) |
+| `laneIgnoredSkills` | none | `scripts/install-source.sh`: skill names added after `dori-mode` to the generated `omp.yml` `skills.ignoredSkills`, so every omp-dori session leaves them out of its skill list; a name other than letters, digits, `.`, `_` and `-` stops the install |
 | `nudgeAfterMin`, `postAfterMin` | 15, 20 | `freshness` |
 | `closeAfterMin` | 5 | `watch` |
 | `heavySlots`, `heavyMaxLoad` | 1, 80 | `heavy` |
