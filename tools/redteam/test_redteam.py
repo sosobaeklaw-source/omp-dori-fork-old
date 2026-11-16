@@ -59,6 +59,29 @@ class RedteamTest(unittest.TestCase):
         self.assertEqual(fake.calls, [])
         self.assertTrue((self.out / "pirates_skipped.md").exists())
 
+    def test_timeout_retries_once_one_effort_lower(self):
+        def reply(body):
+            if body["model"] == "slow" and body["reasoning_effort"] == "high":
+                raise TimeoutError("The read operation timed out")
+            if body["model"] == "never":
+                raise TimeoutError("The read operation timed out")
+            return {"model": body["model"], "choices": [{"message": {"content": "지적 없음"}}]}
+        listed = {"data": [model("slow", ["low", "high", "medium"]), model("never", ["high", "medium"]),
+                           model("only", ["high"])]}
+        fake = FakeHttp({"https://oc.hyeon.space/v1/models": listed, "https://opencode.ai/": OSError("paidlock"),
+                         "https://oc.hyeon.space/v1/chat/completions": reply})
+        with mock.patch.object(redteam, "http_json", fake):
+            results = {r["branch"].split("__")[-1]: r for r in redteam.run_pirates(self.out, "p", "public")}
+        efforts = [(b["model"], b["reasoning_effort"]) for u, b in fake.calls if u.endswith("/chat/completions")]
+        self.assertEqual(sorted(efforts), [("never", "high"), ("never", "medium"), ("only", "high"),
+                                           ("slow", "high"), ("slow", "medium")])
+        self.assertEqual([(a["effort"], a["status"]) for a in results["slow"]["attempts"]],
+                         [("high", "timeout"), ("medium", "ok")])
+        self.assertEqual(results["slow"]["status"], "ok")
+        self.assertEqual([a["status"] for a in results["never"]["attempts"]], ["timeout", "timeout"])
+        self.assertEqual(len(results["only"]["attempts"]), 1)
+        self.assertIn("attempts", (self.out / "pirate__tokenmaxx__slow.md").read_text())
+
     def test_model_file_round_trip(self):
         f = self.out / "pirate__s__m.md"
         redteam.write_model_file(f, {"branch": "pirate", "status": "ok", "model_shown": "m-1", "chars": 4}, "지적 하나")
