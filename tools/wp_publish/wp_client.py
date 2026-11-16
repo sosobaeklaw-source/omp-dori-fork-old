@@ -1,9 +1,11 @@
 """sobaeklaw.co.kr WP REST 쓰기의 공통 길(레인 결과 폴더의 wp_client.py 판 rewrite-299-now·rewrite-hearing-1116 정본).
 
 로그인 정보는 Doppler·wp-totp를 경로로만 부르고 쿠키·비밀값은 메모리에만 둔다.
-GET 밖의 모든 요청(초안·갱신·그림 올리기·Rank Math 설명)은 _open 한 곳을 지나고, 거기서
-review_gate.check(html, findings)가 통과해야 보낸다. WP(html=...)를 주지 않으면 읽기만 된다.
-레인 스크립트가 c._open(...)으로 직접 POST해도 같은 검사를 지난다.
+GET·HEAD 밖의 모든 요청(초안·갱신·그림 올리기·Rank Math 설명, /wp-json·?rest_route=·wp-admin 어디로 가든)은
+_open 한 곳을 지나고, 거기서 review_gate.check(html, findings)가 통과해야 보낸다. 예외는 login() 안의 로그인 폼 둘뿐.
+보내는 본문도 검수한 파일에 묶는다: JSON 본문의 content는 그 HTML 파일 글자 그대로여야 하고,
+JSON이 아닌 본문은 그림 올리기(Content-Type image/*)만 보낸다. 그러니 검수할 HTML은 실제로 보낼 최종 본문이어야 한다.
+WP(html=...)를 주지 않으면 읽기만 된다. 레인 스크립트가 c._open(...)으로 직접 POST해도 같은 검사를 지난다.
 
 사용(레인 스크립트):
     sys.path.insert(0, str(Path.home() / "src/omp-dori/tools/wp_publish"))
@@ -59,15 +61,27 @@ class WP:
         self.nonce = None
 
     def _gate(self, req):
-        """로그인 폼과 nonce 받기를 뺀 /wp-json 쓰기는 검수 결과가 맞아야 보낸다."""
-        if req.get_method() == "GET" or "/wp-json/" not in req.full_url:
+        """GET·HEAD 밖은 모두 막고, 검수 통과한 HTML과 같은 본문만 보낸다."""
+        method = req.get_method()
+        if method in ("GET", "HEAD"):
             return
         if self.html is None:
-            raise ReviewMissing(f"{req.get_method()} {req.full_url}: 검수받은 HTML을 WP(html=...)로 주지 않았다")
+            raise ReviewMissing(f"{method} {req.full_url}: 검수받은 HTML을 WP(html=...)로 주지 않았다")
         check(self.html, self.findings)
+        body = req.data or b""
+        ctype = (req.get_header("Content-type") or "").split(";")[0].strip().lower()
+        if ctype.startswith("image/"):
+            return
+        if ctype != "application/json":
+            raise ReviewMissing(f"{method} {req.full_url}: JSON·그림 밖 본문({ctype or '형식 없음'})은 보내지 않는다")
+        payload = json.loads(body) if body else {}
+        if isinstance(payload, dict) and "content" in payload:
+            if payload["content"] != Path(self.html).read_text(encoding="utf-8"):
+                raise ReviewMissing(f"{method} {req.full_url}: 보내는 content가 검수한 {Path(self.html).name}과 다르다")
 
-    def _open(self, req, timeout=60):
-        self._gate(req)
+    def _open(self, req, timeout=60, _login_form=False):
+        if not _login_form:
+            self._gate(req)
         try:
             r = self.op.open(req, timeout=timeout)
             return r.status, r.geturl(), r.read()
@@ -81,7 +95,7 @@ class WP:
                 "wp-submit": "Log In", "redirect_to": BASE + "/wp-admin/", "testcookie": "1"}
         _, final, page = self._open(urllib.request.Request(
             url, data=urllib.parse.urlencode(data).encode(),
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Referer": url}))
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Referer": url}), _login_form=True)
         page = page.decode("utf-8", "replace")
         if "authcode" in page.lower() or "two-factor" in page.lower():
             act = re.search(r'<form[^>]+action="([^"]+)"', page)
@@ -91,7 +105,7 @@ class WP:
             fields.setdefault("provider", "Two_Factor_Totp")
             _, _, page2 = self._open(urllib.request.Request(
                 act, data=urllib.parse.urlencode(fields).encode(),
-                headers={"Content-Type": "application/x-www-form-urlencoded", "Referer": final}))
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Referer": final}), _login_form=True)
             page = page2.decode("utf-8", "replace")
         if not any(c.name.startswith("wordpress_logged_in") for c in self.jar):
             err = re.search(r'id="login_error"[^>]*>(.*?)</div>', page, re.S)

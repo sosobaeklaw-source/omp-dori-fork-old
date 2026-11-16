@@ -3,6 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -28,48 +29,74 @@ class FakeOpener:
         return R()
 
 
-def write_post(c):
-    return c._open(urllib.request.Request(w.API + "/posts/299", data=json.dumps({"content": "x"}).encode(), method="POST"))
+def json_post(c, url, payload):
+    return c._open(urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                          headers={"Content-Type": "application/json"}))
 
 
 class ReviewGateTest(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         self.html = self.dir / "글.html"
-        self.html.write_text("<p>추가상병 불승인 처분에 대한 불복 절차</p>\n", encoding="utf-8")
+        self.body = "<p>추가상병 불승인 처분에 대한 불복 절차</p>\n"
+        self.html.write_text(self.body, encoding="utf-8")
         self.sha = hashlib.sha256(self.html.read_bytes()).hexdigest()
+
+    def findings(self, first_line):
+        (self.dir / "findings.md").write_text(first_line + "\n\n지적 없음\n", encoding="utf-8")
 
     def client(self):
         c = w.WP(html=self.html)
         c.op = FakeOpener()
         return c
 
-    def test_matching_findings_lets_the_write_through(self):
-        (self.dir / "findings.md").write_text(f"sha256: {self.sha}\n\n지적 없음\n", encoding="utf-8")
+    def assertBlocked(self, c, reason, send):
+        with self.assertRaisesRegex(ReviewMissing, reason):
+            send()
+        self.assertEqual(c.op.sent, [])
+
+    def test_reviewed_body_with_pass_verdict_goes_through(self):
+        self.findings(f"sha256: {self.sha}  verdict: pass")
         c = self.client()
-        self.assertEqual(write_post(c)[0], 200)
+        self.assertEqual(json_post(c, w.API + "/posts/299", {"content": self.body})[0], 200)
         self.assertEqual(c.op.sent, [("POST", w.API + "/posts/299")])
 
     def test_missing_findings_blocks_the_write(self):
         c = self.client()
-        with self.assertRaisesRegex(ReviewMissing, "검수 결과 파일이 없다"):
-            write_post(c)
-        self.assertEqual(c.op.sent, [])
+        self.assertBlocked(c, "검수 결과 파일이 없다", lambda: json_post(c, w.API + "/posts/299", {"content": self.body}))
 
     def test_html_changed_after_review_blocks_the_write(self):
-        (self.dir / "findings.md").write_text(f"{self.sha}\n", encoding="utf-8")
+        self.findings(f"sha256: {self.sha}  verdict: pass")
         self.html.write_text("<p>검수 뒤 고친 문장</p>\n", encoding="utf-8")
         c = self.client()
-        with self.assertRaisesRegex(ReviewMissing, "검수한 글과 쓰려는 글이 다르다"):
-            write_post(c)
-        self.assertEqual(c.op.sent, [])
+        self.assertBlocked(c, "검수한 글과 쓰려는 글이 다르다",
+                           lambda: json_post(c, w.API + "/posts/299", {"content": "<p>검수 뒤 고친 문장</p>\n"}))
+
+    def test_content_other_than_the_reviewed_file_is_refused(self):
+        self.findings(f"sha256: {self.sha}  verdict: pass")
+        c = self.client()
+        self.assertBlocked(c, "보내는 content가 검수한", lambda: json_post(c, w.API + "/posts/299", {"content": "x"}))
+
+    def test_failing_verdict_blocks_the_write(self):
+        self.findings(f"sha256: {self.sha}  verdict: block")
+        c = self.client()
+        self.assertBlocked(c, "pass가 아니다", lambda: json_post(c, w.API + "/posts/299", {"content": self.body}))
+
+    def test_rest_route_and_wp_admin_writes_are_gated_too(self):
+        c = self.client()
+        self.assertBlocked(c, "검수 결과 파일이 없다",
+                           lambda: json_post(c, w.BASE + "/?rest_route=/wp/v2/posts/299", {"content": "x"}))
+        self.findings(f"sha256: {self.sha}  verdict: pass")
+        form = urllib.request.Request(w.BASE + "/wp-admin/post.php", data=urllib.parse.urlencode({"content": "x"}).encode(),
+                                      headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertBlocked(c, "JSON·그림 밖 본문", lambda: c._open(form))
 
     def test_reads_need_no_review(self):
         c = w.WP()
         c.op = FakeOpener()
         c._open(urllib.request.Request(w.API + "/posts/299?context=edit"))
         with self.assertRaisesRegex(ReviewMissing, "WP\\(html=...\\)"):
-            write_post(c)
+            json_post(c, w.API + "/posts/299", {"content": "x"})
         self.assertEqual(c.op.sent, [("GET", w.API + "/posts/299?context=edit")])
 
 
