@@ -22,6 +22,8 @@ export async function rollbackFixture(options: { unknown?: boolean; parentShell?
   writeFileSync(f.bootstrap.intake.path, String(Date.now()), { mode: 0o600 });
   const bootstrap: MonitorSet = {
     ...f.bootstrap,
+    // The fixture writes the heartbeat once; slow CI runners need room past production's 5 s freshness window.
+    intake: { ...f.bootstrap.intake, maxAgeMs: 30_000 },
     runtime: f.previousRuntime!,
     running: f.previousMonitors!.map((identity) => ({ name: identity.name, pid: identity.pid, identity })),
   };
