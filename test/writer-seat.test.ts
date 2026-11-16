@@ -23,10 +23,12 @@ function setup() {
       t += ms;
     },
     log: () => {},
-    run: async (args) => {
+    run: async (args, onSpawn) => {
       const account = args[args.indexOf("--account") + 1]!;
       calls.push(account);
-      expect(existsSync(join(lockDir(home, `carbon-${account}`), "owner"))).toBe(true);
+      // The fake runner's pid is this test's own (alive); the owner line must name it once it is spawned.
+      onSpawn(process.pid);
+      expect(readFileSync(join(lockDir(home, `carbon-${account}`), "owner"), "utf8")).toContain(`cmd=${process.pid}`);
       const [code, m] = runMeta(account);
       if (m) writeFileSync(meta, JSON.stringify({ status: code ? "fail" : "ok", modelLabel: "Argon 높음", ...m }));
       return code;
@@ -48,6 +50,19 @@ describe("writer seat", () => {
     expect([code, seat.account, calls]).toEqual([0, "u2", ["u2"]]);
     expect(JSON.parse(readFileSync(meta, "utf8")).seat).toMatchObject({ account: "u2", expect: "beta" });
     expect(existsSync(lockDir(home, "carbon-u2"))).toBe(false);
+  });
+
+  test("a lock whose sender pid is dead but whose runner (cmd=) still runs stays busy", async () => {
+    const { home, calls, env, opts } = setup();
+    mkdirSync(lockDir(home, "carbon-u0"));
+    writeFileSync(join(lockDir(home, "carbon-u0"), "owner"), `other 2026-11-16 14:00:00 pid=1 cmd=${process.pid}\n`);
+    const { seat } = await sendOnSeat(
+      env(() => [0, {}]),
+      opts,
+    );
+    expect([seat.account, calls]).toEqual(["u2", ["u2"]]);
+    // Still the other lane's lock: never cleared as stale, never released by this send.
+    expect(readFileSync(join(lockDir(home, "carbon-u0"), "owner"), "utf8")).toContain("other ");
   });
 
   test("an on-screen limit before sending rests that seat until the shown reset and moves the request on", async () => {

@@ -77,7 +77,20 @@ try {
         alive,
         sleep: (ms) => Bun.sleep(ms),
         log: (line) => console.error(line),
-        run: (args) => Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] }).exited,
+        // The runner is named on the lock (onSpawn) and gets this process's SIGTERM/SIGINT, so killing `send`
+        // stops the runner too instead of leaving it on an account whose lock looks free.
+        run: async (args, onSpawn) => {
+          const child = Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] });
+          onSpawn(child.pid);
+          const term = () => child.kill("SIGTERM");
+          const int = () => child.kill("SIGINT");
+          process.on("SIGTERM", term).on("SIGINT", int);
+          try {
+            return await child.exited;
+          } finally {
+            process.off("SIGTERM", term).off("SIGINT", int);
+          }
+        },
       },
       {
         home,

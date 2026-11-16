@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { holder, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
+import { holder, nameCommand, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
 import { Refusal } from "./refusal.ts";
 import type { Writer } from "./writer-request.ts";
 
@@ -21,8 +21,11 @@ export type Seat = { account: string; expect: string };
 export type Rest = { limitText: string; resetAt: string | null; seenAt: string; until: string };
 export type SeatEnv = OwnerEnv & {
   sleep: (ms: number) => Promise<void>;
-  /** Runs the runner with these arguments and returns its exit code. */
-  run: (args: readonly string[]) => Promise<number>;
+  /**
+   * Runs the runner with these arguments and returns its exit code. `onSpawn` gets the runner's pid as soon as it
+   * exists, so the lock can name it (cmd=) before the runner touches the browser.
+   */
+  run: (args: readonly string[], onSpawn: (pid: number) => void) => Promise<number>;
   log: (line: string) => void;
 };
 export type SendOpts = {
@@ -127,14 +130,19 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
       // A meta left by an earlier run (this request on another seat, or a reused --meta path) is not this run's: a
       // runner that dies before writing one must leave none, so its limit can never rest this seat.
       rmSync(o.meta, { force: true });
+      // The owner line names the runner too: if this process alone is killed, the lock stays held (staleWhy reads
+      // cmd=) while the runner still drives that account's browser.
+      let owner = got.owner;
       try {
         // biome-ignore format: one flag and its value per pair
         code = await env.run([
           "--model", o.model, "--account", seat.account, "--expect-account", seat.expect,
           "--prompt", o.prompt, "--out", o.out, "--meta", o.meta, "--timeout", String(o.timeout),
-        ]);
+        ], (pid) => {
+          owner = nameCommand(env.root, lockName(seat.account), got.owner, pid);
+        });
       } finally {
-        release(env.root, lockName(seat.account), got.owner);
+        release(env.root, lockName(seat.account), owner);
       }
       tried.push(seat.account);
       stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
