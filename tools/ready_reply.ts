@@ -21,13 +21,14 @@ import { homeStateDir } from "../src/lane-model.ts";
 import { ownerMessages, planReply } from "../src/ready-reply.ts";
 
 async function main(argv: readonly string[]): Promise<number> {
-  const a = parse(argv);
-  const key = need(a.pos[0], "lane key");
-  if (a.flags.has("detach")) {
+  // The CLI kills hooks after two seconds; --detach returns at once and lets a detached copy do the posting.
+  if (argv.includes("--detach")) {
     const again = process.argv.filter((arg) => arg !== "--detach");
     Bun.spawn(again, { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
     return 0;
   }
+  const a = parse(argv);
+  const key = need(a.pos[0], "lane key");
   const d = defaultDeps();
   const home = d.store.root;
   const stateDir = homeStateDir(home);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { firstParagraph, ownerMessages, planReply } from "../src/ready-reply.ts";
@@ -91,4 +91,23 @@ test("firstParagraph prefers the summary section, skips headings, tables, lists,
   const long = firstParagraph("가".repeat(3000)) ?? "";
   expect(long.length).toBeLessThanOrEqual(2000);
   expect(long.endsWith("(결과.md에 이어짐)")).toBe(true);
+});
+
+test("the onReady hook argv (KEY --detach) returns at once and the detached copy posts the reply", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ready-hook-"));
+  for (const d of ["briefs", "state", "results/k1"]) mkdirSync(join(home, d), { recursive: true });
+  writeFileSync(join(home, "briefs", "k1.md"), `# k1 (회장님 ${OWNER_MSG})\n\n## STOP WHEN\n`);
+  writeFileSync(join(home, "results", "k1", "결과.md"), "# r\n\n바뀐 것.\n");
+  writeFileSync(join(home, "state", "inbound.log"), `INBOUND discord ${ROOM} ${OWNER_MSG} from=owner ref=- "x"\n`);
+  const sent = join(home, "sent.txt");
+  const sender = join(home, "send.sh");
+  writeFileSync(sender, `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`, {
+    mode: 0o755,
+  });
+  const tool = join(import.meta.dir, "..", "tools", "ready_reply.ts");
+  const env = { ...process.env, DORI_HOME: home, DORI_SEND_FILE: sender };
+  const parent = Bun.spawnSync(["bun", tool, "k1", "--detach"], { env });
+  expect(parent.exitCode).toBe(0);
+  for (let i = 0; i < 100 && !existsSync(sent); i++) await Bun.sleep(50);
+  expect(readFileSync(sent, "utf8").trim()).toBe(`${OWNER_MSG} ${ROOM} 바뀐 것.`);
 });
