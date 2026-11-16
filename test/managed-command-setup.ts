@@ -1,4 +1,4 @@
-import { afterEach } from "bun:test";
+import { onTestFinished } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,14 +8,17 @@ import { digest } from "../src/update/source.ts";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 
 const previous = new Map<string, string | undefined>();
-afterEach(() => {
+// A module-level afterEach binds only to the first test file that imports this module (bun test shares one module
+// instance across files), so later files would keep these variables; each test that sets them restores its own.
+function restore(): void {
   for (const [key, value] of previous) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
   previous.clear();
-});
+}
 export function environment(values: Record<string, string | undefined>): void {
+  if (previous.size === 0) onTestFinished(restore);
   for (const [key, value] of Object.entries(values)) {
     if (!previous.has(key)) previous.set(key, process.env[key]);
     if (value === undefined) delete process.env[key];
