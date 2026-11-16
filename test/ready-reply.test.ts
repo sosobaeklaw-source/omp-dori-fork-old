@@ -1,11 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { firstParagraph, loadCaseNames, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
+import {
+  firstParagraph,
+  loadNameHashes,
+  NAME_HASH_SCHEME,
+  type NameHashes,
+  nameHash,
+  ocrPicture,
+  ownerMessages,
+  planReply,
+} from "../src/ready-reply.ts";
+import { FAKE_SALT, fakeNames, hashFiles, OWNER_MSG, ROOM } from "./name-hashes.ts";
 
-const ROOM = "1571013138764140544";
-const OWNER_MSG = "1571675313379737672";
 const STANDING = "1571465000311070781";
 
 function lane(result?: string, pictures: readonly string[] = []) {
@@ -29,14 +37,13 @@ function lane(result?: string, pictures: readonly string[] = []) {
 
 const brief = (top: string) => `# 레인\n\npublic: true\n\n${top}\n\n## STOP WHEN\n원문 ${STANDING} 파쿠리 네 칸.\n`;
 const RESULT = `# 결과\n\n회장님 원문(${OWNER_MSG}): "…"\n\n| 칸 | 경로 |\n|---|---|\n\n쇼츠 자막을 박실로식으로 바꿨다.\n둘째 줄.\n\n다음 단락.\n`;
-/** A made-up client-name list (no real names). */
-const NAMES = ["가나다", "라마바"];
+const NAMES = fakeNames();
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 /** planReply on a test lane; `caseNames` is an explicit argument (the fail-closed test passes undefined). */
 const plan = (
   b: string,
   l: { dir: string; owners: Map<string, string> },
-  names: readonly string[] | undefined = NAMES,
+  names: NameHashes | undefined = NAMES,
   read: (path: string) => string | undefined = () => "",
 ) => planReply({ brief: b, resultsDir: l.dir, owners: l.owners, caseNames: names, readPicture: read });
 
@@ -127,19 +134,70 @@ describe("planReply", () => {
     }
   });
 
-  test("without a readable client-name list no lane posts (fail closed)", () => {
+  test("without readable client-name hashes and salt no lane posts (fail closed)", () => {
     const l = lane(RESULT);
     const noList = { brief: brief(OWNER_MSG), resultsDir: l.dir, owners: l.owners, readPicture: () => "" };
     expect(planReply({ ...noList, caseNames: undefined })).toEqual({
       post: false,
-      why: "no readable client-name list, so the reply cannot be checked",
+      why: "no readable client-name hashes and salt, so the reply cannot be checked",
     });
-    expect(loadCaseNames(join(tmpdir(), "no-such-names.json"))).toBeUndefined();
-    const file = join(mkdtempSync(join(tmpdir(), "names-")), "n.json");
-    writeFileSync(file, "{not json");
-    expect(loadCaseNames(file)).toBeUndefined();
-    writeFileSync(file, JSON.stringify(["가나다", "x"]));
-    expect(loadCaseNames(file)).toEqual(["가나다"]);
+    const f = hashFiles();
+    expect(loadNameHashes(f.hashes, f.saltFile)?.hashes.size).toBe(2);
+    // No salt file, no hash file.
+    expect(loadNameHashes(f.hashes, join(tmpdir(), "no-such-salt"))).toBeUndefined();
+    expect(loadNameHashes(join(tmpdir(), "no-such-hashes.json"), f.saltFile)).toBeUndefined();
+    // A salt file others can read, or an empty one.
+    chmodSync(f.saltFile, 0o644);
+    expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
+    chmodSync(f.saltFile, 0o600);
+    writeFileSync(f.saltFile, " \n");
+    expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
+    writeFileSync(f.saltFile, FAKE_SALT);
+    // A broken hash file, another scheme, no or a wrong check, an empty list, or a malformed entry.
+    const scheme = NAME_HASH_SCHEME;
+    const check = nameHash(FAKE_SALT, scheme);
+    const h = nameHash(FAKE_SALT, "가나다");
+    for (const bad of [
+      "{not json",
+      JSON.stringify(["가나다"]),
+      JSON.stringify({ scheme: "sha256:v0", check, lengths: [3], hashes: [h] }),
+      JSON.stringify({ scheme, lengths: [3], hashes: [h] }),
+      JSON.stringify({ scheme, check: h, lengths: [3], hashes: [h] }),
+      JSON.stringify({ scheme, check, lengths: [3], hashes: [] }),
+      JSON.stringify({ scheme, check, lengths: [], hashes: [h] }),
+      JSON.stringify({ scheme, check, lengths: [3], hashes: [h, "가나다"] }),
+    ]) {
+      writeFileSync(f.hashes, bad);
+      expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
+    }
+  });
+
+  test("a name is caught by its salted hash, and a salt that is not the file's own is refused", () => {
+    const l = lane(RESULT, ["비교.png"]);
+    for (const ocr of ["성명가나다", "가 나 다 님", "가\u200b나다", "ＡＢ가나다"]) {
+      expect(plan(brief(OWNER_MSG), l, NAMES, () => ocr).post).toBe(false);
+    }
+    // The same file read under another salt (salt rotated, or only one file copied) is refused, not silently empty.
+    const f = hashFiles();
+    writeFileSync(f.saltFile, "another-fake-salt");
+    expect(loadNameHashes(f.hashes, f.saltFile)).toBeUndefined();
+    const wrongSalt = { brief: brief(OWNER_MSG), resultsDir: l.dir, owners: l.owners, readPicture: () => "" };
+    expect(planReply({ ...wrongSalt, caseNames: loadNameHashes(f.hashes, f.saltFile) }).post).toBe(false);
+    // Names of several lengths, including a Latin one compared in lower case.
+    const mixed = hashFiles(["가나", "라마바사", "abc"]);
+    const names = loadNameHashes(mixed.hashes, mixed.saltFile);
+    for (const ocr of ["담당 가 나", "라마바사 건", "x ABC y"]) {
+      expect(plan(brief(OWNER_MSG), l, names, () => ocr).post).toBe(false);
+    }
+    expect(plan(brief(OWNER_MSG), l, names, () => "가다 라마바 ab").post).toBe(true);
+  });
+
+  test("the hash is HMAC-SHA256 of the squeezed name, the vector scripts/export_client_name_hashes.py pins", () => {
+    expect(nameHash(FAKE_SALT, "가나다")).toBe("8c258ccd2dfa83393d2597cdf70eeff7c337d3705db6f0f4213175ed5252306c");
+    // The file's `check`: the salt's hash of the scheme string.
+    expect(nameHash(FAKE_SALT, NAME_HASH_SCHEME)).toBe(
+      "3bea87113a07d73ed4274b34a60e61b79c186cd2de9c5636391705cea626e09f",
+    );
   });
 });
 
@@ -177,65 +235,4 @@ test("OCR without the Korean data counts as unreadable, so the picture blocks", 
     if (before === undefined) delete process.env["DORI_TESSERACT"];
     else process.env["DORI_TESSERACT"] = before;
   }
-});
-
-/** A DORI_HOME with one lane k1 that is ready to reply, and the env to run the hook against it (no live home leaks in). */
-function hookHome(sender: string) {
-  const home = mkdtempSync(join(tmpdir(), "ready-hook-"));
-  for (const d of ["briefs", "state", "results/k1"]) mkdirSync(join(home, d), { recursive: true });
-  writeFileSync(join(home, "briefs", "k1.md"), `# k1 (회장님 ${OWNER_MSG})\npublic: true\n\n## STOP WHEN\n`);
-  writeFileSync(join(home, "results", "k1", "결과.md"), "# r\n\n바뀐 것.\n");
-  writeFileSync(join(home, "state", "inbound.log"), `INBOUND discord ${ROOM} ${OWNER_MSG} from=owner ref=- "x"\n`);
-  writeFileSync(join(home, "case-names.json"), JSON.stringify(NAMES));
-  const { DORI_STATE_DIR: _s, DORI_CONFIG: _c, DORI_LANE: _l, ...rest } = process.env;
-  const env = { ...rest, DORI_HOME: home, DORI_SEND_FILE: sender, DORI_CASE_NAMES: join(home, "case-names.json") };
-  return { home, env, tool: join(import.meta.dir, "..", "tools", "ready_reply.ts") };
-}
-
-test("the onReady hook argv (KEY --detach) returns at once and the detached copy posts the reply", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "ready-sender-"));
-  const sent = join(dir, "sent.txt");
-  const sender = join(dir, "send.sh");
-  writeFileSync(
-    sender,
-    `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}.tmp"\nmv "${sent}.tmp" "${sent}"\necho "SENT 1"\n`,
-    {
-      mode: 0o755,
-    },
-  );
-  const { env, tool } = hookHome(sender);
-  const parent = Bun.spawnSync(["bun", tool, "k1", "--detach"], { env });
-  expect(parent.exitCode).toBe(0);
-  // The detached copy is another process: wait for its write itself, not a guessed duration.
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const watcher = watch(dir, () => existsSync(sent) && resolve());
-  if (existsSync(sent)) resolve();
-  await promise;
-  watcher.close();
-  expect(readFileSync(sent, "utf8").trim()).toBe(`${OWNER_MSG} ${ROOM} 바뀐 것.`);
-});
-
-test("a sender that does not exist is a recorded failure, with what became of telling the lead", () => {
-  const missing = join(tmpdir(), "no-such-dir", "dori-send-file.sh");
-  const { home, env, tool } = hookHome(missing);
-  const run = Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(run.exitCode).toBe(1);
-  const log = readFileSync(join(home, "state", "ready-reply.log"), "utf8");
-  expect(log).toContain(`FAIL k1 ${OWNER_MSG}: cannot run ${missing}`);
-  expect(log).toContain("(lead: not told, no lead session registered");
-});
-
-test("a reply that went up is a success even when the lead cannot be told, and a lane is answered once", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ready-once-"));
-  const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\necho x >> "${dir}/posts"\necho "SENT 42"\n`, { mode: 0o755 });
-  const { home, env, tool } = hookHome(sender);
-  const run = () => Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(run().exitCode).toBe(0);
-  const log = () => readFileSync(join(home, "state", "ready-reply.log"), "utf8");
-  expect(log()).toContain(`REPLIED k1 ${OWNER_MSG} 42`);
-  expect(log()).not.toContain("FAIL");
-  expect(run().exitCode).toBe(0);
-  expect(readFileSync(join(dir, "posts"), "utf8")).toBe("x\n");
-  expect(log()).toContain(`SKIP k1: already replied to ${OWNER_MSG}`);
 });

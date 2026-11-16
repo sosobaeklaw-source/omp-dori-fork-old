@@ -11,8 +11,9 @@
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
  * `SENT <id>`. A lane that gets no reply prints `SKIP <why>` and tells nobody: it stays inbox-only as before.
  * Only a lane whose brief carries the line `public: true` (written by the lead for public-material work) is answered;
- * the reply text and the picture's OCR text are checked against DORI_CASE_NAMES (default `<home>/case-names.json`, a
- * JSON array or one name per line); without a readable list no lane is answered. OCR is `tesseract`.
+ * the reply text and the picture's OCR text are checked against salted client-name hashes exported by the macmini:
+ * DORI_NAME_HASHES (default `<stateDir>/case-name-hashes.json`) under the salt in DORI_NAME_HASH_SALT_FILE (default
+ * `<stateDir>/name_hash_salt`, mode 600). Without both, readable, no lane is answered. OCR is `tesseract`.
  * Every outcome (reply, skip, failure) is appended to `<stateDir>/ready-reply.log`, and a failure, including a sender
  * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
  * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.
@@ -24,7 +25,7 @@ import { need, parse } from "../src/cli-args.ts";
 import { type Deps, defaultDeps } from "../src/harness.ts";
 import { send } from "../src/inbox.ts";
 import { homeStateDir } from "../src/lane-model.ts";
-import { loadCaseNames, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
+import { loadNameHashes, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
 
 function note(stateDir: string, line: string): void {
   appendFileSync(join(stateDir, "ready-reply.log"), `${new Date().toISOString()} ${line}\n`);
@@ -69,7 +70,10 @@ async function main(argv: readonly string[]): Promise<number> {
     brief: existsSync(briefPath) ? readFileSync(briefPath, "utf8") : "",
     resultsDir: join(home, "results", key),
     owners: ownerMessages(join(stateDir, "inbound.log")),
-    caseNames: loadCaseNames(process.env["DORI_CASE_NAMES"] ?? join(home, "case-names.json")),
+    caseNames: loadNameHashes(
+      process.env["DORI_NAME_HASHES"] ?? join(stateDir, "case-name-hashes.json"),
+      process.env["DORI_NAME_HASH_SALT_FILE"] ?? join(stateDir, "name_hash_salt"),
+    ),
     readPicture: ocrPicture,
   });
   const logFile = join(stateDir, "ready-reply.log");

@@ -9,12 +9,14 @@
  *     block are skipped: every parukuri brief cites the same standing order there, which is not this lane's message.
  *   - its results folder `<home>/results/<key>/` has `결과.md`; the reply text is that file's first prose paragraph
  *     (not a heading, table, list or quote, and not the one quoting the original message back).
- *   - the two things posted, that paragraph and the picture's text read by OCR (`readPicture`), hold no client name,
- *     registration number or case-folder path (`caseReason`). A picture that cannot be read keeps the lane inbox-only.
+ *   - the two things posted, that paragraph and the picture's text read by OCR (`readPicture`), hold no client name
+ *     (matched by salted hash, `loadNameHashes`: no name is on this machine), registration number or case-folder path
+ *     (`caseReason`). A picture that cannot be read keeps the lane inbox-only.
  * The picture is `비교_390.png` (the phone-width cut) when present, else `비교.png`, else none. Nothing else in the
  * folder is posted, so nothing else is read.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { createHmac } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /** Fenced code and HTML comments: never posted, even when a blank line splits them into two "paragraphs". */
@@ -41,18 +43,49 @@ export type Plan =
   | { readonly post: true; readonly owner: Owner; readonly text: string; readonly image?: string }
   | { readonly post: false; readonly why: string };
 
-/** The client-name list: a JSON array of names, or one name per line. Undefined when it cannot be read. */
-export function loadCaseNames(path: string | undefined): readonly string[] | undefined {
-  if (!path || !existsSync(path)) return undefined;
+/** The scheme a hash file must declare: HMAC-SHA256 under the salt, of the squeezed name (see `squeeze`), hex. */
+export const NAME_HASH_SCHEME = "hmac-sha256:nfkc-lower-nospace:v1";
+
+/** Client names as salted hashes: no name is kept, only the hashes and the name lengths (in code points) to try. */
+export type NameHashes = {
+  readonly salt: string;
+  readonly lengths: readonly number[];
+  readonly hashes: ReadonlySet<string>;
+};
+
+/**
+ * The salt file's text (surrounding whitespace dropped), undefined when it is missing, empty, or readable by anyone
+ * but its owner (mode wider than 600): a salt others can read lets them test guessed names against the hashes.
+ */
+function loadSalt(path: string): string | undefined {
   try {
-    const raw = readFileSync(path, "utf8");
-    // Anything that opens like JSON is read as JSON, so a broken JSON file fails closed instead of becoming one "name".
-    const list: unknown = /^\s*[[{]/.test(raw) ? JSON.parse(raw) : raw.split("\n");
-    if (!Array.isArray(list)) return undefined;
-    const names = list.filter((n): n is string => typeof n === "string").map((n) => n.trim());
-    const kept = names.filter((n) => n.length >= 2);
-    // An empty list judges nothing: the same as no list.
-    return kept.length ? kept : undefined;
+    if ((statSync(path).mode & 0o077) !== 0) return undefined;
+    return readFileSync(path, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The hash file the macmini exports (`{"scheme", "check", "lengths": [2, 3, 4], "hashes": ["<hex>", …]}`) with its
+ * salt file. `check` is the salt's own hash of the scheme string, so a salt that is not the one the file was made with
+ * (rotated on the macmini, or only one of the two files copied) is refused instead of silently matching nothing.
+ * Undefined when either is missing or broken, the scheme or check differs, or nothing is listed.
+ */
+export function loadNameHashes(hashFile: string, saltFile: string): NameHashes | undefined {
+  const salt = loadSalt(saltFile);
+  if (!salt || !existsSync(hashFile)) return undefined;
+  try {
+    const raw: unknown = JSON.parse(readFileSync(hashFile, "utf8"));
+    if (typeof raw !== "object" || raw === null) return undefined;
+    const { scheme, check, lengths, hashes } = raw as Record<string, unknown>;
+    if (scheme !== NAME_HASH_SCHEME || check !== nameHash(salt, NAME_HASH_SCHEME)) return undefined;
+    if (!Array.isArray(lengths) || !Array.isArray(hashes)) return undefined;
+    const lens = lengths.filter((n): n is number => Number.isInteger(n) && n >= 2 && n <= 32);
+    const set = new Set(hashes.filter((h): h is string => typeof h === "string" && /^[0-9a-f]{64}$/.test(h)));
+    // A file that lists no length or no hash judges nothing: the same as no file.
+    if (!lens.length || !set.size || lens.length !== lengths.length || set.size !== hashes.length) return undefined;
+    return { salt, lengths: lens, hashes: set };
   } catch {
     return undefined;
   }
@@ -61,17 +94,32 @@ export function loadCaseNames(path: string | undefined): readonly string[] | und
 /** `s` as compared: NFKC, lower case, with invisible characters and all whitespace removed. */
 const squeeze = (s: string) => s.normalize("NFKC").replace(INVISIBLE, "").replace(/\s+/g, "").toLowerCase();
 
+/** The salted hash of an already squeezed name, as the macmini's export script computes it. */
+export const nameHash = (salt: string, squeezed: string) =>
+  createHmac("sha256", salt).update(squeezed, "utf8").digest("hex");
+
+/** Whether any run of `lengths` code points in the squeezed `flat` hashes to a listed name. */
+function holdsName(flat: string, names: NameHashes): boolean {
+  const chars = Array.from(flat);
+  for (const len of names.lengths) {
+    for (let i = 0; i + len <= chars.length; i++) {
+      if (names.hashes.has(nameHash(names.salt, chars.slice(i, i + len).join("")))) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Why `text` (one of the two things posted) must not go out, or undefined. A name counts anywhere, glued to a label
  * ("성명가나다", what OCR makes of a form) or spaced out ("가 나 다"): a wrong block only costs an automatic reply.
  */
-function caseReason(label: string, text: string, names: readonly string[]): string | undefined {
+function caseReason(label: string, text: string, names: NameHashes): string | undefined {
   const flat = squeeze(text);
   if (CASE_PATH.test(text.normalize("NFKC"))) return `${label} points into case folders`;
   if (RRN_FLAT.test(flat) || RRN_SPACED.test(text.normalize("NFKC").replace(INVISIBLE, ""))) {
     return `${label} holds a registration number`;
   }
-  if (names.some((n) => squeeze(n).length >= 2 && flat.includes(squeeze(n)))) return `${label} holds a client name`;
+  if (holdsName(flat, names)) return `${label} holds a client name`;
   return undefined;
 }
 
@@ -148,14 +196,15 @@ export function planReply(input: {
   readonly brief: string;
   readonly resultsDir: string;
   readonly owners: ReadonlyMap<string, string>;
-  readonly caseNames: readonly string[] | undefined;
+  readonly caseNames: NameHashes | undefined;
   /** The text in the picture to be posted, undefined when it cannot be read (see `ocrPicture`). */
   readonly readPicture: (path: string) => string | undefined;
 }): Plan {
   if (!isPublic(input.brief)) return { post: false, why: "the brief is not marked public: true" };
   const owner = ownerMessageOf(input.brief, input.owners);
   if (!owner) return { post: false, why: "the brief names no owner message" };
-  if (!input.caseNames) return { post: false, why: "no readable client-name list, so the reply cannot be checked" };
+  if (!input.caseNames)
+    return { post: false, why: "no readable client-name hashes and salt, so the reply cannot be checked" };
   const resultFile = join(input.resultsDir, "결과.md");
   if (!existsSync(resultFile)) return { post: false, why: `no ${resultFile}` };
   const text = firstParagraph(readFileSync(resultFile, "utf8"), [owner.id, input.resultsDir]);
