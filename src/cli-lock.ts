@@ -5,7 +5,7 @@ import { lockEnv, type RunEnv, runLocked } from "./lock.ts";
 import { lockLine } from "./lock-list.ts";
 import { checkName, checkPriority } from "./lock-queue.ts";
 import { Refusal } from "./refusal.ts";
-import { KEY_RE } from "./store-types.ts";
+import { KEY_RE, reservedKey } from "./store-types.ts";
 
 /**
  * `lock <name> --lane K [--priority N] -- CMD ...` and `lock <name> --list`. The turn's priority is --priority, else
@@ -23,6 +23,8 @@ export async function runLock(
   }
   const lane = need(one(a, "lane"), "--lane");
   if (!KEY_RE.test(lane)) throw new Refusal(`lane key must match ${KEY_RE}`);
+  const reserved = reservedKey(lane);
+  if (reserved) throw new Refusal(reserved);
   const given = one(a, "priority");
   const priority = checkPriority(given === undefined ? d.store.lane(lane)?.priority : Number(given));
   if (a.rest.length === 0) throw new Refusal(`lock needs a command after --\n\n${USAGE}`);
