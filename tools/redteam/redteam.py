@@ -70,9 +70,10 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str) -> dict:
         return {"branch": "gpt_web", "status": "blocked", "model": "-", "chars": 0}
     raw = out / "raw_gpt_web"
     led = raw / "ledger.json"
-    # tk2 never resends a lane its ledger marks UNAVAILABLE; keep that attempt aside so a rerun sends again.
-    if led.exists() and json.loads(led.read_text())["lanes"].get(f"gpt6pro_{acct}", {}).get("status") == "UNAVAILABLE":
-        raw.rename(out / f"raw_gpt_web.failed-{time.strftime('%H%M%S')}")
+    # tk2 never resends a lane its ledger already holds (ok, SENT, UNAVAILABLE): keep any earlier attempt aside
+    # so this run sends the current prompt.
+    if raw.exists():
+        raw.rename(out / f"raw_gpt_web.prev-{time.strftime('%H%M%S')}")
     t0 = time.time()
     proc = subprocess.run([str(LOCK), acct, lane, "--", sys.executable, str(TK2), "run", "--prompt", str(prompt_file),
                            "--out", str(raw), "--only", f"gpt6pro_{acct}", "--deadline-min", "45"],
@@ -97,6 +98,8 @@ def run_carbon(out: Path, prompt_file: Path, acct: str | None, lane: str, blocke
     lock_acct = acct.split(":")[0]
     raw = out / "raw_carbon_web.txt"
     meta = out / "raw_carbon_web.meta.json"
+    raw.unlink(missing_ok=True)  # an earlier run's answer must never read as this run's
+    meta.unlink(missing_ok=True)
     t0 = time.time()
     proc = subprocess.run([str(LOCK), lock_acct, lane, "--", "node", str(CARBON_RUN), "--prompt", str(prompt_file),
                            "--out", str(raw), "--account", acct, "--meta", str(meta), "--timeout", "1800"],
@@ -121,11 +124,12 @@ def http_json(url: str, headers: dict, body: dict | None = None, timeout: int = 
 def pirate_ships() -> tuple[list[dict], list[str]]:
     """Both ship lists read at run time. A ship whose list cannot be read (e.g. the paidlock guard
     blocks opencode.ai) is reported, never routed around."""
-    ships = [("tokenmaxx", "https://oc.hyeon.space/v1", (HOME / ".omp/agent/tokenmaxx.key").read_text().strip()),
-             ("opencode-go", "https://opencode.ai/zen/go/v1", os.environ.get("OPENCODE_API_KEY", ""))]
+    ships = [("tokenmaxx", "https://oc.hyeon.space/v1", lambda: (HOME / ".omp/agent/tokenmaxx.key").read_text().strip()),
+             ("opencode-go", "https://opencode.ai/zen/go/v1", lambda: os.environ.get("OPENCODE_API_KEY", ""))]
     models, down = [], []
-    for ship, base, key in ships:
+    for ship, base, read_key in ships:
         try:
+            key = read_key()
             listed = http_json(base + "/models", {"authorization": "Bearer " + key})["data"]
         except Exception as e:
             down.append(f"{ship}: 목록을 읽지 못함 — {e}")
@@ -188,22 +192,34 @@ MERGE_INSTR = (
 
 
 def merge(out: Path, results: list[dict]) -> int:
+    """Group findings; returns the group count. Raises when the merge model's reply cannot be used."""
     got = [r for r in results if r.get("text")]
+    if not got:
+        (out / "merged.md").write_text("# 병합 지적 0건 (답 0개, 병합하지 않음)\n")
+        return 0
+    known = {r["branch"] for r in got}
     blob = "\n\n".join(f"### {r['branch']}\n{r['text']}" for r in got)
     r = http_json(OCX, {}, {"model": MERGE_MODEL, "messages": [{"role": "user", "content": MERGE_INSTR + blob}]}, timeout=900)
     raw = r["choices"][0]["message"]["content"]
     (out / "merged.raw.json").write_text(raw)
     groups = json.loads(raw[raw.index("["): raw.rindex("]") + 1])
-    groups.sort(key=lambda g: -len(set(g["models"])))
+    for g in groups:  # count only names that are real answers in this run
+        named = set(g.get("models") or [])
+        g["counted"], g["unknown"] = sorted(named & known), sorted(named - known)
+    groups.sort(key=lambda g: -len(g["counted"]))
     lines = [f"# 병합 지적 {len(groups)}건 (병합 {r.get('model', MERGE_MODEL)}, 답 {len(got)}개)\n"]
     for i, g in enumerate(groups, 1):
-        lines.append(f"{i}. [{len(set(g['models']))}개 모델] 위치: {g['location']} | 문제: {g['problem']} | 근거: {g['evidence']}")
+        extra = f" | 모르는 이름(세지 않음): {', '.join(g['unknown'])}" if g["unknown"] else ""
+        lines.append(f"{i}. [{len(g['counted'])}개 모델] 위치: {g.get('location', '?')} | 문제: {g.get('problem', '?')}"
+                     f" | 근거: {g.get('evidence', '?')} | 모델: {', '.join(g['counted'])}{extra}")
     (out / "merged.md").write_text("\n".join(lines) + "\n")
     return len(groups)
 
 
 def read_back(path: Path) -> dict:
     """A model file written earlier by write_model_file: '- key: value' head, blank line, body."""
+    if not path.exists():
+        return {"branch": path.stem, "status": "missing", "model": "-", "chars": 0, "text": ""}
     head_txt, _, body = path.read_text().partition("\n\n")
     head = dict(line[2:].split(": ", 1) for line in head_txt.splitlines() if ": " in line)
     ok = head.get("status") == "ok"
@@ -230,22 +246,39 @@ def main() -> int:
     prompt = build_prompt(a.kind, [Path(t) for t in a.target])
     pf = out / "prompt.txt"
     pf.write_text(prompt)
+
+    def settle(fut, branch: str):
+        """A branch that raises becomes that branch's recorded failure; the others still merge."""
+        try:
+            return fut.result()
+        except Exception as e:
+            write_model_file(out / f"{branch}.md", {"branch": branch, "status": "error", "error": repr(e)}, repr(e))
+            return {"branch": branch, "status": "error", "model": "-", "chars": 0, "text": ""}
     with cf.ThreadPoolExecutor(3) as ex:
         fg = ex.submit(run_gpt, out, pf, a.gpt_account, a.lane) if "gpt" in only else None
         fc = ex.submit(run_carbon, out, pf, a.carbon_account, a.lane, a.carbon_blocked) if "carbon" in only else None
         fp = ex.submit(run_pirates, out, prompt, a.material) if "pirates" in only else None
-        gpt = fg.result() if fg else read_back(out / "gpt_web.md")
-        carbon = fc.result() if fc else read_back(out / "carbon_web.md")
-        pirates = fp.result() if fp else [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
+        gpt = settle(fg, "gpt_web") if fg else read_back(out / "gpt_web.md")
+        carbon = settle(fc, "carbon_web") if fc else read_back(out / "carbon_web.md")
+        if fp:
+            pirates = settle(fp, "pirates_error")
+            pirates = pirates if isinstance(pirates, list) else [pirates]
+        else:
+            pirates = [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
     results = [gpt, carbon, *pirates]
-    n = merge(out, results)
-    (out / "summary.json").write_text(json.dumps([{k: v for k, v in r.items() if k != "text"} for r in results] + [{"merged": n}],
-                                                 ensure_ascii=False, indent=1))
+    code, merged = 0, None
+    try:
+        merged = merge(out, results)
+    except Exception as e:
+        (out / "merged.md").write_text(f"# 병합 실패\n\n{e!r}\n")
+        code = 1
+    (out / "summary.json").write_text(json.dumps([{k: v for k, v in r.items() if k != "text"} for r in results]
+                                                 + [{"merged": merged}], ensure_ascii=False, indent=1))
     def short(r): return f"{r['model']} {r['chars']}" if r["chars"] else f"{r['status']}"
     ok = [r for r in pirates if r["chars"]]
     print(f"GPT웹 {short(gpt)} | Carbon {short(carbon)} | 해적선 "
-          + ", ".join(f"{r['model']}:{r['chars']}" for r in ok) + f" | 병합 지적 {n}건")
-    return 0
+          + ", ".join(f"{r['model']}:{r['chars']}" for r in ok) + f" | 병합 지적 {merged if merged is not None else '실패'}건")
+    return code
 
 
 if __name__ == "__main__":
