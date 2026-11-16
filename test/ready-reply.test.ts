@@ -23,7 +23,7 @@ function lane(result?: string, pictures: readonly string[] = []) {
   const dir = join(root, "results");
   mkdirSync(dir);
   if (result !== undefined) writeFileSync(join(dir, "결과.md"), result);
-  for (const p of pictures) writeFileSync(join(dir, p), "png");
+  for (const p of pictures) writeFileSync(join(dir, p), PNG);
   return { dir, owners: ownerMessages(log) };
 }
 
@@ -31,12 +31,20 @@ const brief = (top: string) => `# 레인\n\n${top}\n\n## STOP WHEN\n원문 ${STA
 const RESULT = `# 결과\n\n회장님 원문(${OWNER_MSG}): "…"\n\n| 칸 | 경로 |\n|---|---|\n\n쇼츠 자막을 박실로식으로 바꿨다.\n둘째 줄.\n\n다음 단락.\n`;
 /** A made-up client-name list (no real names). */
 const NAMES = ["가나다", "라마바"];
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 /** planReply on a test lane; `caseNames` is an explicit argument (the fail-closed test passes undefined). */
 const plan = (
   b: string,
   l: { dir: string; owners: Map<string, string> },
   ...names: [readonly string[] | undefined] | []
-) => planReply({ brief: b, resultsDir: l.dir, owners: l.owners, caseNames: names.length ? names[0] : NAMES });
+) =>
+  planReply({
+    brief: b,
+    resultsDir: l.dir,
+    owners: l.owners,
+    caseNames: names.length ? names[0] : NAMES,
+    readPicture: () => "",
+  });
 
 describe("planReply", () => {
   test("an owner message in the brief gets the first prose paragraph and the phone-width picture", () => {
@@ -87,8 +95,8 @@ describe("planReply", () => {
       post: false,
       why: `case lane: ${join("work", "facts.md")} holds a client name`,
     });
-    // A name counts as a word of its own (bare, or with a particle or title glued on), not embedded in a longer word.
-    expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n아가나다 표, 가나다라마 칸.\n`)).post).toBe(true);
+    // A name counts at the start of a Hangul run, whatever is glued on after it, but not inside a word ("아가나다").
+    expect(plan(brief(OWNER_MSG), lane(`${RESULT}\n아가나다 표, 마라마바 칸.\n`)).post).toBe(true);
     for (const named of [
       "의뢰인 라마바에게 물었다.",
       "성명: 가나다",
@@ -121,7 +129,7 @@ describe("planReply", () => {
       writeFileSync(join(l.dir, doc), "x");
       expect(plan(brief(OWNER_MSG), l)).toEqual({
         post: false,
-        why: `case lane: ${doc} is a document the check cannot read`,
+        why: `case lane: ${doc} is not a type the check can read`,
       });
     }
   });
@@ -169,9 +177,13 @@ test("the onReady hook argv (KEY --detach) returns at once and the detached copy
   const dir = mkdtempSync(join(tmpdir(), "ready-sender-"));
   const sent = join(dir, "sent.txt");
   const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`, {
-    mode: 0o755,
-  });
+  writeFileSync(
+    sender,
+    `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}.tmp"\nmv "${sent}.tmp" "${sent}"\necho "SENT 1"\n`,
+    {
+      mode: 0o755,
+    },
+  );
   const { env, tool } = hookHome(sender);
   const parent = Bun.spawnSync(["bun", tool, "k1", "--detach"], { env });
   expect(parent.exitCode).toBe(0);

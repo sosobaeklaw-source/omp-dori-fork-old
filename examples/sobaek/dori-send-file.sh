@@ -18,8 +18,13 @@ python3 -c 'import json,sys;d={"content":sys.argv[1],"allowed_mentions":{"parse"
 if r: d["message_reference"]={"message_id":r,"fail_if_not_exists":True}
 open(sys.argv[3],"w").write(json.dumps(d))' "$text" "${REPLY_TO:-}" "$tmp/payload.json"
 args=(-F "payload_json=<$tmp/payload.json;type=application/json")
-i=0; for f in "$@"; do args+=(-F "files[$i]=@\"$f\""); i=$((i+1)); done
+# A " or ; in a path would break curl's quoted form, so each file goes in through a plain-named link.
+i=0; for f in "$@"; do ln -s "$(cd "$(dirname "$f")" && pwd)/$(basename "$f")" "$tmp/f$i"; args+=(-F "files[$i]=@$tmp/f$i;filename=file$i.${f##*.}"); i=$((i+1)); done
 # The token goes in through a header file, not argv, so it never shows in ps.
 printf 'Authorization: Bot %s\n' "$(cat "$token_file")" > "$tmp/auth"; chmod 600 "$tmp/auth"
 r=$(curl -s -m 120 -X POST "$api/channels/$ch/messages" -H @"$tmp/auth" "${args[@]}")
-printf '%s' "$r" | python3 -c "import json,sys;d=json.load(sys.stdin);print('SENT',d['id']) if 'id' in d else (print('FAIL',d.get('code'),d.get('message')),sys.exit(1))"
+printf '%s' "$r" | python3 -c "import json,sys
+raw=sys.stdin.read()
+try: d=json.loads(raw)
+except ValueError: print('FAIL non-json',raw[:80].replace(chr(10),' ')); sys.exit(1)
+print('SENT',d['id']) if isinstance(d,dict) and 'id' in d else (print('FAIL',d.get('code') if isinstance(d,dict) else '-',d.get('message') if isinstance(d,dict) else raw[:80]),sys.exit(1))"

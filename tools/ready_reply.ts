@@ -11,9 +11,10 @@
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
  * `SENT <id>`. A lane that gets no reply prints `SKIP <why>` and tells nobody: it stays inbox-only as before.
  * The client-name list for the case-lane check is DORI_CASE_NAMES (default `<home>/case-names.json`, a JSON array or
- * one name per line); without a readable list every lane stays inbox-only.
+ * one name per line); without a readable list every lane stays inbox-only. The picture is read by OCR (`tesseract`).
  * Every outcome (reply, skip, failure) is appended to `<stateDir>/ready-reply.log`, and a failure, including a sender
- * that is missing or cannot start, is also told to the lead, so a detached run never fails silently.
+ * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
+ * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.
  */
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ import { need, parse } from "../src/cli-args.ts";
 import { type Deps, defaultDeps } from "../src/harness.ts";
 import { send } from "../src/inbox.ts";
 import { homeStateDir } from "../src/lane-model.ts";
-import { loadCaseNames, ownerMessages, planReply } from "../src/ready-reply.ts";
+import { loadCaseNames, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
 
 function note(stateDir: string, line: string): void {
   appendFileSync(join(stateDir, "ready-reply.log"), `${new Date().toISOString()} ${line}\n`);
@@ -68,10 +69,16 @@ async function main(argv: readonly string[]): Promise<number> {
     resultsDir: join(home, "results", key),
     owners: ownerMessages(join(stateDir, "inbound.log")),
     caseNames: loadCaseNames(process.env["DORI_CASE_NAMES"] ?? join(home, "case-names.json")),
+    readPicture: ocrPicture,
   });
-  if (!plan.post) {
-    console.log(`SKIP ${key}: ${plan.why}`);
-    if (!a.flags.has("dry-run")) note(stateDir, `SKIP ${key}: ${plan.why}`);
+  const logFile = join(stateDir, "ready-reply.log");
+  const replied =
+    plan.post && existsSync(logFile) && readFileSync(logFile, "utf8").includes(` REPLIED ${key} ${plan.owner.id} `);
+  if (!plan.post || replied) {
+    // READY again after rework does not answer the same owner message twice.
+    const why = plan.post ? `already replied to ${plan.owner.id}` : plan.why;
+    console.log(`SKIP ${key}: ${why}`);
+    if (!a.flags.has("dry-run")) note(stateDir, `SKIP ${key}: ${why}`);
     return 0;
   }
   const { owner, text, image } = plan;
@@ -88,9 +95,22 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
   const id = r.id as string;
+  // The reply is up: from here a failure is noted, never reported as a failed reply.
   note(stateDir, `REPLIED ${key} ${owner.id} ${id}`);
-  recordSent(stateDir, id, key, "all");
-  await send(d, "lead", `[REPLY ${key}] 회장님 원글 ${owner.id}에 결과 답글 ${id}${image ? " (그림 1)" : ""}`, key);
+  try {
+    recordSent(stateDir, id, key, "all");
+  } catch (error) {
+    note(
+      stateDir,
+      `NOTE ${key}: reply ${id} not recorded as sent (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  const told = await tell(
+    d,
+    `[REPLY ${key}] 회장님 원글 ${owner.id}에 결과 답글 ${id}${image ? " (그림 1)" : ""}`,
+    key,
+  );
+  if (told.startsWith("not told")) note(stateDir, `NOTE ${key}: reply ${id}, lead ${told}`);
   console.log(`REPLIED ${owner.id} ${id}`);
   return 0;
 }
