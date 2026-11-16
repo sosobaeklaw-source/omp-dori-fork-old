@@ -53,7 +53,7 @@ if [ -n "${PLAN_DRY_RUN:-}" ]; then printf '%s\n' "$body" > "$out"; echo "$out";
 resp=$(curl -sS -m 600 -H 'authorization: Bearer opencodex-loopback' -H 'content-type: application/json' \
   http://127.0.0.1:10100/v1/chat/completions -d "$body")
 RESP="$resp" REPLY_TO="$reply_to" python3 -c '
-import json, os, sys
+import json, os, re, sys
 d = json.loads(os.environ["RESP"])
 if "choices" not in d:
     sys.exit("plan-fable: no completion: " + json.dumps(d)[:400])
@@ -61,6 +61,9 @@ c = d["choices"][0]
 text = (c.get("message") or {}).get("content")
 if not text or not text.strip():
     sys.exit("plan-fable: empty plan (finish_reason=%s)" % c.get("finish_reason"))
+# Only the lead sets the marker: any public:/원글: line the model wrote is dropped, then PUBLIC_REPLY_TO (if given)
+# is written once on top.
+text = "\n".join(l for l in text.split("\n") if not re.match(r"\s*(public|원글)\s*:", l, re.I))
 if os.environ["REPLY_TO"]:
     text = "public: true\n원글: %s\n\n%s" % (os.environ["REPLY_TO"], text)
 print(text)' > "$out"
