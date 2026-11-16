@@ -13,6 +13,7 @@ import {
   readRange,
   writerOf,
 } from "../src/writer-request.ts";
+import { fillSheet, markLeadAfter, readSheet } from "../src/writer-sheet.ts";
 
 // One synthetic entry per kind, one for all kinds, and a repeat pair whose first entry is seo-only.
 const LEDGER = `# ledger
@@ -76,7 +77,13 @@ describe("writer request", () => {
       for (const [other, words] of Object.entries(KIND_ONLY)) expect(body.includes(words)).toBe(other === kind);
       expect(body).toContain("every kind rejection");
       // The repeat pair reaches every kind, the seo-only first saying included, with the fixed sentences.
-      for (const words of ["first time said", "second time said", '전: "before sentence"', '후: "after sentence"'])
+      // The 후 sentence is not in the owner's 원문, so it goes in as the lead's proposal.
+      for (const words of [
+        "first time said",
+        "second time said",
+        '전: "before sentence"',
+        '후(리드 제안): "after sentence"',
+      ])
         expect(body).toContain(words);
       expect(body).toContain(`[${notes}:1-5]\n${NOTES.split("\n").slice(0, 5).join("\n")}\n`);
       expect(body).not.toContain("a line outside the range");
@@ -156,5 +163,54 @@ describe("writer request", () => {
     expect(readFileSync(ledgerPath(home), "utf8")).toEndWith(
       `\n## 2026-11-16 07:35 · card · msg ${id} · post - · 반복 102\n원문: "new words"\n전: "a b"\n후: "c d"\n`,
     );
+  });
+
+  test("a 후 sentence counts as the owner's only when the 원문 holds it; otherwise it is the lead's proposal", () => {
+    const head = "## 2026-11-16 07:35 · card · msg 1 · post -";
+    const owner = `${head}\n원문: "'붙이는 서류' 말고 첨부서류라고 해"\n전: "붙이는 서류"\n후: "첨부서류"`;
+    expect(markLeadAfter(owner)).toBe(owner);
+    const lead = `${head}\n원문: "'붙이는 서류' 이런단어도 다 슬롭"\n전: "붙이는 서류"\n후: "재해위로금 지급신청서 첨부서류"`;
+    expect(markLeadAfter(lead)).toEndWith('\n후(리드 제안): "재해위로금 지급신청서 첨부서류"');
+    // Every part of a 'A / B' pair has to be the owner's.
+    const half = `${head}\n원문: "난청진단을 받았다면 가능합니다"\n전: "a / b"\n후: "난청진단을 받았다면 / 확진일부터"`;
+    expect(markLeadAfter(half)).toContain("후(리드 제안):");
+  });
+
+  test("a word sheet goes after the task with its [key] slots, and fill returns the writer's words per key", () => {
+    const { home, lane, task } = setup();
+    const sheetPath = join(home, "sheet.txt");
+    writeFileSync(sheetPath, "[제목]\n그림 제목. 불복 절차의 이름(제103조)\n\n[상자1]\n심사청구 기한, 제103조 제3항\n");
+    const built = buildRequest({
+      home,
+      kind: "seo",
+      model: "hydrogen",
+      laneDir: lane,
+      tasks: [task],
+      sheet: sheetPath,
+    });
+    const body = readFileSync(built.path, "utf8");
+    expect(body.indexOf("Write section 2.")).toBeLessThan(body.indexOf("[제목]"));
+    expect(body.indexOf(END)).toBeLessThan(body.indexOf("[상자1]"));
+    const sheet = readSheet(sheetPath, END);
+    expect(sheet.keys).toEqual(["제목", "상자1"]);
+    expect(
+      fillSheet(sheet, "설명 한 줄\n[제목]\n추가상병 불승인 처분에 대한 불복 절차\n\n[상자1]\n안 날부터 90일\n"),
+    ).toEqual({
+      제목: "추가상병 불승인 처분에 대한 불복 절차",
+      상자1: "안 날부터 90일",
+    });
+    expect(() => fillSheet(sheet, "[제목]\n제목만\n")).toThrow("no words for [상자1]");
+    expect(() => fillSheet(sheet, "[제목]\na\n[상자1]\nb\n[상자9]\nc\n")).toThrow("[상자9], which the sheet does not");
+    writeFileSync(sheetPath, "[a]\nx\n[a]\ny\n");
+    expect(() => readSheet(sheetPath, END)).toThrow("more than once");
+  });
+
+  test("a closing remark or code fence after the last slot is refused, not drawn into the figure", () => {
+    const sheet = { text: "", keys: ["a", "b"] };
+    expect(() => fillSheet(sheet, "[a]\nA\n[b]\nB\n\n이상입니다. 더 고칠 곳이 있으면 말씀해 주세요.\n")).toThrow(
+      "[b] goes on after a blank line",
+    );
+    expect(() => fillSheet(sheet, "```\n[a]\nA\n[b]\nB\n```\n")).toThrow("[b] holds a code fence");
+    expect(fillSheet(sheet, "[a]\nA 첫 줄\nA 둘째 줄\n\n[b]\nB\n\n")).toEqual({ a: "A 첫 줄\nA 둘째 줄", b: "B" });
   });
 });

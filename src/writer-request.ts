@@ -9,6 +9,14 @@
  * The lane's task text follows. The body is saved as `<lane dir>/requests/NN_<model>[_label].txt` and the number of
  * case lines that went in is written next to it as `NN_<model>[_label].count`.
  *
+ * Words outside the body (figure text, table cells, cover strip, alt, captions) go the same way: the lane lists them
+ * in one word sheet (`[key]` then what the slot says in the law's terms and its article, the sentence left out),
+ * builds the request with `--sheet`, and `fill` copies the writer's answer back per key for the renderer
+ * (src/writer-sheet.ts). Nobody retypes a figure's words between the writer and the picture.
+ *
+ * A ledger `후` sentence that is not in that entry's own 원문 was written by the lead, not the owner, so it goes into
+ * the body as `후(리드 제안):`; the writer does not take it as the owner's fix. The ledger file is left as written.
+ *
  * Data lives in the harness home, not here: `<home>/반복지적.md` (the ledger) and `<home>/writer-cases/<kind>.txt`
  * (one `path:START-END` per line). Only argon and hydrogen write; carbon is the red team.
  */
@@ -16,6 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Refusal } from "./refusal.ts";
+import { markLeadAfter, readSheet, SHEET_ASK } from "./writer-sheet.ts";
 
 export const KINDS = ["seo", "card", "video", "legal"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -138,6 +147,8 @@ export interface BuildInput {
   readonly model: Writer;
   readonly laneDir: string;
   readonly tasks: readonly string[];
+  /** A word sheet: its slots go after the tasks, and the writer is asked to answer under the same `[key]` lines. */
+  readonly sheet?: string | undefined;
   /** Extra `path:START-END` ranges for this topic, after the kind's own. */
   readonly cases?: readonly string[];
   readonly label?: string | undefined;
@@ -151,8 +162,9 @@ export interface Built {
 }
 
 export function buildRequest(input: BuildInput): Built {
-  if (input.tasks.length === 0) throw new Refusal("give the lane's task text with --task FILE");
+  if (input.tasks.length === 0 && !input.sheet) throw new Refusal("give the lane's task text with --task FILE");
   for (const t of input.tasks) if (!existsSync(t)) throw new Refusal(`no task file ${t}`);
+  const sheet = input.sheet === undefined ? undefined : readSheet(input.sheet, END);
   const ranges = kindRanges(input.home, input.kind, input.cases);
   if (ranges.length === 0)
     throw new Refusal(
@@ -168,14 +180,15 @@ export function buildRequest(input: BuildInput): Built {
     ...ranges.flatMap((r) => ["", `[${r.label}]`, ...r.lines]),
     "",
     `=== 2. The owner's own words when he sent ${input.kind} work back, verbatim. ===`,
-    ...reject.flatMap((e) => ["", e.block]),
+    ...reject.flatMap((e) => ["", markLeadAfter(e.block)]),
     "",
     "=== 3. Said more than once: the owner's words and the sentences fixed then, verbatim. ===",
-    ...repeat.flatMap((e) => ["", e.block]),
+    ...repeat.flatMap((e) => ["", markLeadAfter(e.block)]),
     "",
     END,
     "",
     ...input.tasks.map((t) => readFileSync(t, "utf8").trimEnd()),
+    ...(sheet ? ["", SHEET_ASK, "", sheet.text.trimEnd()] : []),
     "",
   ].join("\n");
   const dir = join(input.laneDir, "requests");
