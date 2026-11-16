@@ -30,6 +30,20 @@ class NowrapTest(unittest.TestCase):
         out = nowrap('<a href="x">산재법 제57조</a> 제3항·제4항).')
         self.assertIn("</a>\u00a0", out)
 
+    def test_a_date_or_article_right_after_an_opening_bracket_is_one_run(self) -> None:
+        out = runs(nowrap("<p>개정법(2024. 1. 1. 시행)과 심사청구(제103조 제3항) 기한.</p>"))
+        self.assertIn("2024. 1. 1.", out)
+        self.assertIn("제103조 제3항", out)
+
+    def test_svg_title_option_textarea_pre_and_code_are_left_alone(self) -> None:
+        body = (
+            "<html><head><title>90일 기한</title></head><body>"
+            '<svg viewBox="0 0 10 10"><text x="1" y="1">90일</text></svg>'
+            "<select><option>2,000헤르츠</option></select><textarea>제103조 제3항</textarea>"
+            "<pre><code>a = 1+2</code></pre><code>x=90</code></body></html>"
+        )
+        self.assertEqual(nowrap(body), body)
+
 
 if __name__ == "__main__":
     unittest.main()

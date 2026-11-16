@@ -3,9 +3,10 @@
 The theme sets `word-break: keep-all` with `overflow-wrap: anywhere`, so Korean words stay whole but a run such as
 `500·1,000·2,000헤르츠`, `70+(80×2)+(80×2)+100 = 490`, `2018. 9. 19.` or `제103조 제3항` can still break at `·`, `+`,
 `(` or the space inside it; a reader then sees half a number at the end of one line. Each such run is wrapped in
-`<span style="white-space:nowrap">`. Only text between tags is touched (never attributes, <script>, <style>, or text
-already inside such a span), and a run longer than MAX characters is left alone, so nothing new can push past a
-phone's 350px column.
+`<span style="white-space:nowrap">`. Only text between tags is touched (never attributes, text inside an element
+where a span would not render or would show as text — <script>, <style>, <svg>, <title>, <textarea>, <select>,
+<pre>, <code> — or text already inside such a span), and a run longer than MAX characters is left alone, so nothing
+new can push past a phone's 350px column.
 
 Usage: python3 tools/wp_publish/nowrap.py body.html > body.nowrap.html
 """
@@ -23,9 +24,13 @@ RUN = re.compile(
     r"|제\d+조(?:의\d+)?(?:\s제\d+항)?(?:\s제\d+호)?"  # 제103조 제3항 제1호
     r"|[{(]?[\d(][\d,.·()+\-×÷/ ]*[+×÷=][\d,.·()+\-×÷/ =]*[\d)}]"  # {(a…)÷6} is below; this is 70+(80×2) = 490
     r"|[{(]\(?[a-z\d][a-z\d()+×÷/ ]*[+×÷][a-z\d()+×÷/ ]*\)?[)}]"  # {(a+2b+2c+d)÷6}
-    r"|[^\s<>]*\d[^\s<>]*"  # any space-free word holding a digit: 500·1,000·2,000헤르츠, 90일, 81.67에서
+    r"|[^\s<>(\[〈「]*\d[^\s<>]*"  # any space-free word holding a digit (500·1,000·2,000헤르츠, 90일, 81.67에서); it
+    # never starts at an opening bracket, so `(2024. 1. 1. 시행)` and `(제103조 제3항)` reach the date/article runs
 )
-SKIP = re.compile(r"<(script|style)\b.*?</\1>|<span style=\"white-space:nowrap\">.*?</span>", re.DOTALL | re.IGNORECASE)
+SKIP = re.compile(
+    r"<(script|style|svg|title|textarea|select|pre|code)\b.*?</\1>|<span style=\"white-space:nowrap\">.*?</span>",
+    re.DOTALL | re.IGNORECASE,
+)
 TAG = re.compile(r"(<[^>]+>)")
 # A law link often ends in 제N조 with 제N항 just after </a>; the space between them sits outside any one text run, so
 # it is made a no-break space instead of wrapping across the tag.
