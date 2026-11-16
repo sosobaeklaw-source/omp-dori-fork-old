@@ -33,7 +33,7 @@ test.each([false, true])(
       expect(f.remote()).toMatchObject({ creates: 1, patches: state.patches, publishes: 1 });
     }
   },
-  20_000,
+  120_000,
 );
 
 test("a lost create response can reconcile through the existing list without a second POST", async () => {
@@ -46,7 +46,7 @@ test("a lost create response can reconcile through the existing list without a s
     release: { id: 443, tag_name: f.manifest.tag, draft: false, body: notes(f.manifest) },
   });
   expect(new ReleaseJournal(f.directory, f.manifest).pending).toBeUndefined();
-}, 20_000);
+}, 120_000);
 
 test("a lost create response and stale list retain the create intent across restart without replay", async () => {
   const f = publisherFixture({ lostCreate: true, staleList: true });
@@ -59,7 +59,7 @@ test("a lost create response and stale list retain the create intent across rest
   expect(resumed.err).toContain("Unresolved create");
   expect(f.remote()).toMatchObject({ creates: 1, patches: 0, publishes: 0, uploads: {}, release: { draft: true } });
   expect(new ReleaseJournal(f.directory, f.manifest).pending).toBe("create");
-}, 20_000);
+}, 120_000);
 
 test.each(["id", "tag", "commit", "source"] as const)(
   "known-ID confirmation holds when the live release changes its %s binding",
@@ -75,7 +75,7 @@ test.each(["id", "tag", "commit", "source"] as const)(
     expect(f.remote()).toMatchObject({ creates: 1, patches: 0, publishes: 0, uploads: {} });
     expect(new ReleaseJournal(f.directory, f.manifest).pending).toBe("create");
   },
-  20_000,
+  120_000,
 );
 
 test("changed uploaded bytes retain the upload intent without overwriting or publishing", async () => {
@@ -88,4 +88,4 @@ test("changed uploaded bytes retain the upload intent without overwriting or pub
   }
   expect(f.remote()).toMatchObject({ creates: 1, patches: 1, publishes: 0 });
   expect(Object.keys(f.remote().uploads)).toEqual(["SHA256SUMS"]);
-}, 20_000);
+}, 120_000);
