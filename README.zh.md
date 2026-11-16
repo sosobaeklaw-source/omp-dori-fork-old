@@ -39,6 +39,8 @@ flowchart TD
 
 macOS 和 hc 有 CI 覆盖，源码 `main` 中也保留了适配器，但不属于受支持的用户预览版实际运行环境。Slack 和 Telegram 仍是源码版功能。这一范围并不表示已开展独立的外部用户 beta 测试，也不表示所有提供商和使用界面都已完成验证。
 
+**当前源码 `main`：** 默认安装会从已验证的源码准备修改版 OMP 18.20.0 和绑定的 b215 ULW overlay；PATH 中的 stock OMP 既不是前提条件，也不能替代它。使用同版本官方 native addon，无需 Cargo。请使用生成的 `omp` wrapper；自定义工具链属于明确覆盖。[源码 bundle 契约](docs/releases.md#current-source-bundle)。下文不可变的 `v0.1.2` 发布资产及其历史要求保持不变。
+
 ## 入门
 
 ### 1. 检查前置工具和版本

@@ -39,6 +39,8 @@ is retained as that upstream project's agreement, not a new agreement for this f
 
 Consumers follow the [verified release installation and support guide](docs/releases.md) and use `dori update check|install|status|rollback`. Maintainers work in a separate ordinary checkout; the source-only installer is `scripts/install-source.sh`. To install the current checkout beside an existing Dori without pulling, use `DORI_INSTALL_MODE=side DORI_NO_PULL=1 DORI_SRC="$PWD" bash scripts/install-source.sh`. `OMP_DORI_HOME` selects the side config/state/wrapper home (default `~/.omp-dori`); `OMP_DORI_BIN_DIR` selects the `omp-dori` command destination. The wrappers and `omp-dori-mode` skill keep lanes in that home, with `HC_SESSION=omp-dori` by default (`OMP_DORI_HC_SESSION` overrides it). See the [source installation guide](docs/releases.md#source-checkouts-for-maintainers) for modes, backups and path overrides.
 
+The current source default prepares `native-omp.lock`/`native-omp.patch` and `omp-ulw.overlay.lock`/`omp-ulw.patch`, preserving the upstream ULW commit schema. Use the generated primary `~/.dori/bin/omp` or side `omp-dori omp`, not a stock command on PATH. The official addon package has its own frozen `native-addon/bun.lock`; no Cargo build is required. Read [the bound-source contract](docs/releases.md#current-source-bundle) for source identities, explicit overrides and older release rollback. Changes to these defaults require real isolated installation evidence in addition to source gates.
+
 Consumer control metadata and the managed source pointer protect the selected installation home in both modes, including aliases: `primary` source installation holds on consumer-managed `~/.dori`, and `side` requires a separate destination. An unmanaged source home retains the existing primary workflow; another unmanaged Dori prompts in a terminal or holds without one unless a mode is explicit. Do not develop inside a frozen installed release. Source fixture checks, real OMP wrapper/skill isolation and provider or messenger QA are separate evidence; this change claims no new live QA.
 
 Upstream porting and candidate/recovery operations use `dori upstream ... --config FILE`. That interface can use configured models and maintainer publication permissions; consumer release management uses neither. Build fixed public assets with `bun scripts/release.ts build --out DIST --prerelease`, then follow the [exact-commit review/QA/CI/tag publication procedure](docs/releases.md#building-and-publishing-releases). Source checks, real runtime/messenger evidence and independent external-user testing are distinct claims.
@@ -76,13 +78,16 @@ The Linux herdr E2E installer uses the pinned REST release asset and verifies it
 
 The unit suites need `bun` and `git` and use recorded stand-ins for `herdr` and `gh`. `test/e2e.test.ts` starts a real `herdr` server and is skipped when `herdr` is not on `PATH`.
 
-The extension's `with the real omp-ulw` group executes `ref/omp-ulw/index.ts` and skips when that file is absent. Its native guard requires both the isolated OMP 18.18.8 host and the exact explicit-override compatibility entry; a missing fixture fails rather than adding a skip. Prepare the host and both dependency revisions as the standard CI `check` and `test-macos` jobs do:
+The extension's `with the real omp-ulw` group executes the bound `ref/omp-ulw/index.ts` fixture and retains its existing absent-fixture skip. When it is present, the native guard requires the isolated OMP 18.20.0 host and exact explicit-override compatibility entry; a missing host fails. Prepare the same default overlay and separate legacy override as the Linux/macOS CI jobs:
+
+The extension declares OMP 18.20.0 as a host peer. Its embedded loader import is typed against the genuine
+published declarations in the native fixture; a raw source checkout without `dist/types` is not a substitute
+for that consumer typecheck. Runtime composition uses the selected host's canonical extension loader and
+native settings scope.
 
 ```sh
-pin="$(tr -d '[:space:]' < omp-ulw.lock)"
-git clone --quiet https://github.com/dbc-hbin/omp-ulw.git ref/omp-ulw
-git -C ref/omp-ulw -c advice.detachedHead=false checkout --quiet "$pin"
-test "$(git -C ref/omp-ulw rev-parse HEAD)" = "$pin"
+fixture_home="$(mktemp -d)"
+bun scripts/source-dependencies.ts ulw "$PWD" "$fixture_home" "$PWD/ref/omp-ulw"
 compat_pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
 compat="$(mktemp -d /tmp/omp-dori-compat-ulw.XXXXXX)"
 git clone --quiet --no-checkout --shared "$PWD/ref/omp-ulw" "$compat"
@@ -97,7 +102,9 @@ bun run test:extension
 
 Fixture preparation needs network access unless the exact packages are already available. Confirm that the real-fixture tests ran without being skipped: role gating and native Sol composition must execute. The guard invokes the real OMP `loadExtensionFromFactory` and `ExtensionRunner.emitBeforeAgentStart`, asserting on the combined result, not FakePI's per-handler returns. It covers an imported dependency and both standalone extension orders, retains one model preset, one bookkeeping block and downstream context, replaces the host role, leaves the base untouched and stays stable across repeated turns. A final declining handler must preserve the earlier winner; excluded roles, models and subagents leave the prompt they receive unchanged. A fail-on-access model registry and forbidden action callbacks prevent auth, provider and unrelated work. The private fixture package and its lock are test-only: root/consumer dependencies, model defaults and installer pins are unchanged. These checks do not establish live TUI, messenger or provider behavior; no performance gain is claimed.
 
-The compatibility checkout stays outside the repository (`RUNNER_TEMP` in CI) and does not select a production dependency. Its exact `cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d` factory runs alone on the genuine native host to establish the legacy prompt as opaque baseline data. Dori's explicit embedded import must preserve that baseline plus exactly one Sol lane-main bookkeeping block, with unchanged base and stable repeated turns. Dori, ordinary, non-Sol and subagent prompts are compared with the applicable legacy behavior; ordinary sessions retain the existing role gate. The guard assumes no current model-preset marker in that legacy revision and promises no standalone legacy mode. Configured external dependency paths, global model/auth settings and consumer pins remain untouched.
+The required-source regression also runs genuine SDK sessions through the shared print/RPC runtime initializer and a loopback HTTP provider. Missing managed overlays must send no request for Dori or lane roles, both through normal session prompting and direct agent dispatch; ordinary sessions must still reach the local provider. This catches native handler exceptions being reported and swallowed without cancelling a request. It uses only synthetic local credentials and blocks external catalog access.
+
+The compatibility checkout stays outside the repository (`RUNNER_TEMP` in CI) and selects no production dependency. Its exact `cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d` factory runs alone on the genuine 18.20.0 host to establish the legacy prompt as opaque baseline data. Dori's explicit embedded import must preserve that baseline plus one Sol lane-main bookkeeping block, with unchanged base and stable repeat turns. Dori, ordinary, non-Sol and subagent prompts retain the applicable legacy behavior and role gate; no current model-preset marker or standalone legacy mode is assumed. The current default instead uses b215 plus its bound overlay. This guard does not mutate global model/auth settings or external dependencies, and never authorizes a stock/version-only cache as a source-bundle substitute.
 
 ## A pull request
 

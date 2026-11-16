@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { need, one, USAGE, type Args } from "./cli-args.ts";
 import { renderPrompt } from "./cli-up.ts";
 import { shq } from "./delivery.ts";
-import { agentCommand, isOmpAgentCommand, prompt, type Deps } from "./harness.ts";
+import { agentCommand, harnessLaunchEnv, isOmpAgentCommand, prompt, type Deps } from "./harness.ts";
 import { Refusal } from "./refusal.ts";
 import { askCheckpoint, capture, type MigrateOpts, type Subject } from "./migrate-capture.ts";
 import { swapAgent, swapLoop } from "./migrate-swap.ts";
@@ -43,7 +43,7 @@ function laneSubject(d: Deps, key: string): Subject {
       role: "lane",
       container: "tab",
       cwd: lane.cwd,
-      env: { DORI_LANE: key, DORI_HOME: d.store.root },
+      env: { ...harnessLaunchEnv(d), DORI_LANE: key },
       ...(group === undefined ? {} : { group }),
     }),
     command: (brief) => `${agentCommand(d, "lane")} ${shq(kickoff(brief))}`,
@@ -67,7 +67,7 @@ function roleSubject(d: Deps, role: Role, from: SessionRef): Subject {
       role,
       container: "tab",
       cwd: process.cwd(),
-      env: role === "lead" ? {} : { DORI_HOME: d.store.root },
+      env: harnessLaunchEnv(d),
       ...(group === undefined ? {} : { group }),
     }),
     command: (brief) => `${agentCommand(d, "dori")} --append-system-prompt ${shq(brief)}`,

@@ -1,7 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { resolveConsumerOmpUlwPath } from "../../../../src/release/runtime.ts";
+import {
+  resolveConsumerOmpCommand,
+  resolveConsumerOmpUlwPath,
+  resolveProcessOmpCommand,
+  resolveProcessOmpUlwPath,
+} from "../../../../src/release/runtime.ts";
 import { outsideRealHomeUnderTest } from "../../../../src/test-home.ts";
 import type { RuntimeKind } from "../../../../src/runtime/types.ts";
 import type { SupervisionOptions } from "./supervision-observe.ts";
@@ -215,12 +220,17 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
         throw new ConfigError(`invalid supervision lanes.${key}.${name}: expected a nonnegative number or null`);
     }
   }
+  const command = resolveProcessOmpCommand(merged.agentCommand, path);
   return {
     ...merged,
+    agentCommand: command === merged.agentCommand ? resolveConsumerOmpCommand(command, { home }) : command,
     stateDir: outsideRealHomeUnderTest(expandHome(process.env["DORI_STATE_DIR"] ?? merged.stateDir, home)),
     defaultCwd: expandHome(merged.defaultCwd, home),
     sessionsDir: expandHome(merged.sessionsDir, home),
-    ompUlwPath: resolveConsumerOmpUlwPath(expandHome(merged.ompUlwPath, home), { home }),
+    ompUlwPath: resolveConsumerOmpUlwPath(resolveProcessOmpUlwPath(expandHome(merged.ompUlwPath, home), home), {
+      home,
+      useDefault: raw.ompUlwPath === undefined,
+    }),
     leadPane: process.env["DORI_LEAD_PANE"] ?? merged.leadPane,
   };
 };

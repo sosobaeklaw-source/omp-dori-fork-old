@@ -14,7 +14,7 @@ export function runtimeUsesToolchain(runtime: RuntimeIdentity, receipt: Toolchai
   return argv.some((arg) => {
     if (!isAbsolute(arg)) return false;
     try {
-      return realpathSync(arg) === receipt.ompEntry;
+      return realpathSync(arg) === (receipt.nativeSource?.entry ?? receipt.ompEntry);
     } catch {
       return false;
     }

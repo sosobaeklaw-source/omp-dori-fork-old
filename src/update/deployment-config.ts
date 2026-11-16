@@ -20,6 +20,11 @@ export const runtimeBinary = (config: DeploymentConfig): string =>
   (config.runtime === "hc" ? config.hc : config.herdr) ?? fail(config.runtime ?? "herdr");
 
 /** Keep lexical paths stable when liveSource changes from a directory to a release symlink. */
+export function parseDeploymentConfig(
+  value: { omp: string } & Record<string, unknown>,
+  configDir: string,
+): DeploymentConfig & { omp: string };
+export function parseDeploymentConfig(value: unknown, configDir: string): DeploymentConfig;
 export function parseDeploymentConfig(value: unknown, configDir: string): DeploymentConfig {
   if (!object(value)) return fail("config");
   const required = [
@@ -30,7 +35,6 @@ export function parseDeploymentConfig(value: unknown, configDir: string): Deploy
     "doriConfig",
     "stateDir",
     "bun",
-    "omp",
     "pane",
     "sessionId",
     "model",
@@ -41,6 +45,7 @@ export function parseDeploymentConfig(value: unknown, configDir: string): Deploy
   const allowed = new Set([
     ...required,
     "legacyOmp",
+    "omp",
     "stopTimeoutMs",
     "nativeStopMode",
     "monitorBootstrapFile",
@@ -90,7 +95,7 @@ export function parseDeploymentConfig(value: unknown, configDir: string): Deploy
     doriConfig: path("doriConfig"),
     stateDir: path("stateDir"),
     bun: path("bun"),
-    omp: path("omp"),
+    ...(value["omp"] === undefined ? {} : { omp: path("omp") }),
     ...(runtime === "hc" ? { runtime } : {}),
     ...(runtime === "herdr" ? { herdr: path("herdr") } : { hc: path("hc") }),
     pane: text(value["pane"], "pane"),
@@ -141,7 +146,7 @@ export function parseDeploymentConfig(value: unknown, configDir: string): Deploy
     config.restartLock,
     config.doriConfig,
     config.bun,
-    config.omp,
+    ...(config.omp ? [config.omp] : []),
     runtimeBinary(config),
     ...(config.legacyOmp ? [config.legacyOmp] : []),
     resolve(config.home, ".bun/bin/bun"),

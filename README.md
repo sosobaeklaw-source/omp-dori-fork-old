@@ -40,6 +40,8 @@ flowchart TD
 
 macOS and hc have CI coverage and adapters on source `main`; they are outside the supported live consumer preview. Slack and Telegram remain source features. This scope does not imply an independent external-user beta or that every provider and surface has been tested.
 
+**Current source `main`:** source installation and newly built releases provision patched OMP 18.20.0 plus the bound b215 ULW overlay by default. Stock OMP on PATH is not a prerequisite or a substitute. Both patches and their upstream/result identities are verified, with an official version-matched native addon and no Cargo requirement. Use the generated `omp` wrapper; explicit custom toolchains remain advanced overrides. See [the source-bundle contract](docs/releases.md#current-source-bundle). The published `v0.1.2` instructions below retain their older, immutable contract; this source change does not overwrite those assets or claim new installation QA.
+
 ## Getting started
 
 ### 1. Check prerequisites

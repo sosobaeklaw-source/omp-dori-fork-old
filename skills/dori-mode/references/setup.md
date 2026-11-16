@@ -8,6 +8,8 @@ The Dori runs its sessions on one of two runtimes through the shared runtime abs
 
 For the first public preview, the live consumer support scope is Linux x64/herdr/Discord, with tested Bun 1.4.4 and native OMP 18.18.8. hc and the other messengers remain advanced source features with separately scoped coverage. Install from the [verified exact release](../../../docs/releases.md) and use your own provider/bot credentials. Installation starts none of the sessions or monitors below.
 
+Current source `main` and newly built releases instead prepare the reviewed OMP 18.20.0 source bundle and b215 ULW overlay. They require no preinstalled stock OMP or Cargo. Start through the generated `omp` wrapper and read [the source-bundle contract](../../../docs/releases.md#current-source-bundle); the published `v0.1.2` support/installation facts remain historical, not overwritten assets or new QA claims.
+
 herdr:
 
 ```sh
@@ -80,7 +82,7 @@ DORI_INSTALL_MODE=side DORI_NO_PULL=1 DORI_SRC="$PWD" bash scripts/install-sourc
 
 This source-only command uses `OMP_DORI_HOME` (default `~/.omp-dori`) for config, state and wrappers, with only `omp-dori` linked in `OMP_DORI_BIN_DIR` (default `${BUN_INSTALL:-$HOME/.bun}/bin`). It leaves the primary Dori's config, links and command alone. The selected side home and its paths must be separate from the primary home; consumer-managed homes and their aliases are protected in either mode.
 
-Source omp-ulw follows `OMP_ULW_REF` (default latest `main`, with an implicit `lock` fallback on OMP below 18.19.0); `lock` selects `omp-ulw.lock`, and explicit branches/tags/commits are honored. `OMP_ULW_REPO` selects a fork/mirror. `OMP_ULW_SRC` or a configured custom `ompUlwPath` reuses an existing checkout. Source config then uses `ompUlwPath: ""` so OMP loads the selected extension once. Primary mode reuses a standalone checkout identified by `index.ts` and `presets.ts`, or links its own globally; a later standalone removes only its earlier owned default link. Primary source omp-ulw therefore serves plain OMP sessions too. Consumer installs and the retained container keep their verified lock pins and nonempty import behavior.
+Source omp-ulw defaults to the exact `omp-ulw.lock` base plus `omp-ulw.overlay.lock`/`omp-ulw.patch`, with guarded source wrappers and frozen official native-addon reuse. `OMP_ULW_REF=main` or an explicit branch/tag/commit selects a separate, unpatched custom checkout; `OMP_ULW_REPO` supplies its repository or a mirror for the locked base. `OMP_ULW_SRC`, a custom `ompUlwPath` or an existing standalone primary extension remain explicit external choices, not proof of the bundled default. Source config uses `ompUlwPath: ""` so the selected standalone dependency loads once. Both modes set default lane commands to their own wrapper; absolute custom commands remain untouched.
 
 For unmanaged source homes, `DORI_INSTALL_MODE=primary` installs into `~/.dori`; taking over another Dori saves its config and link targets first, and a foreign default source checkout stops installation before changes. Without a mode, another unmanaged Dori prompts in a terminal (default side) or stops without one; an existing side marker keeps side mode on reinstall. Consumer-managed `~/.dori` always holds primary source installation, even with an omp-dori extension link. Use its `dori update check|install|status|rollback`, or keep a separate side source install.
 
