@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { lockDir } from "../src/lock-owner.ts";
-import { readRest, type SeatEnv, seatsPath, sendOnSeat } from "../src/writer-seat.ts";
+import { answeredPath, readRest, type SeatEnv, seatsPath, sendOnSeat } from "../src/writer-seat.ts";
 
 const NOW = Date.parse("2026-11-16T05:00:00Z");
 
@@ -34,7 +34,7 @@ function setup() {
       return code;
     },
   });
-  const opts = { home, lane: "t", model: "argon" as const, prompt: "p", out: "o.txt", meta, timeout: 5 };
+  const opts = { home, lane: "t", model: "argon" as const, prompt: "p", out: join(home, "o.txt"), meta, timeout: 5 };
   return { home, meta, calls, env, opts };
 }
 
@@ -120,5 +120,24 @@ describe("writer seat", () => {
       opts,
     );
     expect([code, calls, readRest(home, "u0")]).toEqual([3, ["u0"], undefined]);
+  });
+
+  test("an answer whose label flipped after sending is the result, with the label that answered written beside it", async () => {
+    const { opts, env } = setup();
+    const flipped = { requestedModel: "Argon 높음", answeredModelLabel: "Flash-Lite", modelMismatch: true };
+    const { code, answered } = await sendOnSeat(
+      env(() => [0, flipped]),
+      opts,
+    );
+    expect([code, answered]).toEqual([0, { requested: "Argon 높음", label: "Flash-Lite", mismatch: true }]);
+    expect(readFileSync(answeredPath(opts.out), "utf8")).toBe(
+      "requested=Argon 높음\tanswered=Flash-Lite\tmismatch=true\tseat=u0\n",
+    );
+    // A failed run leaves no stale .answered from the earlier result at the same --out.
+    await sendOnSeat(
+      env(() => [3, flipped]),
+      opts,
+    );
+    expect(existsSync(answeredPath(opts.out))).toBe(false);
   });
 });

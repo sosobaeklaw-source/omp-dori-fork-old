@@ -107,11 +107,36 @@ function stampMeta(metaPath: string, seat: Seat, pickedAt: number, waitedMs: num
   writeFileSync(metaPath, `${JSON.stringify(meta, null, 1)}\n`);
 }
 
+/** The model the runner saw answer: its screen label after the answer, and whether that differs from the request. */
+export type Answered = { requested: string; label: string; mismatch: boolean };
+
 /**
- * Sends the request on the first free, unrested seat, waiting only while none is. Returns the runner's exit code and
- * the seat it ran on. A presend limit (exit 16) rests that seat and moves the same request to the next one.
+ * Reads the runner's requestedModel/answeredModelLabel/modelMismatch. A label that flips after the answer (the shown
+ * mode only, not the model that was sent) does not fail the run; the caller records it next to the result instead.
  */
-export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: number; seat: Seat }> {
+export function answeredOf(metaPath: string): Answered | undefined {
+  if (!existsSync(metaPath)) return undefined;
+  const meta = JSON.parse(readFileSync(metaPath, "utf8")) as {
+    requestedModel?: string;
+    answeredModelLabel?: string | null;
+    modelMismatch?: boolean;
+  };
+  if (!meta.requestedModel || !meta.answeredModelLabel) return undefined;
+  return { requested: meta.requestedModel, label: meta.answeredModelLabel, mismatch: meta.modelMismatch === true };
+}
+
+/** `<out without .txt>.answered`: one line naming the model label that actually answered the written result. */
+export const answeredPath = (out: string): string => `${out.replace(/\.txt$/, "")}.answered`;
+
+/**
+ * Sends the request on the first free, unrested seat, waiting only while none is. Returns the runner's exit code, the
+ * seat it ran on and, for a written result, the label that answered it (also written to `answeredPath(out)`). A
+ * presend limit (exit 16) rests that seat and moves the same request to the next one.
+ */
+export async function sendOnSeat(
+  env: SeatEnv,
+  o: SendOpts,
+): Promise<{ code: number; seat: Seat; answered?: Answered }> {
   const seats = readSeats(o.home);
   const start = env.now();
   const tried: string[] = [];
@@ -149,7 +174,14 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
       const rest = noteLimit(o.home, seat.account, o.meta, env.now());
       if (rest) env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);
       if (code === LIMIT_PRESEND && rest) break;
-      return { code, seat };
+      // Written result only: say which label answered it, beside the answer, so a flipped label is visible later.
+      const answered = code === 0 ? answeredOf(o.meta) : undefined;
+      rmSync(answeredPath(o.out), { force: true });
+      if (answered) {
+        const line = `requested=${answered.requested}\tanswered=${answered.label}\tmismatch=${answered.mismatch}\tseat=${seat.account}\n`;
+        writeFileSync(answeredPath(o.out), line);
+      }
+      return answered ? { code, seat, answered } : { code, seat };
     }
     const next = Math.min(...seats.map((s) => restingUntil(o.home, s.account, env.now()) ?? env.now() + BUSY_POLL_MS));
     const why = seats
