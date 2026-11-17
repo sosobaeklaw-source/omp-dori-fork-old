@@ -1,42 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homeStateDir } from "../src/lane-model.ts";
 import { leadPulse } from "../src/lead-pulse.ts";
-import { miniQuiet } from "../src/mini-quiet.ts";
-import { href, World } from "./fake.ts";
-
-const T0 = Date.UTC(2026, 10, 17, 12, 0, 0);
-const MIN = 60_000;
-const ROOM = "/fake/ompdori-send.sh";
-
-function setup() {
-  const w = new World();
-  w.clock = T0;
-  w.addPane("w1:p1", "idle");
-  const d = w.deps();
-  d.store.setRole("lead", href("w1:p1"));
-  const state = homeStateDir(d.store.root);
-  mkdirSync(join(state, "macmini"), { recursive: true });
-  const env: Record<string, string | undefined> = { DORI_ROOM_SEND: ROOM };
-  const notes: string[] = [];
-  const mini = (secondsOld: number) =>
-    writeFileSync(
-      join(state, "macmini", "lead-alive.json"),
-      JSON.stringify({ at: w.clock - secondsOld * 1000, alive: true }),
-    );
-  const fetchedAt = (at: number | null) => {
-    env["DORI_MINI_FETCHED_AT"] = at === null ? undefined : String(at);
-  };
-  const check = (at: number | null = w.clock) => {
-    fetchedAt(at);
-    return miniQuiet(d, env, state, (line) => notes.push(line));
-  };
-  const sent = () => w.calls.filter((c) => c.cmd === ROOM).map((c) => c.argv);
-  const marker = () =>
-    JSON.parse(readFileSync(join(state, "macmini-pulse.json"), "utf8")) as { seen: string; fetched: boolean };
-  return { w, d, state, env, notes, mini, check, fetchedAt, sent, marker };
-}
+import { MIN, setup } from "./mini-quiet-setup.ts";
 
 describe("the macmini's pulse, seen from the MacBook", () => {
   test("a pulse renewed within 15 minutes sends nothing", async () => {
@@ -49,6 +15,7 @@ describe("the macmini's pulse, seen from the MacBook", () => {
 
   test("a pulse older than 15 minutes tells the room once per incident, and again only after it was fresh", async () => {
     const s = setup();
+    s.seed("fresh");
     s.mini(15 * 60 + 1);
     await s.check();
     await s.check();
@@ -82,12 +49,13 @@ describe("the macmini's pulse, seen from the MacBook", () => {
 
   test("a line that could not be sent is not counted: the next check tries again", async () => {
     const s = setup();
+    s.seed("fresh");
     s.mini(20 * 60);
     s.w.reviewer = () => ({ code: 1, stdout: "" });
     await s.check();
     await s.check();
     expect(s.sent()).toHaveLength(2);
-    expect(() => s.marker()).toThrow();
+    expect(s.marker().seen).toBe("fresh");
     s.w.reviewer = () => ({ code: 0, stdout: "SENT 1" });
     await s.check();
     await s.check();
@@ -98,6 +66,7 @@ describe("the macmini's pulse, seen from the MacBook", () => {
 
   test("the pulse runs the check first: a stale macmini tells the room and a failing sender does not stop the pulse", async () => {
     const s = setup();
+    s.seed("fresh");
     s.mini(30 * 60);
     s.w.reviewer = () => {
       throw new Error("spawn ENOENT");
@@ -124,6 +93,7 @@ describe("the macmini's pulse, seen from the MacBook", () => {
 
   test("a fetch that failed judges nothing: an old copy on disk is not the macmini going quiet, and it is logged once", async () => {
     const s = setup();
+    s.seed("fresh");
     s.mini(5 * 60 * 60);
     await s.check(null);
     await s.check(null);
@@ -138,6 +108,7 @@ describe("the macmini's pulse, seen from the MacBook", () => {
 
   test("a failed fetch in the middle of an incident neither repeats the line nor forgets that it was sent", async () => {
     const s = setup();
+    s.seed("fresh");
     s.mini(20 * 60);
     await s.check();
     await s.check(null);
