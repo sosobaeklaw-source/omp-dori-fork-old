@@ -51,11 +51,13 @@ export class Discord {
     return (res.body ? JSON.parse(res.body) : {}) as T;
   }
 
-  async send(channelId: string, content: string): Promise<string> {
+  /** `replyTo` posts the message as a reply to that message, which must be in the same channel. */
+  async send(channelId: string, content: string, replyTo?: string): Promise<string> {
     return (
       await this.call<{ id: string }>("POST", `/channels/${channelId}/messages`, {
         content: guardText(content),
         allowed_mentions: { parse: [] },
+        ...(replyTo === undefined ? {} : { message_reference: { message_id: replyTo, fail_if_not_exists: true } }),
       })
     ).id;
   }

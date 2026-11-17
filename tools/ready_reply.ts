@@ -103,7 +103,7 @@ async function main(argv: readonly string[]): Promise<number> {
   // The reply is up: from here a failure is noted, never reported as a failed reply.
   note(stateDir, `REPLIED ${key} ${owner.id} ${id}`);
   try {
-    recordSent(stateDir, id, key, "all");
+    recordSent(stateDir, id, key, "all", { reply: owner.id, closes: owner.id });
   } catch (error) {
     note(
       stateDir,

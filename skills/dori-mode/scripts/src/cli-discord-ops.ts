@@ -66,6 +66,10 @@ export const sendDiscord: Command = async ({ need, opt, config }) => {
   const text = need("text");
   const edit = opt("edit");
   const kind = postKind(opt("kind"));
+  const rawReply = opt("reply");
+  const rawCloses = opt("closes");
+  const reply = rawReply === undefined ? undefined : discordInboundEnv("--reply", rawReply);
+  const closes = rawCloses === undefined ? undefined : discordInboundEnv("--closes", rawCloses);
   const dc = client();
   let target: string;
   if (thread !== undefined) target = discordInboundEnv("--thread", thread);
@@ -76,11 +80,11 @@ export const sendDiscord: Command = async ({ need, opt, config }) => {
     target = channel.id;
   }
   if (edit) return await dc.edit(target, edit, text);
-  const id = await dc.send(target, text);
+  const id = await dc.send(target, text, reply);
   // The post is out: print its id before the log line so a log fault never hides it and invites a duplicate send.
   console.log(`SENT ${id}`);
   try {
-    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind);
+    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind, { reply, closes });
   } catch (e) {
     console.log(`WARN sent-log ${id}: ${(e as Error).message}`);
   }
