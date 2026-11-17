@@ -5,8 +5,8 @@ The theme sets `word-break: keep-all` with `overflow-wrap: anywhere`, so Korean 
 `(` or the space inside it; a reader then sees half a number at the end of one line. Each such run is wrapped in
 `<span style="white-space:nowrap">`. Only text between tags is touched (never attributes, text inside an element
 where a span would not render or would show as text — <script>, <style>, <svg>, <title>, <textarea>, <select>,
-<pre>, <code> — or text already inside such a span), and a run longer than MAX characters is left alone, so nothing
-new can push past a phone's 350px column.
+<pre>, <code> — or text already inside such a span), and a run wider than MAX_WIDTH is left alone, so nothing new can
+push past a phone's 350px column.
 
 Usage: python3 tools/wp_publish/nowrap.py body.html > body.nowrap.html
 """
@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import re
 import sys
+import unicodedata
 
 OPEN = '<span style="white-space:nowrap">'
-MAX = 28
+# Width in half-em cells: Hangul and other wide characters count 2, the rest 1. 36 cells is about 18em, roughly 290px
+# at a 16px body, so a wrapped run fits a 350px column with room to spare.
+MAX_WIDTH = 36
 
 # One alternative per kind of run; the first that matches at a position wins.
 RUN = re.compile(
@@ -37,10 +40,14 @@ TAG = re.compile(r"(<[^>]+>)")
 LINKED_ARTICLE = re.compile(r"(제\d+조(?:의\d+)?</a>) (제\d+항)")
 
 
+def _width(run: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in run)
+
+
 def _wrap_text(text: str) -> str:
     def one(m: re.Match[str]) -> str:
         run = m.group(0)
-        return run if len(run) > MAX or not re.search(r"\d", run) else f"{OPEN}{run}</span>"
+        return run if _width(run) > MAX_WIDTH or not re.search(r"\d", run) else f"{OPEN}{run}</span>"
 
     return RUN.sub(one, text)
 

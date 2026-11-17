@@ -44,6 +44,10 @@ class NowrapTest(unittest.TestCase):
         )
         self.assertEqual(nowrap(body), body)
 
+    def test_a_run_wider_than_a_phone_column_is_left_breakable(self) -> None:
+        long = "근로복지공단서울지역본부산재보상2부(2024년)"  # 27 characters, about 450px of Hangul at 16px
+        self.assertEqual(runs(nowrap(f"<p>{long} 담당, 공단(2024년) 담당</p>")), ["2024년)"])
+
 
 if __name__ == "__main__":
     unittest.main()
