@@ -5,13 +5,15 @@
  * others' words. Only concept objects are exported (law and rulings, diseases, judging factors, proof documents,
  * keywords, body parts, occupations): never cases, people, workplaces, accounts or documents, whose names can be
  * clients'. Numeric thresholds (숫자기준: 3년, 85dB) are left out too: "3년" stands in every 공상 or 시효 article and
- * would pull the 난청 guidelines into it.
+ * would pull the 난청 guidelines into it. A concept is exported only with at least one fact of origin
+ * `public_reading.jsonl` from an allowed study folder and without a review flag — what tools/onto_concepts.ts keeps.
  *
  * `<home>/ontology-concepts.json` holds `{"made": ISO, "concepts": [{"type", "name", "terms": [...]}]}`; it is made by
- * tools/onto_concepts.ts from four read-only queries and only read here.
+ * tools/onto_concepts.ts from six read-only queries and only read here.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const CONCEPT_TYPES = ["법령판례", "상병", "판단요소", "입증자료유형", "키워드", "신체부위", "직종"] as const;
 
@@ -24,12 +26,42 @@ export interface Concept {
 
 export const conceptsPath = (home: string): string => join(home, "ontology-concepts.json");
 
+/**
+ * sanjai-agent's `is_allowed_source` rule (scripts/ontology/refresh_public.py): a source under the
+ * `sobaegi-lead/results` tree is public only from an allowed top folder (`allow`, read at run time); a source
+ * outside the results tree is refused. The path is normalised first ("..", "." and doubled slashes), and only the
+ * one results tree counts (`root`, ~/sobaegi-lead/results): a relative path, another tree that merely holds a
+ * `sobaegi-lead/results` segment, or a path that climbs out of an allowed folder is refused.
+ */
+export function allowedSource(
+  source: string,
+  allow: readonly string[],
+  root: string = join(homedir(), "sobaegi-lead", "results"),
+): boolean {
+  if (!isAbsolute(source)) return false;
+  const rel = relative(resolve(root), resolve(source));
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+  return allow.includes(rel.split(sep)[0]!);
+}
+
+/** Load files whose records come from the office's guideline documents (공단 지침·업무처리기준), not client cases. */
+export const GUIDELINE_ORIGINS = ["noise_guideline_records.jsonl", "burden_records.jsonl"] as const;
+
+/** Whether a source is a guideline document: an absolute path under sanjai-agent's corpus/jichim or corpus/knowledge. */
+export function guidelineSource(source: string): boolean {
+  if (!isAbsolute(source)) return false;
+  return /\/sanjai-agent\/corpus\/(jichim|knowledge)\//.test(resolve(source));
+}
+
 /** The exported concepts, or undefined when the file is missing or not the shape above. */
 export function loadConcepts(home: string): { made: string; concepts: Concept[] } | undefined {
   const path = conceptsPath(home);
   if (!existsSync(path)) return undefined;
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as { made?: unknown; concepts?: unknown };
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
+      made?: unknown;
+      concepts?: unknown;
+    };
     if (typeof raw.made !== "string" || !Array.isArray(raw.concepts)) return undefined;
     const concepts = raw.concepts.filter(
       (c): c is Concept =>

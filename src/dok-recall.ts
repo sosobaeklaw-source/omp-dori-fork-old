@@ -16,6 +16,7 @@ import { join, relative, resolve } from "node:path";
 import { type Concept, expandQuery } from "./onto-concepts.ts";
 import { caseReason, type NameHashes } from "./ready-reply.ts";
 import { type Bag, bestPassage, type Note, type Passage, terms } from "./dok-passage.ts";
+import { readStudyDirs } from "./study-dirs.ts";
 
 // Copies, drafts and backups of a note, the requests, prompts and run logs that made it, and the working folders
 // its drafts sit in: the index skips most of them too, and they crowd out the note itself. A folder or file name
@@ -38,9 +39,11 @@ const sizeOf = (bag: Bag): number => [...bag.values()].reduce((a, b) => a + b, 0
 /**
  * Every `*독후감*.md` under `root`, one per content, copies and backups left out. Of files with the same text (md5)
  * the one with the shortest path below `root` stays, the alphabetically first on a tie, whatever order the disk lists
- * them in. Notes come back in path order.
+ * them in. Notes come back in path order. With `allow`, only those top folders of `root` are read at all — the
+ * sanjai-agent allowlist `readStudyDirs` returns, never other folders or loose files under the root.
  */
-export function loadNotes(root: string): Note[] {
+export function loadNotes(root: string, allow?: readonly string[]): Note[] {
+  const only = allow === undefined ? undefined : new Set(allow);
   const kept = new Map<string, Note>();
   const below = (path: string): string => relative(root, path);
   const walk = (dir: string): void => {
@@ -48,6 +51,8 @@ export function loadNotes(root: string): Note[] {
       const name = e.name.normalize("NFC");
       const path = join(dir, e.name);
       if (name.startsWith(".") || name === "node_modules" || COPY.test(name) || GATHERED.test(below(path))) continue;
+      // An allowlist means its top folders are the only thing read under the root: no other folder, no loose file.
+      if (only !== undefined && dir === root && !(e.isDirectory() && only.has(name))) continue;
       if (e.isDirectory()) walk(path);
       else if (name.endsWith(".md") && name.includes("독후감") && !name.includes("색인")) {
         const text = readFileSync(path, "utf8");
@@ -196,8 +201,9 @@ export const RECALL = { limit: 6, maxChars: 6000, floor: 0.5, minHit: 2 } as con
 
 /**
  * The passages a writing request needs for `text` (its task and sheet): the query widened by the ontology's
- * concepts, ranked over the notes under `root` with the citations in `home`, kept within the budget, client names
- * and case paths left out (`recall`).
+ * concepts, ranked over the notes under `root`'s allowed top folders (`allow`, else the run-time sanjai-agent
+ * allowlist; with no readable allowlist nothing is recalled), kept within the budget, client names and case paths
+ * left out (`recall`).
  */
 export function recallFor(
   home: string,
@@ -210,10 +216,11 @@ export function recallFor(
     maxChars: number;
     floor?: number;
     minHit?: number;
+    allow?: readonly string[];
   },
 ): Recalled {
   const { query, used } = expandQuery(text, opts.concepts);
-  const notes = loadNotes(opts.root);
+  const notes = loadNotes(opts.root, opts.allow ?? readStudyDirs() ?? []);
   if (notes.length === 0) return { specs: [], onto: used };
   const { kept } = recall(query, rank(query, notes, citations(home)), opts.limit, opts.maxChars, names, opts);
   return { specs: kept.map(label), onto: used };

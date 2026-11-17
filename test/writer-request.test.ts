@@ -106,6 +106,7 @@ describe("writer request", () => {
             DORI_NAME_HASHES: f.hashes,
             DORI_NAME_HASH_SALT_FILE: f.saltFile,
             DORI_NOTES_ROOT: root,
+            DORI_STUDY_DIRS: "seo-1111",
             ...env,
           },
         },
