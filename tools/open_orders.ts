@@ -7,8 +7,11 @@
  *   open_orders close <id>... --why '<one line>' --closed FILE      (the only writer: `<time>\t<id>\t<why>`)
  * An order is an `INBOUND discord <channel> <id> from=owner` line, or a non-bot row of a read-only discord-inbox.sqlite
  * `incoming` table (by the logs' `INBOUND_READY owner=` ids and `--owner`, when any); one id on both Macs is one order.
- * A lane belongs to the orders whose ids are in its record or in `briefs/<key>.md` beside its lanes folder. States,
- * from records only, never from a reply's words: 닫힘 (a `closes=<id>` in a sent or reply log, a `REPLIED <lane> <id>
+ * A lane belongs to an order only through a mark made on purpose: an `orders: ["<id>", …]` array in its record, or a
+ * header, the first non-empty line of `briefs/<key>.md` beside its lanes folder, `[보호] 원문(<id>)` (several ids
+ * separated by commas; a `:` and text may follow). An id quoted anywhere else, in the record or the brief, attaches
+ * nothing, and a `lost` lane (superseded or not) attaches nothing either. States, from records only, never from a
+ * reply's words: 닫힘 (a `closes=<id>` in a sent or reply log, a `REPLIED <lane> <id>
  * <reply>` READY reply, the closed log, or 닫힘 in the other Mac's --orders-json), 일하는중 (a lane not ready or done;
  * quiet minutes and Mac shown), 결과미전달 (every lane ready or done), 약속만 (no lane, a `reply=`/`to=` answer
  * without `closes=`), 답없음. A missing or unreadable input is skipped and named on one `# 못 읽음:` line.
@@ -20,6 +23,7 @@ import { parseArgs } from "node:util";
 
 type State = "답없음" | "약속만" | "일하는중" | "결과미전달" | "닫힘";
 type Lane = { key: string; mac: string; status: string; lastActivityAt: number };
+const BRIEF_MARK = /^\[보호\]\s*원문\(([^)]*)\)/;
 export type Order = {
   id: string;
   at: number;
@@ -60,6 +64,14 @@ const sinceMs = (raw: string): number => {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 };
 
+/** The order ids a lane names on purpose: `orders` in its record, and the header of its brief. */
+function marked(record: Record<string, unknown>, brief: string): string[] {
+  const listed = Array.isArray(record["orders"]) ? record["orders"].map(String) : [];
+  const header = brief.split("\n").find((line) => line.trim() !== "");
+  const inHeader = BRIEF_MARK.exec(header?.trim() ?? "")?.[1]?.split(",") ?? [];
+  return [...new Set([...listed, ...inHeader].map((id) => id.trim()).filter((id) => ID.test(id)))];
+}
+
 type Row = { id: unknown; author_id: unknown; body: unknown };
 type Values = Record<string, string | boolean | string[] | undefined>;
 const list = (v: Values, name: string): string[] => (v[name] as string[] | undefined) ?? [];
@@ -68,7 +80,7 @@ export function computeOrders(v: Values, now: number): { orders: Order[]; notes:
   const notes: string[] = [];
   const orders = new Map<string, Omit<Order, "state">>();
   const lanes: Lane[] = [];
-  const laneText = new Map<Lane, string>();
+  const laneOrders = new Map<Lane, string[]>();
   const closedBy = new Map<string, string>();
   const answered = new Set<string>();
   const owners = new Set(list(v, "owner"));
@@ -114,7 +126,7 @@ export function computeOrders(v: Values, now: number): { orders: Order[]; notes:
         add(o.id, mac, o.body);
         for (const lane of o.lanes) {
           lanes.push(lane);
-          laneText.set(lane, o.id);
+          laneOrders.set(lane, [o.id]);
         }
         if (o.state === "닫힘") closedBy.set(o.id, `${mac} 목록: ${o.closedBy ?? "닫힘"}`);
       }
@@ -142,21 +154,20 @@ export function computeOrders(v: Values, now: number): { orders: Order[]; notes:
     guarded(dir, notes, () => {
       for (const name of readdirSync(dir).filter((n) => n.endsWith(".json"))) {
         try {
-          const raw = readFileSync(join(dir, name), "utf8");
-          const r = JSON.parse(raw) as Record<string, unknown>;
+          const r = JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, unknown>;
           if (typeof r["key"] !== "string" || typeof r["status"] !== "string") continue;
           const brief = join(dirname(dir), "briefs", `${r["key"]}.md`);
           const at = Number(r["lastActivityAt"] ?? r["createdAt"] ?? 0);
           const lane: Lane = { key: r["key"], mac, status: r["status"], lastActivityAt: at };
           lanes.push(lane);
-          laneText.set(lane, raw + (existsSync(brief) ? readFileSync(brief, "utf8") : ""));
+          laneOrders.set(lane, marked(r, existsSync(brief) ? readFileSync(brief, "utf8") : ""));
         } catch (e) {
           notes.push(`${join(dir, name)} ${message(e)}`);
         }
       }
     });
   for (const lane of lanes)
-    for (const id of new Set(laneText.get(lane)?.match(/\d{16,22}/g) ?? [])) orders.get(id)?.lanes.push(lane);
+    if (lane.status !== "lost") for (const id of laneOrders.get(lane) ?? []) orders.get(id)?.lanes.push(lane);
   const cutoff = now - sinceMs((v["since"] as string | undefined) ?? "3d");
   const result = [...orders.values()]
     .filter((o) => o.at >= cutoff)

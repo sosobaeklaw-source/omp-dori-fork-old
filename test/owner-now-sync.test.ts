@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { type Order, runOrders } from "../tools/open_orders.ts";
 
 const SCRIPT = join(import.meta.dir, "..", "examples", "sobaek", "owner-now-sync.sh");
 const rsync = Bun.which("rsync");
 const ORDER = "1572108521254944830";
+const OTHER = "1572108521254944831";
 
 /** The sync against a MacBook home and a "macmini" home, both temporary; ssh is a stand-in that runs the remote command here. */
 function rig(dori: string) {
@@ -42,7 +44,15 @@ function rig(dori: string) {
     }),
   );
   put(join(h, "lanes", "broken.json"), "{");
-  put(join(h, "briefs", "lane-a.md"), `회장님 원문(${ORDER}): SECRET-BRIEF-TEXT\n`);
+  put(join(h, "briefs", "lane-a.md"), `\n[보호] 원문(${ORDER}, ${OTHER}):\nSECRET-BRIEF-TEXT ${ORDER}\n`);
+  put(
+    join(h, "lanes", "quoter.json"),
+    JSON.stringify({ key: "quoter", status: "ready", orders: [ORDER, "x"], note: OTHER }),
+  );
+  put(join(h, "briefs", "quoter.md"), `# 제목\n[보호] 원문(${OTHER})\n회장님 원문(${ORDER})\n`);
+  put(join(h, "lanes", "array.json"), "[1, 2]");
+  put(join(h, "lanes", "null.json"), "null");
+  put(join(h, "lanes", "number-key.json"), JSON.stringify({ key: 5, status: "working" }));
   const mini = (name: string, text: string) => put(join(remote, "sobaegi-lead", "state", name), text);
   const run = (env: Record<string, string> = {}) => {
     const path = [bin, dirname(rsync ?? "/usr/bin/rsync"), "/usr/bin", "/bin"].join(":");
@@ -88,13 +98,15 @@ describe.skipIf(!rsync)("owner-now-sync.sh: records between the Macs", () => {
       "orders-closed.log",
       "to-macmini.log",
     ]);
-    expect(s.ls(join(s.macbookDir, "lanes"))).toEqual(["lane-a.json"]);
-    expect(JSON.parse(readFileSync(join(s.macbookDir, "lanes", "lane-a.json"), "utf8"))).toEqual({
+    expect(s.ls(join(s.macbookDir, "lanes"))).toEqual(["lane-a.json", "quoter.json"]);
+    const summary = (name: string) => JSON.parse(readFileSync(join(s.macbookDir, "lanes", name), "utf8"));
+    expect(summary("lane-a.json")).toEqual({
       key: "lane-a",
       status: "working",
       lastActivityAt: 1760000000000,
-      orders: [ORDER],
+      orders: [ORDER, OTHER],
     });
+    expect(summary("quoter.json")).toEqual({ key: "quoter", status: "ready", lastActivityAt: 0, orders: [ORDER] });
     const sentText = Bun.spawnSync(["grep", "-r", "SECRET", s.macbookDir]);
     expect(sentText.exitCode).toBe(1);
     expect(s.ls(s.fromMini)).toEqual(["lead-alive.json", "open-orders.json", "reply.log"]);
@@ -130,7 +142,7 @@ describe.skipIf(!rsync)("owner-now-sync.sh: records between the Macs", () => {
     expect(Date.now() - started).toBeLessThan(15_000);
     expect(slow.out).toContain("lead-pulse FAILED");
     expect(hanging.ls(hanging.macbookDir)).toContain("inbound.log");
-    expect(hanging.ls(join(hanging.macbookDir, "lanes"))).toEqual(["lane-a.json"]);
+    expect(hanging.ls(join(hanging.macbookDir, "lanes"))).toEqual(["lane-a.json", "quoter.json"]);
   });
 
   test("a lane that is gone from this Mac is gone from the macmini's summary; nothing else there is deleted", () => {
@@ -139,7 +151,51 @@ describe.skipIf(!rsync)("owner-now-sync.sh: records between the Macs", () => {
     writeFileSync(join(s.macbookDir, "extra.log"), "kept\n");
     writeFileSync(join(s.macbookDir, "lanes", "old-lane.json"), "{}");
     s.run();
-    expect(s.ls(join(s.macbookDir, "lanes"))).toEqual(["lane-a.json"]);
+    expect(s.ls(join(s.macbookDir, "lanes"))).toEqual(["lane-a.json", "quoter.json"]);
     expect(s.ls(s.macbookDir)).toContain("extra.log");
+  });
+
+  test("a lane file that is not an object is skipped and named, and the other lanes are still summarised", () => {
+    const s = rig(PULSE);
+    const r = s.run();
+    for (const bad of ["array.json", "null.json", "number-key.json", "broken.json"])
+      expect(r.out).toContain(`skipped ${bad}`);
+    expect(s.ls(join(s.macbookDir, "lanes"))).toEqual(["lane-a.json", "quoter.json"]);
+    expect(r.out).not.toContain("일감보냄 FAILED");
+  });
+
+  test("a failed summary step keeps the old summary here and on the macmini, and sends no lanes", () => {
+    const s = rig(PULSE);
+    s.run();
+    const before = readFileSync(join(s.h, "state", "lanes-summary", "lane-a.json"), "utf8");
+    writeFileSync(join(s.root, "bad-python"), "#!/bin/sh\necho 'no python today' >&2\nexit 1\n", { mode: 0o755 });
+    writeFileSync(join(s.h, "lanes", "lane-new.json"), JSON.stringify({ key: "lane-new", status: "working" }));
+    const r = s.run({ PYTHON: join(s.root, "bad-python") });
+    expect(r.out).toContain("일감요약 FAILED no python today");
+    expect(r.out).toContain("일감보냄 건너뜀");
+    expect(s.ls(join(s.macbookDir, "lanes"))).toEqual(["lane-a.json", "quoter.json"]);
+    expect(readFileSync(join(s.h, "state", "lanes-summary", "lane-a.json"), "utf8")).toBe(before);
+    expect(s.ls(join(s.h, "state"))).not.toContain("lanes-summary.new");
+    expect(s.ls(s.macbookDir)).toContain("inbound.log");
+  });
+
+  test("open_orders reads the summary the way it reads the lane records: the same order gets the same lanes", () => {
+    const s = rig(PULSE);
+    s.run();
+    const ids = [ORDER, OTHER];
+    const inbound = join(s.root, "inbound.log");
+    writeFileSync(inbound, ids.map((id) => `INBOUND discord 1 ${id} from=owner ref=- "지시"`).join("\n"));
+    const seen = (lanes: string): [string, string[]][] => {
+      const out: string[] = [];
+      runOrders(["--inbound", `macbook=${inbound}`, "--lanes", `macbook=${lanes}`, "--json", "--since", "3650d"], (l) =>
+        out.push(l),
+      );
+      return (JSON.parse(out[0]!) as { orders: Order[] }).orders.map((o) => [o.id, o.lanes.map((l) => l.key).sort()]);
+    };
+    expect(seen(join(s.macbookDir, "lanes"))).toEqual(seen(join(s.h, "lanes")));
+    expect(seen(join(s.h, "lanes"))).toEqual([
+      [ORDER, ["lane-a", "quoter"]],
+      [OTHER, ["lane-a"]],
+    ]);
   });
 });

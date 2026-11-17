@@ -20,8 +20,11 @@
 #    ~/.local/bin, where herdr lives, so it is added here.
 # 8) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
 #    files inbound.log, discord-sent.log, ready-reply.log, to-macmini.log, orders-closed.log, lead-alive.json (the pulse of 7), and
-#    lanes/<key>.json made here from the lane records: the key, the status, lastActivityAt and the order ids the lane or its brief
-#    names, nothing else. The lanes folder there is replaced as a whole; nothing else is deleted. sync-records-1117.
+#    lanes/<file>.json made here from the lane records: the key, the status, lastActivityAt and the order ids the lane marks on
+#    purpose (`orders` in its record, or the `[보호] 원문(<id>[, <id>])` first line of its brief; see tools/open_orders.ts), never
+#    any text. It is built in lanes-summary.new and swapped in only when that succeeds; a lane file that cannot be read is skipped
+#    and named in the log; when the whole step fails the lanes rsync is skipped and the macmini keeps its old summary. The
+#    lanes folder there is replaced as a whole when it does run; nothing else is deleted. sync-records-1117.
 # The log gets a line only when something was copied, the kept-as-newer list changed, or a step failed.
 set -uo pipefail
 SSH='ssh -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 -o BatchMode=yes'
@@ -74,23 +77,35 @@ out=$(PATH="$HOME/.local/bin:$PATH" /usr/bin/perl -e 'alarm shift; exec @ARGV' "
 say lead-pulse "$(printf '%s\n' "$out" | grep -v -E '^PULSE alive=true .* reviveFailed=false$' | head -20)"
 
 lanes="$H/state/lanes-summary"
-rm -rf "$lanes"; mkdir -p "$lanes"
-out=$(/usr/bin/python3 - "$H" "$lanes" <<'PY' 2>&1
+rm -rf "$lanes.new"; mkdir -p "$lanes.new"
+if out=$("${PYTHON:-/usr/bin/python3}" - "$H" "$lanes.new" <<'PY' 2>&1
 import glob, json, os, re, sys
+ID = re.compile(r"[1-9][0-9]{15,21}\Z")
+MARK = re.compile(r"\[보호\]\s*원문\(([^)]*)\)")
 home, dst = sys.argv[1:3]
-for path in glob.glob(os.path.join(home, "lanes", "*.json")):
+for path in sorted(glob.glob(os.path.join(home, "lanes", "*.json"))):
     try:
         lane = json.load(open(path))
         key, status = lane["key"], lane["status"]
-    except (OSError, ValueError, KeyError):
-        continue
-    brief = os.path.join(home, "briefs", key + ".md")
-    text = json.dumps(lane, ensure_ascii=False) + (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else "")
-    summary = {"key": key, "status": status, "lastActivityAt": lane.get("lastActivityAt") or lane.get("createdAt") or 0,
-               "orders": sorted(set(re.findall(r"\d{16,22}", text)))}
-    json.dump(summary, open(os.path.join(dst, key + ".json"), "w"), ensure_ascii=False)
+        ids = [str(x) for x in lane["orders"]] if isinstance(lane.get("orders"), list) else []
+        try:
+            first = next((l.strip() for l in open(os.path.join(home, "briefs", key + ".md"), encoding="utf-8", errors="replace") if l.strip()), "")
+        except OSError:
+            first = ""
+        mark = MARK.match(first)
+        ids += mark.group(1).split(",") if mark else []
+        summary = {"key": key, "status": status, "lastActivityAt": lane.get("lastActivityAt") or lane.get("createdAt") or 0,
+                   "orders": sorted({i.strip() for i in ids if ID.match(i.strip())})}
+        with open(os.path.join(dst, os.path.basename(path)), "w") as f:
+            json.dump(summary, f, ensure_ascii=False)
+    except Exception as e:
+        print("skipped %s: %s" % (os.path.basename(path), e))
 PY
-) || out="FAILED $out"
+); then
+  rm -rf "$lanes"; mv "$lanes.new" "$lanes"; summary=ok
+else
+  out="FAILED $out"; rm -rf "$lanes.new"; summary=failed
+fi
 say 일감요약 "$out"
 send=()
 for f in "$REPO/tools/open_orders.ts" "$H"/state/{inbound.log,discord-sent.log,ready-reply.log,to-macmini.log,orders-closed.log,lead-alive.json}; do
@@ -100,5 +115,9 @@ if [ "${#send[@]}" -gt 0 ]; then
   out=$("$RSYNC" -ti -e "$SSH" --rsync-path='mkdir -p ~/sobaegi-lead/state/macbook && rsync' "${send[@]}" macmini:sobaegi-lead/state/macbook/ 2>&1) || out="FAILED $out"
   say 기록보냄 "$(printf '%s\n' "$out" | grep -E '^<f|^FAILED|rsync' | head -40)"
 fi
-out=$("$RSYNC" -rti --delete -e "$SSH" --rsync-path='mkdir -p ~/sobaegi-lead/state/macbook/lanes && rsync' "$lanes/" macmini:sobaegi-lead/state/macbook/lanes/ 2>&1) || out="FAILED $out"
-say 일감보냄 "$(printf '%s\n' "$out" | grep -E '^<f|^\*deleting|^FAILED|rsync' | head -40)"
+if [ "$summary" = ok ]; then
+  out=$("$RSYNC" -rti --delete -e "$SSH" --rsync-path='mkdir -p ~/sobaegi-lead/state/macbook/lanes && rsync' "$lanes/" macmini:sobaegi-lead/state/macbook/lanes/ 2>&1) || out="FAILED $out"
+  say 일감보냄 "$(printf '%s\n' "$out" | grep -E '^<f|^\*deleting|^FAILED|rsync' | head -40)"
+else
+  say 일감보냄 "건너뜀: 요약이 실패해 맥미니의 옛 요약을 그대로 둔다"
+fi
