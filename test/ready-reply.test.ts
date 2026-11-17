@@ -76,14 +76,15 @@ describe("planReply", () => {
     expect(plan(brief(OWNER_MSG), lane()).post).toBe(false);
   });
 
-  test("a brief not marked public: true is not posted but handed to the lead, with its owner message", () => {
+  test("a brief not marked public: true is handed to the lead with only the orders its header marks", () => {
     const l = lane(RESULT, ["비교.png"]);
-    const unmarked = `# 레인\n\n회장님 원글 ${OWNER_MSG}\n\n## STOP WHEN\npublic: true\n`;
-    const toLead = { owner: { id: OWNER_MSG, channel: ROOM } };
-    for (const b of [unmarked, unmarked.replace("# 레인", "# 레인\npublic: false"), `# public: true ${OWNER_MSG}\n`]) {
-      expect(plan(b, l)).toEqual({ post: false, why: "the brief is not marked public: true", toLead });
+    const why = "the brief is not marked public: true";
+    const quoted = `# 레인\n\n회장님 원글 ${OWNER_MSG}\n\n## STOP WHEN\npublic: true\n`;
+    for (const b of [quoted, quoted.replace("# 레인", "# 레인\npublic: false"), `# public: true ${OWNER_MSG}\n`]) {
+      expect(plan(b, l)).toEqual({ post: false, why, toLead: { orders: [] } });
     }
-    expect(plan("# 레인\n", l)).toEqual({ post: false, why: "the brief is not marked public: true", toLead: {} });
+    const marked = `# 레인\n회장님 원문(${OWNER_MSG}, ${STANDING}): …\n\n## STOP WHEN\n`;
+    expect(plan(marked, l)).toEqual({ post: false, why, toLead: { orders: [OWNER_MSG, STANDING] } });
   });
 
   test("public: true in the middle of the brief, not its header, does not mark the lane public", () => {
