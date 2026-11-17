@@ -26,6 +26,7 @@ if [ -f "$H/반복지적.md" ]; then
   out=$("$RSYNC" -ti -e "$SSH" --rsync-path='mkdir -p ~/.omp-dori && rsync' "$H/반복지적.md" macmini:.omp-dori/ 2>&1) || out="FAILED $out"
   say 반복지적 "$out"
 fi
+[ -d "$H/독후감/소화본" ] && { out=$("$RSYNC" -rti -e "$SSH" --rsync-path='mkdir -p ~/.omp-dori/독후감/소화본 && rsync' "$H/독후감/소화본/" macmini:.omp-dori/독후감/소화본/ 2>&1) || out="FAILED $out"; say 소화본 "$out"; }
 out=$(/usr/bin/python3 "$H/bin/owner-direct-forward.py" 2>&1) || out="FAILED $out"
 say owner-direct "$out"
 out=$("$RSYNC" -rtpiu --info=skip1 --chmod=F444 -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' \
