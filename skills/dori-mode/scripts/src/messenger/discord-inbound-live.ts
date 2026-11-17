@@ -1,12 +1,11 @@
 import { discordGateway, type GatewayClock, type GatewaySocket } from "./discord-gateway.ts";
-import { type DiscordInbound, isTransient, type Message } from "./discord-inbound-api.ts";
+import { isTransient, type Message } from "./discord-inbound-api.ts";
+import type { Emit } from "./discord-inbound.ts";
 
 const GUILD_MESSAGES = 1 << 9;
 const DIRECT_MESSAGES = 1 << 12;
 const MESSAGE_CONTENT = 1 << 15; // Privileged: enable it for the bot in the Developer Portal.
 
-/** A returned promise holds the queue (and that message's cursor) until the message is printed. */
-type Emit = (message: DiscordInbound) => unknown;
 type Intake = {
   sync(emit: Emit): Promise<void>;
   accept(message: Message, emit: Emit): void | Promise<void>;

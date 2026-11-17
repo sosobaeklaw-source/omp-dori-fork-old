@@ -160,8 +160,8 @@ test("a ledger that cannot be read only warns, and intake still commits its curs
   ]);
 });
 
-test("an owner voice message reaches the log as its transcript, and a failed transcription leaves it as it was", async () => {
-  const { withVoiceText, VOICE_PREFIX } = await import("../src/cli-discord.ts");
+test("an opted-in transcriber fills an empty voice message; text, non-voice, no transcriber, failure and timeout pass through", async () => {
+  const { voiceEmit } = await import("../src/cli-discord.ts");
   const voice = {
     channel: "1",
     message: "2",
@@ -170,30 +170,18 @@ test("an owner voice message reaches the log as its transcript, and a failed tra
     replyTo: null,
     attachments: [{ filename: "voice-message.ogg", size: 9, url: "https://cdn.example/v.ogg", voice: true as const }],
   };
+  const opts = { prefix: "[heard] ", deadlineMs: 50 };
+  const printed: string[] = [];
   const warned: string[] = [];
-  const heard = await withVoiceText(
-    voice,
-    async (url) => `들은 말 ${url}`,
-    (l) => warned.push(l),
-  );
-  expect(heard.text).toBe(`${VOICE_PREFIX}들은 말 https://cdn.example/v.ogg`);
-  const typed = { ...voice, text: "글로 쓴 지시" };
-  expect(
-    (
-      await withVoiceText(
-        typed,
-        async () => "x",
-        () => {},
-      )
-    ).text,
-  ).toBe("글로 쓴 지시");
-  const failed = await withVoiceText(
-    voice,
-    async () => {
-      throw new Error("empty transcript");
-    },
-    (l) => warned.push(l),
-  );
-  expect(failed).toBe(voice);
-  expect(warned).toEqual(["WARN transcribe 2: empty transcript"]);
+  const print = (m: { text: string }) => void printed.push(m.text);
+  const warn = (l: string) => void warned.push(l);
+  const heard = voiceEmit(print, async (url) => `들은 말 ${url}`, warn, opts);
+  await heard(voice);
+  await heard({ ...voice, text: "글로 쓴 지시" });
+  await heard({ ...voice, attachments: [{ filename: "a.png", size: 1, url: "https://cdn.example/a.png" }] });
+  expect(voiceEmit(print, undefined, warn, opts)(voice)).toBeUndefined(); // No transcriber: printed at once.
+  await voiceEmit(print, async () => Promise.reject(new Error("empty transcript")), warn, opts)(voice);
+  await voiceEmit(print, () => new Promise<string>(() => {}), warn, opts)(voice);
+  expect(printed).toEqual(["[heard] 들은 말 https://cdn.example/v.ogg", "글로 쓴 지시", "", "", "", ""]);
+  expect(warned).toEqual(["WARN transcribe 2: empty transcript", "WARN transcribe 2: timed out after 0.05s"]);
 });
