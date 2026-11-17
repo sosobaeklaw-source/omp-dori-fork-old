@@ -12,6 +12,8 @@
 #    macmini already has is never overwritten). Two sources: the MacBook's own ~/sobaegi-lead/results/ and each omp lane's
 #    DORI_HOME/results/<lane>/독후감*.md (top level of the lane folder only; copies kept deeper as references stay). The ontology
 #    refresh (macmini 04:30) reads only the macmini's results folder, so a note written here reached it only after going up. sync-up-1117.
+# 5) ~/.omp-dori/독후감/소화본/ (the digests) → macmini ~/.omp-dori/독후감/소화본/. The MacBook copy is the only one anyone edits; copies go one way,
+#    so an edit made on the macmini is overwritten. There is no --delete: a digest retired on the MacBook must also be removed on the macmini by hand.
 # The log gets a line only when something was copied, the kept-as-newer list changed, or a step failed.
 set -uo pipefail
 SSH='ssh -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 -o BatchMode=yes'
