@@ -4,3 +4,7 @@
 ~/sobaegi-lead/results/readable-1110/flow/독후감_글흐름.md:45-47
 ~/sobaegi-lead/results/voice-rootcause/독후감_자연스러운_법률문장.md:51-55
 ~/sobaegi-lead/results/rewrite02-review-1115/독후감_반영대목.md:5-30
+~/sobaegi-lead/results/writing-cases/글카드영상_반려사례.md:1-152
+~/sobaegi-lead/results/notion-8-8-1116/독후감.md:37-51
+~/sobaegi-lead/results/notion-8-8-1116/빠진것.md:5-15
+~/.omp-dori/results/josh-learn-1117/독후감_조쉬방식.md:3-21
