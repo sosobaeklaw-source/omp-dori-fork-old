@@ -91,3 +91,22 @@ test("without the salt file at its default place no lane is answered (fail close
   expect(Bun.spawnSync(["bun", tool, "k1"], { env: noSaltEnv }).stdout.toString()).toContain("SKIP k1:");
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).not.toContain("REPLIED");
 });
+
+test("a lane not marked public is handed to the lead with its job, results folder and owner message, not posted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-tolead-"));
+  const poster = join(dir, "send.sh");
+  writeFileSync(poster, `#!/bin/sh\necho x >> "${dir}/posts"\necho "SENT 9"\n`, { mode: 0o755 });
+  const lead = join(dir, "to-macmini.sh");
+  writeFileSync(lead, `#!/bin/sh\n{ echo "$@"; cat; } > "${dir}/lead"\necho "DELIVERED lead file x 10 bytes"\n`, {
+    mode: 0o755,
+  });
+  const { home, env, tool } = hookHome(poster);
+  writeFileSync(join(home, "briefs", "k1.md"), `# k1 (회장님 ${OWNER_MSG})\n\n## STOP WHEN\n`);
+  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TO_MACMINI: lead } });
+  expect(run.exitCode).toBe(0);
+  expect(existsSync(join(dir, "posts"))).toBe(false);
+  expect(readFileSync(join(dir, "lead"), "utf8")).toBe(
+    `--order ${OWNER_MSG} 리드 검수 대기 READY k1\njob: k1\n결과: ${join(home, "results", "k1")}\n원 글번호: ${OWNER_MSG}\n`,
+  );
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain(`HANDED k1 ${OWNER_MSG}:`);
+});

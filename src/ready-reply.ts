@@ -2,8 +2,9 @@
  * What a lane's READY posts back to the owner's own Discord message, decided from files only (no network).
  *
  * Allow-list: only a lane whose brief says `public: true` on a line of its own (above `## STOP WHEN`) gets a reply.
- * The lead writes that line when it launches public-material work; every other lane stays inbox-only, whatever its
- * folder holds. A public lane gets a reply when, also:
+ * The lead writes that line when it launches public-material work. Any other lane goes to the lead for review instead
+ * (`toLead`), with the owner message it answers when the brief names one, so its result is never left with nobody.
+ * A public lane gets a reply when, also:
  *   - its brief names a message id that the inbound log (`<stateDir>/inbound.log`, lines
  *     `INBOUND discord <channel> <id> from=owner …`) records as the owner's. Ids under the brief's `## STOP WHEN`
  *     block are skipped: every parukuri brief cites the same standing order there, which is not this lane's message.
@@ -41,7 +42,7 @@ const MAX_TEXT = 1900;
 export type Owner = { readonly id: string; readonly channel: string };
 export type Plan =
   | { readonly post: true; readonly owner: Owner; readonly text: string; readonly image?: string }
-  | { readonly post: false; readonly why: string };
+  | { readonly post: false; readonly why: string; readonly toLead?: { readonly owner?: Owner } };
 
 /** The scheme a hash file must declare: HMAC-SHA256 under the salt, of the squeezed name (see `squeeze`), hex. */
 export const NAME_HASH_SCHEME = "hmac-sha256:nfkc-lower-nospace:v1";
@@ -200,7 +201,10 @@ export function planReply(input: {
   /** The text in the picture to be posted, undefined when it cannot be read (see `ocrPicture`). */
   readonly readPicture: (path: string) => string | undefined;
 }): Plan {
-  if (!isPublic(input.brief)) return { post: false, why: "the brief is not marked public: true" };
+  if (!isPublic(input.brief)) {
+    const owner = ownerMessageOf(input.brief, input.owners);
+    return { post: false, why: "the brief is not marked public: true", toLead: owner ? { owner } : {} };
+  }
   const owner = ownerMessageOf(input.brief, input.owners);
   if (!owner) return { post: false, why: "the brief names no owner message" };
   if (!input.caseNames)

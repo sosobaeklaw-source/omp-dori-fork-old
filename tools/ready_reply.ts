@@ -9,7 +9,9 @@
  * --detach starts the same command in its own process and returns at once: the harness kills a hook still running two
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
- * `SENT <id>`. A lane that gets no reply prints `SKIP <why>` and tells nobody: it stays inbox-only as before.
+ * `SENT <id>`. A lane that gets no reply prints `SKIP <why>` and tells nobody, except a lane not marked public: its
+ * READY goes to the macmini lead for review (`HANDED`), through DORI_TO_MACMINI (default `<home>/bin/to-macmini.sh`,
+ * see examples/sobaek/) with the lane, its results folder and the owner message (`--order`) when the brief names one.
  * Only a lane whose brief carries the line `public: true` (written by the lead for public-material work) is answered;
  * the reply text and the picture's OCR text are checked against salted client-name hashes exported by the macmini:
  * DORI_NAME_HASHES (default `<stateDir>/case-name-hashes.json`) under the salt in DORI_NAME_HASH_SALT_FILE (default
@@ -39,6 +41,19 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
     const id = /^SENT (\d+)$/m.exec(out)?.[1];
     if (r.exitCode === 0 && id) return { id };
     return { why: (out || r.stderr.toString()).trim().split("\n")[0] || `exit ${r.exitCode}` };
+  } catch (error) {
+    return { why: `cannot run ${sender}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/** Hands a READY the owner did not get to the macmini lead; returns the sender's first line or why it failed. */
+function hand(sender: string, key: string, resultsDir: string, order: string | undefined) {
+  const body = `job: ${key}\n결과: ${resultsDir}\n원 글번호: ${order ?? "-"}\n`;
+  const args = [...(order ? ["--order", order] : []), `리드 검수 대기 READY ${key}`];
+  try {
+    const r = Bun.spawnSync([sender, ...args], { stdin: Buffer.from(body) });
+    const out = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0] ?? "";
+    return r.exitCode === 0 ? { ok: out } : { why: out || `exit ${r.exitCode}` };
   } catch (error) {
     return { why: `cannot run ${sender}: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -83,8 +98,22 @@ async function main(argv: readonly string[]): Promise<number> {
     // READY again after rework does not answer the same owner message twice.
     const why = plan.post ? `already replied to ${plan.owner.id}` : plan.why;
     console.log(`SKIP ${key}: ${why}`);
-    if (!a.flags.has("dry-run")) note(stateDir, `SKIP ${key}: ${why}`);
-    return 0;
+    if (a.flags.has("dry-run")) return 0;
+    if (plan.post || !plan.toLead) {
+      note(stateDir, `SKIP ${key}: ${why}`);
+      return 0;
+    }
+    // Not public: the owner's room is not the place to decide that, the lead is. It reviews and forwards.
+    const order = plan.toLead.owner?.id;
+    const sender = process.env["DORI_TO_MACMINI"] ?? join(home, "bin", "to-macmini.sh");
+    const r = hand(sender, key, join(home, "results", key), order);
+    if ("ok" in r) {
+      note(stateDir, `HANDED ${key} ${order ?? "-"}: ${why}, to the lead (${r.ok})`);
+      return 0;
+    }
+    note(stateDir, `FAIL ${key} ${order ?? "-"}: not handed to the lead: ${r.why}`);
+    console.error(`FAIL ${r.why}`);
+    return 1;
   }
   const { owner, text, image } = plan;
   if (a.flags.has("dry-run")) {

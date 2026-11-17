@@ -76,12 +76,14 @@ describe("planReply", () => {
     expect(plan(brief(OWNER_MSG), lane()).post).toBe(false);
   });
 
-  test("a brief not marked public: true stays inbox-only, whatever the lane holds", () => {
+  test("a brief not marked public: true is not posted but handed to the lead, with its owner message", () => {
     const l = lane(RESULT, ["비교.png"]);
     const unmarked = `# 레인\n\n회장님 원글 ${OWNER_MSG}\n\n## STOP WHEN\npublic: true\n`;
+    const toLead = { owner: { id: OWNER_MSG, channel: ROOM } };
     for (const b of [unmarked, unmarked.replace("# 레인", "# 레인\npublic: false"), `# public: true ${OWNER_MSG}\n`]) {
-      expect(plan(b, l)).toEqual({ post: false, why: "the brief is not marked public: true" });
+      expect(plan(b, l)).toEqual({ post: false, why: "the brief is not marked public: true", toLead });
     }
+    expect(plan("# 레인\n", l)).toEqual({ post: false, why: "the brief is not marked public: true", toLead: {} });
   });
 
   test("public: true in the middle of the brief, not its header, does not mark the lane public", () => {
@@ -98,7 +100,7 @@ describe("planReply", () => {
       "public: true",
       "```",
     ];
-    expect(plan(`${body.join("\n")}\n\npublic: true\n\n## STOP WHEN\n`, l)).toEqual({
+    expect(plan(`${body.join("\n")}\n\npublic: true\n\n## STOP WHEN\n`, l)).toMatchObject({
       post: false,
       why: "the brief is not marked public: true",
     });
