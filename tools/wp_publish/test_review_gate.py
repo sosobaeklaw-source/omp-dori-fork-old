@@ -58,9 +58,9 @@ class ReviewGateTest(unittest.TestCase):
                                               encoding="utf-8")
         self.reviewed = self.dir / "reviewed.json"
 
-    def record(self, *names, texts=None):
+    def record(self, *names, texts=None, media_texts=None):
         review_gate.record(self.reviewed, [self.dir / n for n in names], "opencodex/anthropic/claude-opus-5-5",
-                           self.dir / "findings.md", texts)
+                           self.dir / "findings.md", texts, {self.dir / f: kv for f, kv in (media_texts or {}).items()})
 
     def client(self, ack="본문 첫 화면과 순서도 그림, 대표 그림을 폰 크기로 열어 봤다"):
         c = w.WP(reviewed=self.reviewed, ack=ack)
@@ -190,6 +190,60 @@ class ReviewGateTest(unittest.TestCase):
         st, _ = self.post(c, {"title": self.title})
         self.assertEqual(st, 200)
 
+    def test_empty_or_blank_text_fields_need_a_record_too(self):
+        self.record("본문.html", "flow.png", "cover.jpg", texts={"title": self.title})
+        c = self.client()
+        self.assertBlocked(c, r"읽히지 않았다\(1개\): title", {"title": ""})
+        self.assertBlocked(c, r"읽히지 않았다\(1개\): excerpt", {"excerpt": " "})
+        self.assertBlocked(c, "rank_math_description", {"objectType": "post", "objectID": 299,
+                                                         "meta": {"rank_math_description": ""}},
+                           url=w.BASE + "/wp-json/rankmath/v1/updateMeta")
+
+    def test_status_alone_cannot_take_a_post_down(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft"})
+        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft", "post": 299}, url=w.API + "/posts/300")
+
+    def test_two_images_each_with_their_own_alt_and_caption(self):
+        (self.dir / "second.png").write_bytes(b"PNG-second")
+        self.record("본문.html", "flow.png", "second.png",
+                    media_texts={"flow.png": {"alt_text": "첫 그림 설명", "caption": "첫 캡션"},
+                                 "second.png": {"alt_text": "둘째 그림 설명", "caption": "둘째 캡션"}})
+        c = self.client()
+        second = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/second.png"
+        c.op.files.update({second: b"PNG-second", w.API + "/media/901": json.dumps({"source_url": IMG}).encode(),
+                           w.API + "/media/902": json.dumps({"source_url": second}).encode()})
+        for mid, alt, cap in ((901, "첫 그림 설명", "첫 캡션"), (902, "둘째 그림 설명", "둘째 캡션")):
+            st, _ = self.post(c, {"alt_text": alt, "caption": cap, "post": 299}, url=w.API + f"/media/{mid}")
+            self.assertEqual(st, 200)
+        c.op.sent.clear()
+        # 그림을 바꿔 단 설명, 빈 값은 그 그림의 기록과 다르다
+        self.assertBlocked(c, r"읽히지 않았다\(1개\): alt_text", {"alt_text": "첫 그림 설명"}, url=w.API + "/media/902")
+        self.assertBlocked(c, r"읽히지 않았다\(1개\): caption", {"caption": ""}, url=w.API + "/media/901")
+        # 읽지 않은 그림에는 설명을 달 수 없다
+        c.op.files[w.API + "/media/903"] = json.dumps({"source_url": COVER}).encode()
+        self.assertBlocked(c, "고치는 그림 cover.jpg", {"alt_text": "첫 그림 설명"}, url=w.API + "/media/903")
+        self.assertBlocked(c, "media/<번호>", {"alt_text": "첫 그림 설명"}, url=w.API + "/media")
+
+    def test_record_cli_keeps_media_texts_by_image_hash(self):
+        out = self.dir / "r2.json"
+        subprocess.run([sys.executable, str(Path(review_gate.__file__)), "record", str(out), "--model", "m",
+                        "--findings", str(self.dir / "findings.md"),
+                        "--media-text", str(self.dir / "flow.png"), "alt_text=첫 그림",
+                        "--media-text", str(self.dir / "flow.png"), "caption=첫 캡션",
+                        str(self.dir / "본문.html"), str(self.dir / "flow.png")], check=True, capture_output=True)
+        texts = json.loads(out.read_text(encoding="utf-8"))["texts"]
+        self.assertEqual(texts["media:" + review_gate.sha(self.img)], {"alt_text": "첫 그림", "caption": "첫 캡션"})
+
+    def test_images_are_fetched_only_from_our_https_site(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        for src in ("file:///etc/hosts", "http://sobaeklaw.co.kr/wp-content/uploads/x.png",
+                    "https://evil.example/x.png", "https://sobaeklaw.co.kr.evil.example/x.png",
+                    "https://user@sobaeklaw.co.kr/x.png", "/wp-content/uploads/x.png"):
+            self.assertBlocked(c, "우리 사이트", {"content": f'<img src="{src}">'})
+
     def test_rank_math_share_image_ids_are_checked_like_featured_media(self):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
@@ -292,7 +346,7 @@ class ReviewGateTest(unittest.TestCase):
         subprocess.run([sys.executable, str(Path(review_gate.__file__)), "record", str(out), "--model", "m",
                         "--findings", str(self.dir / "findings.md"), "--text", f"title={self.title}",
                         "--text", "excerpt=a=b", str(self.dir / "본문.html")], check=True, capture_output=True)
-        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["texts"], {"title": self.title, "excerpt": "a=b"})
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["texts"], {"post": {"title": self.title, "excerpt": "a=b"}})
 
 
 if __name__ == "__main__":

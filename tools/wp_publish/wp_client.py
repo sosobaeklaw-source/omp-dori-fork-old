@@ -11,17 +11,20 @@ GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든
     그림·영상 태그(img·source·video·audio·track)의 src·srcset·poster·data-src는 하나하나 받아 sha256을 맞추고,
     <a href> 말고 바깥 자원을 부르는 속성, style 속 url·image·역슬래시, 그림을 서버에서 넣을 수 있는 것
     (wp:블록 주석 밖의 주석, 그림·동적 블록, [단축코드], 한 줄짜리 주소(oEmbed))은 확인할 길이 없으니 막는다.
-    featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다.
-  - 제목·요약·대체 글·캡션·Rank Math 설명은 검수 기록(texts)에 그 칸 이름으로 적힌 값과 똑같아야 한다.
+    featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다. 그림은 https://sobaeklaw.co.kr·wp.sobaeklaw.co.kr에서만 받는다
+    (다른 곳 그림은 검수 뒤 바뀔 수 있어 막는다).
+  - 글자 칸은 검수 기록 texts의 그 대상 항목과 똑같아야 한다(빈 값도): 글의 제목·요약·Rank Math 설명은 "post",
+    그림(/media/<번호>)의 대체 글·캡션·제목은 그 번호의 source_url로 받은 바이트의 "media:<sha256>".
   - status는 draft만 보낼 수 있다(발행 글 갱신은 status를 빼고 보낸다). brand_write_guard.assert_clean도 여기서.
-  - 확인한 것이 하나도 없는 요청은 그림 붙이기(post)·draft 같은 메타 칸만일 때만 보낸다.
+  - 확인한 것이 하나도 없는 요청은 그림 붙이기(post 칸)만 보낸다. status만 보내 공개 글을 내리는 것은 막는다.
 하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다. 다 맞으면 findings.md 첫 문단과 읽은 모델을 보여 주고 보낸다.
 응답을 받은 뒤 상태 코드와 리드가 무엇을 열어 보았는지 적은 한 줄(ack, 비어 있으면 안 됨)을 reviewed.json 옆
 publish_log.jsonl에 남긴다. WP(reviewed=...)를 주지 않으면 읽기만 된다. 레인 스크립트가 c._open(...)으로 직접 POST해도
 같은 검사를 지난다.
 
-이 파일을 합쳐도 지금 레인 결과 폴더의 옛 wp_client.py 복사본과 그것을 부르는 스크립트(publish_299.py 따위)는
-막히지 않는다. 그 스크립트가 아래처럼 이 경로를 불러야 검사가 걸린다.
+옛 레인 결과 폴더의 wp_client.py 복사본 3곳(~/.omp-dori/results/ 아래 rewrite-299-now·rewrite-hearing-1116·
+rootfix2-bd-1116/D/work/hearing의 wp/)은 사본(wp_client.py.bak-20261118-gate)을 남기고 이 모듈을 부르는 얇은 판으로 바꿨다.
+그 판의 WP()는 env WP_REVIEWED·WP_ACK로 읽은 기록을 받고, 없으면 쓰기를 막는다. 그 폴더 스크립트도 이 검사를 지난다.
 
 사용(레인 스크립트):
     sys.path.insert(0, str(Path.home() / "src/omp-dori/tools/wp_publish"))
@@ -41,6 +44,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import review_gate
 from review_gate import ReviewMissing, check_bytes, check_texts, first_paragraph, load
 
 sys.path.insert(0, str(Path.home() / "sanjai-agent"))
@@ -55,7 +59,8 @@ API = BASE + "/wp-json/wp/v2"
 _WP_PATH = re.compile(re.escape(API) + r"/(posts|pages|media)(/\d+)?")
 _TEXT = ("title", "excerpt", "alt_text", "caption")
 _PLAIN = ("status", "post")
-_META_ONLY = {"status", "post"}
+_META_ONLY = {"post"}
+_IMAGE_HOSTS = {"sobaeklaw.co.kr", "wp.sobaeklaw.co.kr"}
 _RM_TEXT = ("rank_math_description", "rank_math_title", "rank_math_facebook_title", "rank_math_facebook_description",
             "rank_math_twitter_title", "rank_math_twitter_description")
 _RM_IMAGE = ("rank_math_facebook_image", "rank_math_twitter_image")
@@ -192,12 +197,26 @@ class WP:
         self.nonce = None
 
     def _fetch(self, url):
-        """검사용 읽기. 받지 못한 그림은 확인 못 한 것이니 막는다. nonce는 우리 WP에만 붙인다."""
-        ours = urllib.parse.urlsplit(url).netloc == urllib.parse.urlsplit(BASE).netloc
+        """검사용 읽기. 우리 사이트(https) 그림만 받는다. 받지 못한 그림은 확인 못 한 것이니 막는다. nonce는 우리 WP에만."""
+        u = urllib.parse.urlsplit(url)
+        if u.scheme != "https" or u.hostname not in _IMAGE_HOSTS or u.username or u.port:
+            raise ReviewMissing(f"우리 사이트(https://{'·'.join(sorted(_IMAGE_HOSTS))}) 그림이 아니라 확인할 수 없다: {url[:80]}")
+        ours = u.netloc == urllib.parse.urlsplit(BASE).netloc
         st, _, b = self._open(urllib.request.Request(url, headers={"X-WP-Nonce": self.nonce or ""} if ours else {}))
         if st != 200:
             raise ReviewMissing(f"그림을 받아 확인하지 못했다({st}): {url}")
         return b
+
+    def _media_bytes(self, where, name, k, media_id):
+        """/media/<번호>의 source_url 그림 바이트. 번호·응답이 이상하면 칸 이름을 대고 멈춘다."""
+        try:
+            m = json.loads(self._fetch(f"{API}/media/{int(media_id)}"))
+            src = m["source_url"]
+            if not isinstance(src, str):
+                raise TypeError(src)
+        except (ValueError, TypeError, KeyError) as e:
+            raise ReviewMissing(f"{where}: {name}({k}={media_id!r})의 그림 주소를 확인하지 못했다: {e!r}") from None
+        return src, self._fetch(src)
 
     def _gate(self, req):
         """GET·HEAD 밖은 허용한 모양만, 읽은 기록이 있는 글자·그림만 보낸다. 쓰기면 True."""
@@ -224,7 +243,7 @@ class WP:
                 raise ReviewMissing(f"{where}: 그림은 {API}/media로만 올린다")
             check_bytes(doc, [(f"올리는 그림 {req.get_header('Content-disposition') or ''}".strip(), body)])
         elif ctype == "application/json":
-            self._gate_json(doc, where, json.loads(body or b"null"), rankmath)
+            self._gate_json(doc, where, json.loads(body or b"null"), rankmath, _WP_PATH.fullmatch(target))
         else:
             raise ReviewMissing(f"{where}: JSON·그림 밖 본문({ctype or '형식 없음'})은 보내지 않는다")
         print(f"[검수 기록] 읽은 모델 {doc.get('model')} · {doc.get('at')}\n{first_paragraph(doc)}\n[리드] {self.ack}")
@@ -238,7 +257,7 @@ class WP:
                                 "request": f"{req.get_method()} {req.full_url}", "status": status,
                                 "reviewed": str(self.reviewed), "ack": self.ack}, ensure_ascii=False) + "\n")
 
-    def _gate_json(self, doc, where, payload, rankmath):
+    def _gate_json(self, doc, where, payload, rankmath, path):
         if not isinstance(payload, dict) or not payload:
             raise ReviewMissing(f"{where}: JSON은 칸이 있는 객체(dict)만 보낸다")
         if rankmath:
@@ -255,7 +274,13 @@ class WP:
         if payload.get("status", "draft") != "draft":
             raise ReviewMissing(f"{where}: status는 draft만 보낸다(발행 글 갱신은 status를 빼고 보낸다)")
         assert_clean(payload, context=where)
-        items, texts = [], []
+        items, texts, target = [], [], "post"
+        if path and path.group(1) == "media":
+            if not path.group(2):
+                raise ReviewMissing(f"{where}: 그림 칸은 올린 뒤 {API}/media/<번호>로 보낸다")
+            src, data = self._media_bytes(where, "고치는 그림", "id", path.group(2)[1:])
+            items.append((f"고치는 그림 {src.rsplit('/', 1)[-1]}", data))
+            target = f"media:{review_gate.sha(data)}"
         if "content" in fields:
             if not isinstance(fields["content"], str):
                 raise ReviewMissing(f"{where}: content는 글자(str)만 보낸다(raw 객체 모양 금지)")
@@ -273,18 +298,12 @@ class WP:
         for k in media_keys:
             if fields.get(k):
                 name = "대표 그림" if k == "featured_media" else k
-                try:
-                    m = json.loads(self._fetch(f"{API}/media/{int(fields[k])}"))
-                    src = m["source_url"]
-                    if not isinstance(src, str):
-                        raise TypeError(src)
-                except (ValueError, TypeError, KeyError) as e:
-                    raise ReviewMissing(f"{where}: {name}({k}={fields[k]!r})의 그림 주소를 확인하지 못했다: {e!r}") from None
-                items.append((f"{name} {src.rsplit('/', 1)[-1]}", self._fetch(src)))
+                src, data = self._media_bytes(where, name, k, fields[k])
+                items.append((f"{name} {src.rsplit('/', 1)[-1]}", data))
         if not items and not texts and not set(fields) <= _META_ONLY:
             raise ReviewMissing(f"{where}: 확인할 글자·그림이 하나도 없는 요청이다")
         check_bytes(doc, items)
-        check_texts(doc, texts)
+        check_texts(doc, target, texts)
 
     def _open(self, req, timeout=60, _login_form=False):
         write = not _login_form and self._gate(req)

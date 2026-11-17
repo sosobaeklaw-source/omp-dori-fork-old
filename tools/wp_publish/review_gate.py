@@ -2,12 +2,16 @@
 
 검수 쪽(검수가 끝나면 결과 폴더에 한 장):
     python3 review_gate.py record <reviewed.json> --model <읽은 모델> --findings <findings.md> \\
-        [--text title=<읽은 제목>] [--text excerpt=<읽은 요약>] ... <본문.html> <그림>...
-  → {"files": [{"path", "sha256"}...], "texts": {칸: 값}, "model", "at", "findings"}.
+        [--text title=<읽은 제목>] [--text excerpt=<읽은 요약>] ... \\
+        [--media-text <그림 파일> alt_text=<그 그림의 대체 글>] [--media-text <그림 파일> caption=<캡션>] ... \\
+        <본문.html> <그림>...
+  → {"files": [{"path", "sha256"}...], "texts": {"post": {칸: 값}, "media:<sha256>": {칸: 값}}, "model", "at", "findings"}.
+  글 칸(제목·요약·Rank Math)은 "post"에, 그림 칸(대체 글·캡션)은 그 그림 바이트의 sha256 항목에 적는다.
   판정은 적지 않는다. 읽었다는 사실만 적는다.
 
 발행 쪽: wp_client.WP(reviewed=..., ack=...)가 올릴 본문과 그 본문이 부르는 그림(대표 그림 포함)의
-sha256을 check_bytes로, 제목·요약·대체 글·Rank Math 설명은 check_texts로 같은 칸 값과 똑같은지 이 기록과 맞춰 본다.
+sha256을 check_bytes로, 글자 칸은 check_texts로 그 대상(글 또는 그 그림) 항목의 같은 칸 값과 똑같은지
+(빈 값도) 이 기록과 맞춰 본다.
 하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다.
 검수 메모에 지적이 남아 있어도 막지 않는다. 받아들일지는 리드가 findings 첫 문단을 읽고 정하고, 그 한 줄(ack)이 발행 기록에 남는다.
 이 기록은 누구든 만들 수 있다. 검수 에이전트만 만들게 하거나 서명하는 일은 남은 일이다.
@@ -28,11 +32,18 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def record(out, files, model, findings, texts=None):
+def record(out, files, model, findings, texts=None, media_texts=None):
+    """texts: 글 칸→값. media_texts: {그림 파일: {칸: 값}} — 그 그림 바이트의 sha256 항목으로 적는다."""
     if not Path(findings).is_file():
         raise SystemExit(f"findings.md가 없다: {findings}")
-    doc = {"files": [{"path": str(Path(f).resolve()), "sha256": sha(Path(f).read_bytes())} for f in files],
-           "texts": dict(texts or {}), "model": model,
+    entries = [{"path": str(Path(f).resolve()), "sha256": sha(Path(f).read_bytes())} for f in files]
+    by_target = {"post": dict(texts or {})}
+    for f, kv in (media_texts or {}).items():
+        h = sha(Path(f).read_bytes())
+        if h not in {e["sha256"] for e in entries}:
+            raise SystemExit(f"--media-text 그림이 읽은 파일 목록에 없다: {f}")
+        by_target[f"media:{h}"] = dict(kv)
+    doc = {"files": entries, "texts": by_target, "model": model,
            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
            "findings": str(Path(findings).resolve())}
     Path(out).write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -58,13 +69,13 @@ def check_bytes(doc, items):
                             + ". 검수 뒤 바뀌었거나 검수에 넣지 않은 것이다. 다시 검수받고 reviewed.json을 새로 남겨라")
 
 
-def check_texts(doc, items):
-    """items: [(칸 이름, 글자)]. 제목·요약·대체 글·설명은 검수 기록 texts의 같은 칸 값과 똑같아야 한다."""
-    read = doc.get("texts") or {}
-    unread = [name for name, text in items if text.strip() and read.get(name) != text]
+def check_texts(doc, target, items):
+    """items: [(칸 이름, 글자)]. target("post" 또는 "media:<sha256>") 항목의 같은 칸 값과 똑같아야 한다. 빈 값도 맞춘다."""
+    read = (doc.get("texts") or {}).get(target) or {}
+    unread = [name for name, text in items if read.get(name) != text]
     if unread:
         raise ReviewMissing(f"읽히지 않았다({len(unread)}개): " + ", ".join(unread)
-                            + ". 이 칸 값이 검수 기록(texts)과 다르다. 검수받은 값으로 보내거나 --text로 기록을 새로 남겨라")
+                            + f". 이 칸 값이 검수 기록({target})과 다르다. 검수받은 값으로 보내거나 기록을 새로 남겨라")
 
 
 def first_paragraph(doc):
@@ -80,10 +91,14 @@ if __name__ == "__main__":
     ap.add_argument("--model", required=True)
     ap.add_argument("--findings", required=True)
     ap.add_argument("--text", action="append", default=[], metavar="칸=값")
+    ap.add_argument("--media-text", action="append", default=[], nargs=2, metavar=("그림", "칸=값"))
     ap.add_argument("files", nargs="+")
     a = ap.parse_args()
-    if bad := [t for t in a.text if "=" not in t]:
-        raise SystemExit(f"--text는 칸=값 모양이어야 한다: {bad}")
+    if bad := [t for t in a.text + [kv for _, kv in a.media_text] if "=" not in t]:
+        raise SystemExit(f"--text·--media-text 값은 칸=값 모양이어야 한다: {bad}")
     texts = dict(t.split("=", 1) for t in a.text)
-    print(json.dumps(record(a.out, a.files, a.model, a.findings, texts), ensure_ascii=False, indent=1))
+    media_texts = {}
+    for f, kv in a.media_text:
+        media_texts.setdefault(f, {}).__setitem__(*kv.split("=", 1))
+    print(json.dumps(record(a.out, a.files, a.model, a.findings, texts, media_texts), ensure_ascii=False, indent=1))
     sys.exit(0)
