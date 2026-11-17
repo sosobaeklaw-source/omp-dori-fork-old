@@ -15,7 +15,8 @@ import { conceptsPath, loadConcepts } from "../src/onto-concepts.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
-import { addEntry, buildRequest, countCases, END, kindOf, kindRanges, writerOf } from "../src/writer-request.ts";
+import { addEntry, kindOf } from "../src/writer-ledger.ts";
+import { buildRequest, countCases, END, kindRanges, writerOf } from "../src/writer-request.ts";
 import { fillSheet, readSheet } from "../src/writer-sheet.ts";
 import { sendOnSeat } from "../src/writer-seat.ts";
 

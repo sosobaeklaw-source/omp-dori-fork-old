@@ -13,15 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const CONCEPT_TYPES = [
-  "법령판례",
-  "상병",
-  "판단요소",
-  "입증자료유형",
-  "키워드",
-  "신체부위",
-  "직종",
-] as const;
+export const CONCEPT_TYPES = ["법령판례", "상병", "판단요소", "입증자료유형", "키워드", "신체부위", "직종"] as const;
 
 export interface Concept {
   readonly type: string;
