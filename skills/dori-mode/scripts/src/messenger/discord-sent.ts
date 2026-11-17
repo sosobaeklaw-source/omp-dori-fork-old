@@ -12,7 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { addEntry, KINDS, ledgerPath } from "../../../../../src/writer-request.ts";
+import { addEntry, KINDS, ledgerPath } from "../../../../../src/writer-ledger.ts";
 import type { DiscordInbound } from "./discord-inbound-api.ts";
 import { MessengerError } from "./http.ts";
 

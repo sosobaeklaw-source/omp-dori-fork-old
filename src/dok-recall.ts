@@ -13,17 +13,10 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { type Concept, expandQuery } from "./onto-concepts.ts";
 import { caseReason, type NameHashes } from "./ready-reply.ts";
-import { caseLines } from "./writer-request.ts";
+import { type Bag, bestPassage, type Note, type Passage, terms } from "./dok-passage.ts";
 
-const COMMON = new Set(
-  "the and for are not our you was its can all use run to of in on is it be as at by or an if do no we that this with from have will when your their before after into only must should work using then fix check make add update new also any need keep get see md txt png json html http https com www 독후감".split(
-    " ",
-  ),
-);
-// Same particle stripping as lesson-match.ts, so "독후감을" and "독후감" are one word.
-const PARTICLE =
-  /^(\p{Script=Hangul}{2,}?)(?:에서|으로|까지|부터|에게|한테|처럼|보다|은|는|이|가|을|를|에|의|도|로|와|과|만)$/u;
 // Copies, drafts and backups of a note, the requests, prompts and run logs that made it, and the working folders
 // its drafts sit in: the index skips most of them too, and they crowd out the note itself. A folder or file name
 // holding any of these is left out.
@@ -35,40 +28,12 @@ const GATHERED = /(?:^|\/)research\/local$/;
 const PHONE = /(?<!\d)0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}(?!\d)/;
 const CITE = /[~/\w.-]*sobaegi-lead\/results\/[^\s)`'"]*독후감[^\s)`'":]*\.md/gu;
 
-/** Words of `text`: Korean words keep their two-letter pieces too, since Korean compounds have no spaces. */
-export function terms(text: string): string[] {
-  const out: string[] = [];
-  for (const raw of text
-    .normalize("NFC")
-    .toLowerCase()
-    .match(/[\p{L}\p{N}]+/gu) ?? []) {
-    if (/^\p{N}+$/u.test(raw)) continue;
-    if (/\p{Script=Hangul}/u.test(raw)) {
-      const w = PARTICLE.exec(raw)?.[1] ?? raw;
-      if (w.length < 2 || COMMON.has(w)) continue;
-      out.push(w);
-      if (w.length > 2) for (let i = 0; i + 2 <= w.length; i++) out.push(w.slice(i, i + 2));
-    } else if (raw.length >= 3 && !COMMON.has(raw)) out.push(raw.slice(0, 6));
-  }
-  return out;
-}
-
-type Bag = Map<string, number>;
 const bagOf = (text: string): Bag => {
   const bag: Bag = new Map();
   for (const t of terms(text)) bag.set(t, (bag.get(t) ?? 0) + 1);
   return bag;
 };
 const sizeOf = (bag: Bag): number => [...bag.values()].reduce((a, b) => a + b, 0);
-
-export interface Note {
-  readonly path: string;
-  readonly lines: readonly string[];
-  readonly head: Bag;
-  readonly tag: Bag;
-  /** md5 of the text: copies of one note share it, and citations are counted by it. */
-  readonly sum: string;
-}
 
 /**
  * Every `*독후감*.md` under `root`, one per content, copies and backups left out. Of files with the same text (md5)
@@ -164,40 +129,6 @@ export function rank(query: string, notes: readonly Note[], cited: ReadonlyMap<s
     .sort((a, b) => b.score - a.score);
 }
 
-export interface Passage {
-  readonly path: string;
-  readonly start: number;
-  readonly end: number;
-  readonly chars: number;
-}
-
-/**
- * The note's section (split at `#`–`###` headings) sharing most of the query's words, cut to `maxChars`. Only
- * sections holding a case line (writer-request's `caseLines`) count, and the cut always keeps the section's first
- * case line, so `writer_request` never refuses the range. A note with no case line gives none.
- */
-export function bestPassage(note: Note, query: string, maxChars: number): Passage | undefined {
-  const asked = new Set(terms(query));
-  const cuts = [0, ...note.lines.flatMap((l, i) => (i > 0 && /^#{1,3} /.test(l) ? [i] : [])), note.lines.length];
-  let best: { start: number; end: number; hit: number } | undefined;
-  for (let i = 0; i + 1 < cuts.length; i++) {
-    const section = note.lines.slice(cuts[i], cuts[i + 1]);
-    if (caseLines({ label: "", lines: section }).length === 0) continue;
-    const hit = new Set(terms(section.join("\n")).filter((t) => asked.has(t))).size;
-    if (!best || hit > best.hit) best = { start: cuts[i]!, end: cuts[i + 1]!, hit };
-  }
-  if (!best) return undefined;
-  let end = best.start;
-  let chars = 0;
-  let hasCase = false;
-  while (end < best.end && (!hasCase || chars + note.lines[end]!.length + 1 <= maxChars)) {
-    hasCase ||= caseLines({ label: "", lines: [note.lines[end]!] }).length > 0;
-    chars += note.lines[end++]!.length + 1;
-  }
-  while (!note.lines[end - 1]!.trim()) chars -= note.lines[--end]!.length + 1;
-  return { path: note.path, start: best.start + 1, end, chars };
-}
-
 export interface Recall {
   readonly kept: Passage[];
   /** The next candidates after the budget was spent, as oh-my-hermes lists them under over_budget. */
@@ -206,9 +137,12 @@ export interface Recall {
 
 /**
  * Keep passages of the ranked notes in order until `limit` notes or `maxChars` characters would be crossed. Each
- * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget. The passages
- * go to a writing model, so one holding a client name (matched by salted hash, `names`), a registration number, a phone
- * number or a case-folder path is left out, and so is one whose text a kept or listed passage already has.
+ * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget. A note
+ * scoring under `floor` times the score of the first note that gave a passage is not taken, and a passage must share `minHit` of the query's
+ * words (see `bestPassage`): a long tail of weakly matching notes is what pulls a 재해경위서 template into a SEO
+ * request. The passages go to a writing model, so one holding a client name (matched by salted hash, `names`), a
+ * registration number, a phone number or a case-folder path is left out, and so is one whose text a kept or listed
+ * passage already has.
  */
 export function recall(
   query: string,
@@ -216,14 +150,18 @@ export function recall(
   limit: number,
   maxChars: number,
   names: NameHashes,
+  { floor = 0, minHit = 0 }: { floor?: number; minHit?: number } = {},
 ): Recall {
   const kept: Passage[] = [];
   const over: Passage[] = [];
   const seen = new Set<string>();
+  let top: number | undefined;
   let used = 0;
-  for (const { note } of ranked) {
-    const p = bestPassage(note, query, Math.floor(maxChars / limit));
+  for (const { note, score } of ranked) {
+    if (top !== undefined && score < top * floor) break;
+    const p = bestPassage(note, query, Math.floor(maxChars / limit), minHit);
     if (!p) continue;
+    top ??= score;
     const text = note.lines.slice(p.start - 1, p.end).join("\n");
     if (seen.has(text)) continue;
     seen.add(text);
@@ -245,3 +183,38 @@ export const label = (p: Passage): string => {
   const path = p.path.startsWith(`${home}/`) ? `~/${p.path.slice(home.length + 1)}` : p.path;
   return `${path}:${p.start}-${p.end}`;
 };
+
+export interface Recalled {
+  /** `~/PATH:START-END` per kept passage, best first. */
+  readonly specs: string[];
+  /** The ontology concepts that widened the query (`expandQuery`'s `used`). */
+  readonly onto: string[];
+}
+
+/** Defaults for a writing request: a few strong passages, not a long tail (see `recall`). */
+export const RECALL = { limit: 6, maxChars: 6000, floor: 0.5, minHit: 2 } as const;
+
+/**
+ * The passages a writing request needs for `text` (its task and sheet): the query widened by the ontology's
+ * concepts, ranked over the notes under `root` with the citations in `home`, kept within the budget, client names
+ * and case paths left out (`recall`).
+ */
+export function recallFor(
+  home: string,
+  text: string,
+  names: NameHashes,
+  opts: {
+    root: string;
+    concepts: readonly Concept[];
+    limit: number;
+    maxChars: number;
+    floor?: number;
+    minHit?: number;
+  },
+): Recalled {
+  const { query, used } = expandQuery(text, opts.concepts);
+  const notes = loadNotes(opts.root);
+  if (notes.length === 0) return { specs: [], onto: used };
+  const { kept } = recall(query, rank(query, notes, citations(home)), opts.limit, opts.maxChars, names, opts);
+  return { specs: kept.map(label), onto: used };
+}

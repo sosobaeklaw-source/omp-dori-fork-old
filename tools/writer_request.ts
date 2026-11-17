@@ -4,22 +4,49 @@
  * or send a built body on whichever writing seat is free. See src/writer-request.ts and src/writer-seat.ts. The
  * harness home is DORI_HOME (default ~/.dori).
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { alive } from "../skills/dori-mode/scripts/src/checkpoint-lock.ts";
 import { need, one, parse } from "../src/cli-args.ts";
+import { RECALL, type Recalled, recallFor } from "../src/dok-recall.ts";
+import { homeStateDir } from "../src/lane-model.ts";
+import { conceptsPath, loadConcepts } from "../src/onto-concepts.ts";
+import { loadNameHashes } from "../src/ready-reply.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
-import { addEntry, buildRequest, countCases, END, kindOf, kindRanges, writerOf } from "../src/writer-request.ts";
+import { addEntry, kindOf } from "../src/writer-ledger.ts";
+import { buildRequest, countCases, END, kindRanges, writerOf } from "../src/writer-request.ts";
 import { fillSheet, readSheet } from "../src/writer-sheet.ts";
 import { sendOnSeat } from "../src/writer-seat.ts";
 
+/**
+ * The 독후감 passages this request's own task and sheet text calls for, widened by the ontology concepts
+ * (DORI_HOME/ontology-concepts.json, tools/onto_concepts.ts). Passages go to a writing model, so without the
+ * client-name hashes (the same files dok_recall reads) nothing is recalled and the count file says why.
+ */
+function recallPassages(home: string, texts: readonly string[]): Recalled & { off?: string; concepts: string } {
+  const stateDir = homeStateDir(home);
+  const hashFile = process.env["DORI_NAME_HASHES"] ?? join(stateDir, "case-name-hashes.json");
+  const saltFile = process.env["DORI_NAME_HASH_SALT_FILE"] ?? join(stateDir, "name_hash_salt");
+  const names = loadNameHashes(hashFile, saltFile);
+  const concepts = loadConcepts(home)?.concepts;
+  const have = concepts ? `${concepts.length} concepts` : `no ${conceptsPath(home)}`;
+  if (!names)
+    return { specs: [], onto: [], concepts: have, off: `no readable client-name hashes and salt (${hashFile})` };
+  const root = process.env["DORI_NOTES_ROOT"] ?? join(homedir(), "sobaegi-lead", "results");
+  if (!existsSync(root)) return { specs: [], onto: [], concepts: have, off: `no notes root ${root}` };
+  const text = texts.map((t) => readFileSync(t, "utf8")).join("\n");
+  return { ...recallFor(home, text, names, { root, concepts: concepts ?? [], ...RECALL }), concepts: have };
+}
+
 const USAGE = `usage:
   writer_request build --kind seo|card|video|legal --model argon|hydrogen --lane-dir DIR --task FILE [--task FILE]
-                       [--sheet FILE] [--cases PATH:START-END] [--cases PATH:START-END] [--label NAME]
+                       [--sheet FILE] [--cases PATH:START-END] [--cases PATH:START-END] [--label NAME] [--no-recall]
       -> DIR/requests/NN_<model>[_NAME].txt and .count; --sheet adds a word sheet's [key] slots (figure, table,
-         cover, alt, caption words) after the tasks, and --task may then be left out
+         cover, alt, caption words) after the tasks, and --task may then be left out. The 독후감 passages the task
+         and sheet call for are recalled and added (ontology concepts widen the query); the .count lists every atom
+         as [PATH:LINE] for the delivery review. --no-recall keeps only the kind's list and --cases
   writer_request fill --sheet FILE --answer FILE --out FILE.json
       -> the writer's words per [key] of the sheet, as JSON for the renderer; exit 1 if a key is missing or empty
   writer_request count FILE --kind seo|card|video|legal [--cases PATH:START-END] [--cases PATH:START-END]
@@ -40,15 +67,24 @@ try {
   if (stray.length > 0)
     throw new Refusal(`unexpected argument ${stray.join(" ")}: repeat the flag for each value\n${USAGE}`);
   if (cmd === "build") {
+    const tasks = a.flags.get("task") ?? [];
+    const sheet = one(a, "sheet");
+    const recalled = a.flags.has("no-recall")
+      ? { specs: [], onto: [], off: "--no-recall" }
+      : recallPassages(
+          home,
+          [...tasks, ...(sheet ? [sheet] : [])].filter((f) => existsSync(f)),
+        );
     const built = buildRequest({
       home,
       kind: kindOf(one(a, "kind")),
       model: writerOf(one(a, "model")),
       laneDir: need(one(a, "lane-dir"), "--lane-dir"),
-      tasks: a.flags.get("task") ?? [],
-      sheet: one(a, "sheet"),
+      tasks,
+      sheet,
       cases: a.flags.get("cases") ?? [],
       label: one(a, "label"),
+      recalled,
     });
     console.log(`BUILT ${built.path} dok=${built.dok} reject=${built.reject} repeat=${built.repeat}`);
   } else if (cmd === "fill") {

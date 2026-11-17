@@ -1,61 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { bestPassage, briefQuery, citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
+import { bestPassage, terms } from "../src/dok-passage.ts";
+import { briefQuery, citations, loadNotes, rank, recall, recallFor } from "../src/dok-recall.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
 import { buildRequest, readRange } from "../src/writer-request.ts";
-import { fakeNames, hashFiles } from "./name-hashes.ts";
-
-/** Made-up names none of the fixtures hold, for the tests that are not about names. */
-const NONE = fakeNames()!;
-
-const filler = (topic: string, n: number) =>
-  Array.from({ length: n }, (_, i) => `${topic} 이야기를 ${i}번째로 적은 줄이다. 다른 일과 겹치지 않는 내용이다.`);
-
-/** A results tree: three topics, a backup copy, an exact copy, and an index that must not count as a note. */
-function tree(): string {
-  const root = join(mkdtempSync(join(tmpdir(), "dok-recall-")), "sobaegi-lead", "results");
-  const note = (rel: string, lines: string[]) => {
-    mkdirSync(join(root, rel, ".."), { recursive: true });
-    writeFileSync(join(root, rel), `${lines.join("\n")}\n`);
-  };
-  const card = [
-    "# 독후감 — 카드뉴스 문구",
-    "",
-    ...filler("카드", 3),
-    "",
-    "## 카드뉴스 문구는 법률가 말로",
-    "",
-    ...filler("문구", 4),
-  ];
-  note("cardnews-1112/독후감_카드뉴스.md", card);
-  note("cardnews-1112/copy/독후감_카드뉴스.md", card);
-  note("cardnews-1112/_bak/독후감.md", ["# 독후감 — 카드뉴스 옛판", ...filler("카드뉴스", 3)]);
-  // Drafts, by file or folder name, each with its own text so only the name can leave it out.
-  for (const [i, rel] of [
-    "x/독후감_검수전.md",
-    "x/독후감_초안.md",
-    "x/수정전_독후감.md",
-    "r34/_교정전_보존/독후감.md",
-    "y/집필요청/독후감.md",
-    "y/한도종료_독후감.md",
-    "z/_읽기자료/독후감.md",
-    "wck-recall-1109/독후감_5차전_백업.md",
-    "readable-1110/독후감_opus_요청1.md",
-    "r109/109차_독후감_11-12절_카본보정후보.md",
-    "r111/carbon/독후감_3_실행stdout.md",
-    "pd/독후감_최종집필_지시.md",
-    "incident-multi-1115/pack/독후감_직업력표.md",
-    "legal-lexicon-r84/__none__/독후감.md",
-    "design-thinking-1112/research/local/books/독후감_학습하는법.md",
-  ].entries())
-    note(rel, [`# 독후감 — 카드뉴스 초안 ${i}`, ...filler(`초안${i}`, 3)]);
-  note("video-1111/독후감.md", ["# 독후감 — 영상 컷", "", ...filler("영상", 5)]);
-  note("fax-1110/독후감_팩스.md", ["# 독후감 — 팩스 보내기", "", ...filler("팩스", 5)]);
-  note("독후감_색인.md", ["# 색인", "cardnews-1112 video-1111 fax-1110"]);
-  return root;
-}
+import { filler, NONE, tree } from "./dok-recall-setup.ts";
+import { hashFiles } from "./name-hashes.ts";
 
 test("Korean words are matched with their particle stripped and by their two-letter pieces", () => {
   expect(terms("독후감을 카드뉴스는")).toEqual(["카드뉴스", "카드", "드뉴", "뉴스"]);
@@ -112,6 +64,35 @@ test("the budget keeps notes in rank order and names the next ones as over budge
   for (const p of recall(query, ranked, 3, 300, NONE).kept) expect(p.chars).toBeLessThanOrEqual(100);
 });
 
+test("a weak tail is cut: under the floor or sharing too few words, and a reading-list section never counts", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-floor-")), "results");
+  const note = (rel: string, lines: string[]) => {
+    mkdirSync(join(root, rel, ".."), { recursive: true });
+    writeFileSync(join(root, rel), `${lines.join("\n")}\n`);
+  };
+  note("noise-1111/독후감_난청.md", ["# 독후감 — 소음성 난청 청력 기준", "", ...filler("난청 청력", 4)]);
+  note("incident-1109/독후감_경위서.md", ["# 독후감 — 재해경위서 틀", "", ...filler("경위서 난청", 4)]);
+  note("read-1113/독후감_읽은것.md", [
+    "# 독후감 — 소음성 난청 청력 자료",
+    "",
+    "## 읽은 것",
+    "- `~/sobaegi-lead/results/noise-1111/독후감_난청.md` 소음성 난청 청력 기준을 정리한 글이다",
+    "- `~/sobaegi-lead/results/noise-1111/지침_원문.pdf` 소음성 난청 청력 업무처리기준 원문이다",
+  ]);
+  // Topics of their own, so the query's words are held by under half the notes and count.
+  for (const t of ["팩스", "영상", "카드뉴스", "휴업급여"])
+    note(`${t}-1110/독후감.md`, [`# 독후감 — ${t}`, "", ...filler(t, 4)]);
+  const query = "소음성 난청 청력 기준";
+  const ranked = rank(query, loadNotes(root));
+  const all = recall(query, ranked, 5, 100_000, NONE).kept.map((p) => relative(root, p.path));
+  expect(all).toContain("incident-1109/독후감_경위서.md");
+  expect(all).not.toContain("read-1113/독후감_읽은것.md");
+  const strict = recall(query, ranked, 5, 100_000, NONE, { minHit: 3 }).kept.map((p) => relative(root, p.path));
+  expect(strict).toEqual(["noise-1111/독후감_난청.md"]);
+  const floored = recall(query, ranked, 5, 100_000, NONE, { floor: 0.99 }).kept;
+  expect(floored.map((p) => relative(root, p.path))).toEqual(["noise-1111/독후감_난청.md"]);
+});
+
 test("a note other briefs and writer-cases cite ranks higher; the brief being recalled for is not counted", () => {
   const root = tree();
   const notes = loadNotes(root);
@@ -159,6 +140,35 @@ test("a section whose one paragraph is longer than the budget still gives a rang
     cases: [`${p.path}:${p.start}-${p.end}`],
   });
   expect(built.dok).toBe(1);
+});
+
+test("an ontology alias finds the note written under the other name, and the request lists its atoms by line", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-onto-")), "results");
+  mkdirSync(join(root, "injury-1110"), { recursive: true });
+  const note = join(root, "injury-1110", "독후감.md");
+  const lines = ["# 독후감 — 상병 이름", "", "## 다발성골절 및 내부 장기손상", ...filler("장기손상", 2)];
+  writeFileSync(note, `${lines.join("\n")}\n`);
+  const concepts = [{ type: "상병", name: "T0291", terms: ["다발성골절 및 내부 장기손상"] }];
+  const home = mkdtempSync(join(tmpdir(), "dok-onto-home-"));
+  const opts = { root, concepts, limit: 5, maxChars: 5000 };
+  expect(recallFor(home, "T0291 요양", NONE, { ...opts, concepts: [] }).specs).toEqual([]);
+  const got = recallFor(home, "T0291 요양", NONE, opts);
+  expect(got.onto).toEqual(["T0291→다발성골절 및 내부 장기손상"]);
+  expect(got.specs).toHaveLength(1);
+  const task = join(home, "task.md");
+  writeFileSync(task, "T0291 요양 글을 쓴다\n");
+  const built = buildRequest({
+    home,
+    kind: "seo",
+    model: "argon",
+    laneDir: join(home, "lane"),
+    tasks: [task],
+    recalled: got,
+  });
+  const count = readFileSync(built.path.replace(/\.txt$/, ".count"), "utf8").split("\n");
+  expect(count[0]).toEndWith("recall=1 onto=1");
+  expect(count).toContain("# 온톨로지: T0291→다발성골절 및 내부 장기손상");
+  expect(count).toContain(`[${note}:4] ${lines[3]}`);
 });
 
 test("a note with no case line gives no passage; two notes keep their shared words", () => {
