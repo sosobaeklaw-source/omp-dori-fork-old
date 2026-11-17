@@ -61,11 +61,16 @@ for (const runtime of ["herdr", "hc"] as const) {
 test("fresh reviewer receives the selected context and drops parent pane and managed-startup identities", async () => {
   const f = managedTerminal("herdr");
   let child: { argv: string[]; env: Record<string, string> } | undefined;
+  const asked: string[][] = [];
   f.world.gh = () => ({ code: 0, stdout: JSON.stringify({ headRefOid: "a".repeat(40) }) });
   const deps = {
     ...f.deps,
     exec: async (cmd: string, argv: readonly string[]) => {
       if (cmd === "gh") return f.world.exec(cmd, argv);
+      if (cmd === "git") {
+        asked.push([...argv]);
+        return { code: 0, stdout: "", stderr: "" };
+      }
       expect(cmd).toBe("env");
       expect(argv.some((part) => part.startsWith("UNRELATED_SECRET="))).toBe(false);
       const result = Bun.spawnSync([cmd, ...argv], { cwd: f.cwd });
@@ -81,6 +86,7 @@ test("fresh reviewer receives the selected context and drops parent pane and man
   };
   try {
     expect((await review(deps, "fixture/repo#7", "fixture/model")).verdict).toBe("CLEAR");
+    expect(asked).toEqual([["ls-remote", "https://github.com/fixture/repo.git", "refs/pull/7/head"]]);
     for (const [key, value] of Object.entries(f.expected)) {
       if (key !== "DORI_MANAGED_STARTUP") expect(child!.env[key]).toBe(value);
     }
