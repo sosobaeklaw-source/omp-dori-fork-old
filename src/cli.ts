@@ -5,6 +5,7 @@ import { runBacklog, runDuty, runLoop } from "./cli-loops.ts";
 import { status, up } from "./cli-up.ts";
 import { done, ready, report, startLane } from "./lanes.ts";
 import { mergeGate, review } from "./gate.ts";
+import { checkApproval, writeApproval } from "./publish-gate.ts";
 import { need, one, parse, textOf, USAGE } from "./cli-args.ts";
 import { defaultDeps, ROLES, type Deps } from "./harness.ts";
 import { ConfigError, hooksSettled } from "./hooks.ts";
@@ -36,6 +37,8 @@ const COMMANDS = new Set([
   "migrate",
   "lock",
   "priority",
+  "publish-approve",
+  "publish-check",
 ]);
 
 /** Prints the line for a delivery that did not land now and returns the exit code: HELD 3, everything else 0. */
@@ -166,6 +169,26 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
     case "status":
       status(d);
       return 0;
+    case "publish-approve": {
+      const approval = writeApproval(d.store.root, {
+        channel: one(a, "channel") ?? "",
+        action: one(a, "action") ?? "",
+        ownerMessageId: one(a, "owner-msg") ?? "",
+        artifacts: a.flags.get("artifact") ?? [],
+        note: one(a, "note"),
+      });
+      console.log(`APPROVED ${approval.id} owner=${approval.ownerMessageId} artifacts=${approval.artifacts.length}`);
+      return 0;
+    }
+    case "publish-check": {
+      const approval = checkApproval(d.store.root, {
+        channel: one(a, "channel") ?? "",
+        action: one(a, "action") ?? "",
+        artifacts: a.flags.get("artifact") ?? [],
+      });
+      console.log(`PASS ${approval.id} owner=${approval.ownerMessageId} ${approval.action} on ${approval.channel}`);
+      return 0;
+    }
     default:
       console.log(USAGE);
       return cmd === undefined || cmd === "help" ? 0 : 64;
