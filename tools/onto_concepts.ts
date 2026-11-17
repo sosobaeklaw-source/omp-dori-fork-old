@@ -65,7 +65,19 @@ function query(host: string, db: string, sql: string): Record<string, string | n
 
 const squeeze = (s: string): string => s.normalize("NFC").replace(/\s+/g, "");
 
+/** Replace the export in one step, so writer_request never reads half a file. */
+function writeConcepts(concepts: Concept[]): string {
+  const path = conceptsPath(defaultHome());
+  writeFileSync(`${path}.tmp`, `${JSON.stringify({ made: new Date().toISOString(), concepts }, null, 1)}\n`);
+  renameSync(`${path}.tmp`, path);
+  return path;
+}
+
 try {
+  if (process.argv.slice(2).some((x) => x === "--help" || x === "-h")) {
+    console.log(USAGE);
+    process.exit(0);
+  }
   const a = parse(process.argv.slice(2));
   if (a.pos.length > 0) throw new Refusal(USAGE);
   const host = one(a, "host") ?? "macmini";
@@ -75,10 +87,13 @@ try {
   // Only concepts with an allowed, unflagged public fact are exported; the allowlist is sanjai-agent's own, read at
   // run time. Without it nothing is exported rather than everything.
   const allow = readStudyDirs();
-  if (!allow)
+  if (!allow) {
+    // An earlier export may hold concepts this filter would drop: leave an empty file, not that one.
+    writeConcepts([]);
     throw new Refusal(
-      "cannot read sanjai-agent STUDY_DIRS (DORI_STUDY_DIRS, ~/sanjai-agent, ~/.omp-dori/onto-host): refusing to export",
+      "cannot read sanjai-agent STUDY_DIRS (DORI_STUDY_DIRS, ~/sanjai-agent, ~/.omp-dori/onto-host): exported no concepts",
     );
+  }
   const publicIds = new Set<number>();
   for (const r of query(host, dbPath, QUERIES.publicFacts))
     if (allowedSource(String(r["source"]), allow)) publicIds.add(Number(r["id"]));
@@ -120,9 +135,7 @@ try {
       return { type: String(o["type"]), name: own, terms: [...new Set(all)] };
     })
     .filter((c) => c.terms.length > 0);
-  const path = conceptsPath(defaultHome());
-  writeFileSync(`${path}.tmp`, `${JSON.stringify({ made: new Date().toISOString(), concepts }, null, 1)}\n`);
-  renameSync(`${path}.tmp`, path);
+  const path = writeConcepts(concepts);
   console.log(
     `WROTE ${path} ${concepts.length} concepts of ${objects.length} (${publicIds.size} with an allowed public fact)`,
   );

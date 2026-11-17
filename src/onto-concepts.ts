@@ -12,7 +12,8 @@
  * tools/onto_concepts.ts from six read-only queries and only read here.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const CONCEPT_TYPES = ["법령판례", "상병", "판단요소", "입증자료유형", "키워드", "신체부위", "직종"] as const;
 
@@ -28,12 +29,19 @@ export const conceptsPath = (home: string): string => join(home, "ontology-conce
 /**
  * sanjai-agent's `is_allowed_source` rule (scripts/ontology/refresh_public.py): a source under the
  * `sobaegi-lead/results` tree is public only from an allowed top folder (`allow`, read at run time); a source
- * outside the results tree is refused.
+ * outside the results tree is refused. The path is normalised first ("..", "." and doubled slashes), and only the
+ * one results tree counts (`root`, ~/sobaegi-lead/results): a relative path, another tree that merely holds a
+ * `sobaegi-lead/results` segment, or a path that climbs out of an allowed folder is refused.
  */
-export function allowedSource(source: string, allow: readonly string[]): boolean {
-  const parts = source.split("/");
-  const at = parts.findIndex((p, i) => i > 0 && parts[i - 1] === "sobaegi-lead" && p === "results");
-  return at !== -1 && at + 1 < parts.length && allow.includes(parts[at + 1]!);
+export function allowedSource(
+  source: string,
+  allow: readonly string[],
+  root: string = join(homedir(), "sobaegi-lead", "results"),
+): boolean {
+  if (!isAbsolute(source)) return false;
+  const rel = relative(resolve(root), resolve(source));
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+  return allow.includes(rel.split(sep)[0]!);
 }
 
 /** The exported concepts, or undefined when the file is missing or not the shape above. */
