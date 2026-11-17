@@ -40,7 +40,7 @@ describe("lead pulse", () => {
     expect(command).toContain("lead.md");
     expect(command).toContain("[LEAD-PULSE]");
     expect(command).toContain(`1 open orders, the 1 oldest: ${idAt(90)} 답없음 90m.`);
-    expect(command).toContain("run dori boot and dori orders --mine");
+    expect(command).toContain('run "$DORI_HOME/bin/dori" boot and "$DORI_HOME/bin/dori" orders --mine');
     expect(command).not.toContain("재해경위서");
     expect(command).not.toContain("\n");
     expect(s.w.calls.filter((c) => c.cmd !== "herdr")).toEqual([]);
@@ -151,7 +151,7 @@ describe("lead pulse", () => {
     expect(command).toContain(`${shown.join("; ")}.`);
     for (let i = 10; i < 15; i++) expect(command).not.toContain(idAt(500 - i * 20));
     expect(command).not.toContain("본문");
-    expect(command).toContain("dori boot and dori orders --mine for the whole list");
+    expect(command).toContain('"$DORI_HOME/bin/dori" boot and "$DORI_HOME/bin/dori" orders --mine for the whole list');
     expect(command!.length).toBeLessThan(2000);
   });
 

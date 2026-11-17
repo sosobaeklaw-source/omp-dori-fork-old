@@ -29,11 +29,12 @@ describe("the commands a prompt gives to `{{dori}}`", () => {
     }
   });
 
-  test("the lead prompt gives `boot`, `orders` and `send discord` to the skill command, not to `{{dori}}`", () => {
+  test("the lead prompt gives `boot`, `orders` and `send discord` to the skill command by its path, not to `{{dori}}`", () => {
     const lead = rendered("lead.md");
-    for (const cmd of ["boot", "orders", "send discord"]) {
-      expect(lead).toContain(`\`dori ${cmd}`);
+    for (const cmd of ["boot", "orders --mine", "orders close", "send discord"]) {
+      expect(lead).toContain(`\`"$DORI_HOME/bin/dori" ${cmd}`);
       expect(lead).not.toContain(`${MARK} ${cmd}`);
+      expect(lead).not.toContain(`\`dori ${cmd}`);
     }
   });
 });
