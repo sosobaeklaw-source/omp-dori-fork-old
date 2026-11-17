@@ -175,7 +175,7 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
         action: one(a, "action") ?? "",
         ownerMessageId: one(a, "owner-msg") ?? "",
         artifacts: a.flags.get("artifact") ?? [],
-        note: one(a, "note"),
+        ...(one(a, "note") !== undefined ? { note: one(a, "note")! } : {}),
       });
       console.log(`APPROVED ${approval.id} owner=${approval.ownerMessageId} artifacts=${approval.artifacts.length}`);
       return 0;
