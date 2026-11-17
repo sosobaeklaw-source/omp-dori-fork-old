@@ -81,19 +81,20 @@ export const withVoiceText = async (
 /**
  * The intake's emit. Without a transcriber every message prints at once, as before. With one, an empty-text voice
  * message returns a promise: the intake waits for it before the next message and before saving its cursor, so arrival
- * order holds and a crash mid-transcription replays it.
+ * order holds and a crash mid-transcription replays it. `print` gets the line to show and the message as Discord sent
+ * it, so anything kept verbatim keeps what the owner typed, never a transcript.
  */
 export const voiceEmit =
   (
-    print: (message: Inbound) => void,
+    print: (shown: Inbound, sent: Inbound) => void,
     voiceText: VoiceText | undefined,
     warn: (line: string) => void,
     opts: { prefix: string; deadlineMs: number },
   ) =>
   (message: Inbound): void | Promise<void> => {
     const heard = voiceText !== undefined && message.text.trim() === "" && message.attachments.some((a) => a.voice);
-    if (!heard) return print(message);
-    return withVoiceText(message, voiceText, warn, opts).then(print);
+    if (!heard) return print(message, message);
+    return withVoiceText(message, voiceText, warn, opts).then((shown) => print(shown, message));
   };
 
 /** The whole wait for one transcript, download included; past it the message prints with `""` and a WARN. */
@@ -124,6 +125,9 @@ export const discordInboundCommand = async (
     die("DORI_DISCORD_TRANSCRIBE must be 1, 0 or unset");
   if (transcribeOn === "1" && !voiceText) die("DORI_DISCORD_TRANSCRIBE=1 needs hooks.transcribe in config");
   const heardBy = transcribeOn === "1" ? voiceText : undefined;
+  // An empty marker would make a machine transcript read as the owner's own typed words.
+  const prefix = env["DORI_DISCORD_VOICE_PREFIX"] ?? DEFAULT_VOICE_PREFIX;
+  if (prefix.trim() === "") die("DORI_DISCORD_VOICE_PREFIX must not be empty");
   const intake = await discordInbound(
     new Discord(fetchHttp, realClock, token),
     (channelId) => fileDiscordInboundStore(stateDir, channelId),
@@ -131,20 +135,18 @@ export const discordInboundCommand = async (
   );
   const watching = all ? "all" : intake.channels().join(",");
   const home = defaultHome();
-  // The owner's reply to a post lands in the ledger verbatim; a ledger fault is reported and never holds intake.
-  const print = (message: Inbound) => {
-    console.log(formatDiscordInbound(message));
+  // The owner's reply to a post lands in the ledger verbatim, so it takes the typed text, never a transcript.
+  // A ledger fault is reported and never holds intake.
+  const print = (shown: Inbound, sent: Inbound) => {
+    console.log(formatDiscordInbound(shown));
     try {
-      const head = ledgerReply(home, stateDir, ownerId, message);
+      const head = ledgerReply(home, stateDir, ownerId, sent);
       if (head) console.log(`LEDGER ${head}`);
     } catch (e) {
-      console.log(`WARN ledger ${message.message}: ${(e as Error).message}`);
+      console.log(`WARN ledger ${sent.message}: ${(e as Error).message}`);
     }
   };
-  const emit = voiceEmit(print, heardBy, (l) => console.log(l), {
-    prefix: env["DORI_DISCORD_VOICE_PREFIX"] ?? DEFAULT_VOICE_PREFIX,
-    deadlineMs: VOICE_DEADLINE_MS,
-  });
+  const emit = voiceEmit(print, heardBy, (l) => console.log(l), { prefix, deadlineMs: VOICE_DEADLINE_MS });
   console.log(
     `INBOUND_READY discord owner=${ownerId} channel=${watching} bot=${intake.botId}${gateway ? " mode=gateway" : ""}${heardBy ? " transcribe=on" : ""}`,
   );
