@@ -14,6 +14,11 @@
 # PUBLIC_REPLY_TO=<owner message id>: the lead sets it only for public-material work that came from an owner Discord
 # message (never for case work). The brief then opens with the two lines `public: true` and `원글: <id>`, written here,
 # not by the model, so tools/ready_reply.ts answers that message when the lane is READY. Unset, the brief has neither.
+#
+# Ontology material: when DORI_HOME/onto-host names the ssh host that holds the ontology (the macmini), the request's
+#   first words are asked there (scripts.ontology.brief_materials, public study notes only) and what comes back is given
+#   to the planner after the request, as material and not as rules. No file, an unreachable host or no hit: the brief is
+#   planned without it. PLAN_ONTO=0 turns it off for one run.
 set -euo pipefail
 out=${1:?usage: plan-fable.sh <out-file> < request.md}
 model=${PLAN_MODEL:-anthropic/claude-fable-5-2}
@@ -31,7 +36,18 @@ if [ "$parukuri" = 1 ]; then
   example_file=${PARUKURI_EXAMPLE:-$home/results/parksilro-build-1116/결과.md}
   example=$(cat "$example_file") || { echo "plan-fable: no result example at $example_file" >&2; exit 1; }
 fi
-body=$(REQ="$req" MODEL="$model" EXAMPLE="$example" python3 -c '
+onto=""
+onto_host=$(cat "$home/onto-host" 2>/dev/null || true)
+if [ -n "$onto_host" ] && [ "${PLAN_ONTO:-1}" != 0 ]; then
+  caller="plan:$(basename "$out" .md | tr -cd 'A-Za-z0-9_.-')"
+  # Identifier-shaped numbers are cut from the question; the lookup refuses a question that holds one.
+  onto=$(printf '%s' "$req" | python3 -c 'import re, sys
+t = re.sub(r"\s+", " ", sys.stdin.read())
+print(re.sub(r"\d{6}-?\d{7}|\d{2,4}-\d{3,4}-\d{4}", " ", t)[:600])' \
+    | ssh -o BatchMode=yes -o ConnectTimeout=8 -o ControlMaster=no -o ControlPath=none "$onto_host" \
+      'q=$(cat); f=$(mktemp); cd ~/sanjai-agent && .venv/bin/python3 -m scripts.ontology.brief_materials --question "$q" --caller '"$caller"' -n 6 --out "$f" >/dev/null 2>&1 && cat "$f"; rm -f "$f"' 2>/dev/null) || onto=""
+fi
+body=$(REQ="$req" MODEL="$model" EXAMPLE="$example" ONTO="$onto" python3 -c '
 import json, os
 system = ("You write lane briefs for a coding/writing agent harness. Output one Markdown brief in Korean with sections: "
           "목표, 입력, 순서, 산출물, 멈춤 조건, 제약. Concrete paths and observable stop conditions; no checklists or score tables; "
@@ -47,6 +63,19 @@ if os.environ["EXAMPLE"]:
                "what changed for the owner, because it is posted as the reply to the owner\x27s message.")
     user += ("\n\n---\n결과 모양 예시: 끝난 레인 하나의 결과.md 전문이다. 규칙 목록이 아니라 잘 된 실물 하나다.\n\n"
              + os.environ["EXAMPLE"])
+if os.environ["ONTO"].strip():
+    # Each fact keeps the first 1,200 characters of its quote; the whole quote is at the source path it names.
+    kept, used = [], 0
+    for line in os.environ["ONTO"].split("\n"):
+        if line.startswith("## "):
+            used = 0
+        if line.startswith("> "):
+            if used > 1200:
+                continue
+            used += len(line)
+        kept.append(line)
+    user += ("\n\n---\n온톨로지에서 꺼낸 공개 자료: 이 요청과 낱말이 겹치는, 우리가 공부해 둔 독후감·사실표 발췌다. 규칙 목록이 아니라 재료다. "
+             "이 일에 맞는 대목만 브리프의 입력에 출처 경로와 함께 옮기고, 맞지 않는 것은 옮기지 않는다.\n\n" + "\n".join(kept))
 print(json.dumps({"model": os.environ["MODEL"], "max_tokens": 32000, "reasoning_effort": os.environ.get("PLAN_EFFORT", "xhigh"),
                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}))')
 if [ -n "${PLAN_DRY_RUN:-}" ]; then printf '%s\n' "$body" > "$out"; echo "$out"; exit 0; fi
