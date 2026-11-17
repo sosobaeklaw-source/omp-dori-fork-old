@@ -56,6 +56,7 @@ const USAGE = `dori <command> [options]
   can-launch                           exit 0 if the host has room for a new lane, else print why and exit 4
   orders [--since 3d] [--mine] [--json]   owner orders still open, from both Macs' records (tools/open_orders.ts)
   orders close <id>... --why LINE      close orders that need no result
+  lead-pulse                           is the lead's pane there? writes state/lead-alive.json; the second dead check in a row starts the lead
   send <slack|telegram|discord> --to TARGET --text TEXT [--thread ID] [--edit ID]
                                        Discord also [--reply ID] (as a reply) [--closes ID] (result for that message)
                                        Discord accepts channel names with DORI_DISCORD_GUILD_ID; --thread needs no --to and also targets edits

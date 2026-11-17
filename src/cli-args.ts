@@ -22,6 +22,7 @@ export const USAGE = `dori harness - a proactive multi-session harness on herdr 
   dori harness loop [--once] [--interval S] [--max-lanes N] [--max-starts N] [--max-load L] [--force]
                                                       hourly: sync backlog, audit missed work, start the next item, ask decisions
   dori harness loop stop [--text WHY] | resume | status   kill switch and last run
+  dori harness lead-pulse                             is the lead's pane there? writes lead-alive.json; the second dead check in a row starts the lead
   dori harness backlog add <id> --brief FILE [--title T] [--priority 1-9] [--cwd DIR] [--decision Q]
   dori harness backlog list | decide <id> --text ANSWER | drop <id> [--text WHY]
   dori harness backlog import <owner/repo> [--label dori] [--cwd DIR]   open labelled issues -> items

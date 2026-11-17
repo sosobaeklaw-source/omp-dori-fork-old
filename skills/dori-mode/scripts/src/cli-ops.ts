@@ -10,7 +10,9 @@ import { guardTick, sampleHost } from "./host-guard.ts";
 import { fetchHttp } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
 import { Reports } from "./reports.ts";
+import { ordersArgv } from "../../../../src/orders-mine.ts";
 import { runOrders } from "../../../../tools/open_orders.ts";
+import { runHarness } from "./cli-harness.ts";
 import { configPath } from "./config.ts";
 import { canLaunch } from "./routing.ts";
 import { realClock, run } from "./run.ts";
@@ -123,20 +125,19 @@ export const opsCommands: Readonly<Record<string, Command>> = {
     console.log(v.ok ? "CAN_LAUNCH" : `HOLD ${v.reasons.join(" | ")}`);
     process.exit(v.ok ? 0 : 4);
   },
+  /** The lead pulse (src/lead-pulse.ts), through the harness: the scheduled sync calls it. */
+  "lead-pulse": async () => {
+    process.exit(await runHarness(["lead-pulse"]));
+  },
   /** This Mac's records plus the macmini's synced under `<stateDir>/macmini/`; `close` writes `orders-closed.log`. */
   orders: async ({ positionals, opt, values, config }) => {
     const home = dirname(configPath());
     const s = config.stateDir;
-    const closed = ["--closed", join(s, "orders-closed.log")];
     const argv =
       positionals[0] === "close"
-        ? ["close", ...positionals.slice(1), ...closed, "--why", opt("why") ?? ""]
+        ? ["close", ...positionals.slice(1), "--closed", join(s, "orders-closed.log"), "--why", opt("why") ?? ""]
         : [
-            ...["--inbound", `macbook=${join(s, "inbound.log")}`, "--lanes", `macbook=${join(home, "lanes")}`],
-            ...["--sent-log", join(s, "discord-sent.log"), "--ready-log", join(s, "ready-reply.log"), ...closed],
-            ...["--reply-log", join(s, "macmini", "reply.log")],
-            ...["--orders-json", `macmini=${join(s, "macmini", "open-orders.json")}`],
-            ...["--since", opt("since") ?? "3d"],
+            ...ordersArgv(home, s, opt("since") ?? "3d"),
             ...(values["mine"] ? ["--mine", "macbook"] : []),
             ...(values["json"] ? ["--json"] : []),
           ];

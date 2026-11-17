@@ -21,6 +21,31 @@ export function renderPrompt(d: Deps, name: string): string {
   return out;
 }
 
+const agent = (d: Deps, name: string): string =>
+  `${agentCommand(d, "dori")} --append-system-prompt ${shq(renderPrompt(d, name))}`;
+
+/**
+ * Opens the lead as a new workspace's root pane and registers it: `dori up` and the lead pulse start it the same way.
+ * `first` is the lead's first message, given on the command line as a lane's kickoff is.
+ */
+export async function openLead(d: Deps, cwd: string, first?: string): Promise<SessionRef> {
+  // herdr ignores the group of a workspace-root session and reports the new workspace as the lead ref's group.
+  const lead = await openSession(
+    d.runtimes.default,
+    {
+      name: "dori",
+      role: "lead",
+      container: "workspace-root",
+      cwd,
+      env: harnessLaunchEnv(d),
+      group: groupId(d.store.root),
+    },
+    `${agent(d, "lead.md")}${first === undefined ? "" : ` ${shq(first)}`}`,
+  );
+  d.store.setRole("lead", lead);
+  return lead;
+}
+
 /**
  * Opens lead, duty, the duty loop and the hourly loop on the selected runtime and registers all four roles. herdr: the
  * lead is a new workspace's root pane, duty a tab in it, the loops splits below duty. hc: four terminals labelled with
@@ -29,20 +54,13 @@ export function renderPrompt(d: Deps, name: string): string {
 export async function up(d: Deps, cwd: string): Promise<void> {
   const rt = d.runtimes.default;
   const env = harnessLaunchEnv(d);
-  const agent = (name: string) => `${agentCommand(d, "dori")} --append-system-prompt ${shq(renderPrompt(d, name))}`;
-  // herdr ignores the group of a workspace-root session and reports the new workspace as the lead ref's group.
-  const lead = await openSession(
-    rt,
-    { name: "dori", role: "lead", container: "workspace-root", cwd, env, group: groupId(d.store.root) },
-    agent("lead.md"),
-  );
-  d.store.setRole("lead", lead);
+  const lead = await openLead(d, cwd);
   const group = lead.group;
   const inGroup = group === undefined ? {} : { group };
   const duty = await openSession(
     rt,
     { name: "duty", role: "duty", container: "tab", cwd, env, ...inGroup },
-    agent("duty.md"),
+    agent(d, "duty.md"),
   );
   d.store.setRole("duty", duty);
   const loop = await openSession(
