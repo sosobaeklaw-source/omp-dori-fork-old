@@ -15,7 +15,7 @@ import { conceptsPath, loadConcepts } from "../src/onto-concepts.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
-import { addEntry, kindOf } from "../src/writer-ledger.ts";
+import { addEntry, kindOf, pairEntry } from "../src/writer-ledger.ts";
 import { buildRequest, countCases, END, kindRanges, writerOf } from "../src/writer-request.ts";
 import { fillSheet, readSheet } from "../src/writer-sheet.ts";
 import { sendOnSeat } from "../src/writer-seat.ts";
@@ -43,7 +43,8 @@ function recallPassages(home: string, texts: readonly string[]): Recalled & { of
 const USAGE = `usage:
   writer_request build --kind seo|card|video|legal --model argon|hydrogen --lane-dir DIR --task FILE [--task FILE]
                        [--sheet FILE] [--cases PATH:START-END] [--cases PATH:START-END] [--label NAME] [--no-recall]
-      -> DIR/requests/NN_<model>[_NAME].txt and .count; --sheet adds a word sheet's [key] slots (figure, table,
+      -> DIR/requests/NN_<model>[_NAME].txt and .count; DORI_HOME/독후감/소화본/<kind>.md, when there, opens the body
+         whole (first line "소화: YYYY-MM-DD HH:MM", else exit 1) and the .count head ends digest=DATE; --sheet adds a word sheet's [key] slots (figure, table,
          cover, alt, caption words) after the tasks, and --task may then be left out. The 독후감 passages the task
          and sheet call for are recalled and added (ontology concepts widen the query); the .count lists every atom
          as [PATH:LINE] for the delivery review. --no-recall keeps only the kind's list and --cases
@@ -53,6 +54,8 @@ const USAGE = `usage:
       -> exit 1 unless every case line of those passages sits above the task line of FILE
   writer_request add --kind KIND[,KIND]|all --msg ID --text TEXT [--post ID] [--repeat ID]
                      [--before TEXT --after TEXT] [--date "YYYY-MM-DD HH:MM"]
+  writer_request pair --msg ID --before TEXT --after TEXT
+      -> puts 전:/후: under that entry's 원문 line; exit 1 if the msg is missing or already has them
   writer_request send --model argon|hydrogen --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
                       [--runner gemini_web_runner.mjs]
       -> runs the runner on the first free seat of DORI_HOME/writer-seats.txt, waits only while all are busy or
@@ -113,6 +116,14 @@ try {
       date: one(a, "date"),
     });
     console.log(`ADDED ${head}`);
+  } else if (cmd === "pair") {
+    const head = pairEntry({
+      home,
+      msg: need(one(a, "msg"), "--msg"),
+      before: need(one(a, "before"), "--before"),
+      after: need(one(a, "after"), "--after"),
+    });
+    console.log(`PAIRED ${head}`);
   } else if (cmd === "send") {
     const out = need(one(a, "out"), "--out");
     const runner = one(a, "runner") ?? join(homedir(), "sanjai-agent", "scripts", "gemini_web_runner.mjs");

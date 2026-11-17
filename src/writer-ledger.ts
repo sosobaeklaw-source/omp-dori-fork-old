@@ -2,7 +2,7 @@
  * The owner's rejection ledger (`<home>/반복지적.md`): his words when he sent work back, verbatim, one `## ` entry
  * each, an entry marked `반복 <id>` when he said it again. `writer-request.ts` copies the entries into every request.
  */
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Refusal } from "./refusal.ts";
 
@@ -98,4 +98,33 @@ export function addEntry(input: AddInput): string {
   parseLedger(lines.join("\n"));
   appendFileSync(ledgerPath(input.home), `${lines.join("\n")}\n`);
   return lines[1]!;
+}
+
+/**
+ * Put the sentences fixed for one entry, `전:` then `후:`, after the entry's last non-blank line (where `addEntry`
+ * writes them), however many lines its 원문 runs over. The entry is found by its heading line. Every other byte of the
+ * ledger stays as it was, and the new ledger must parse to the same entries before it replaces the old one. Refused
+ * when the msg is not in the ledger or its text already ends with a 전/후 pair.
+ */
+export function pairEntry(input: { home: string; msg: string; before: string; after: string }): string {
+  const text = readFileSync(ledgerPath(input.home), "utf8");
+  const entries = parseLedger(text);
+  const entry = entries.find((e) => e.msg === input.msg);
+  if (!entry) throw new Refusal(`msg ${input.msg} is not in the ledger`);
+  const lines = text.split("\n");
+  const head = entry.block.split("\n")[0]!;
+  const start = lines.indexOf(head);
+  const next = lines.findIndex((l, i) => i > start && l.startsWith("## "));
+  let last = (next < 0 ? lines.length : next) - 1;
+  while (lines[last]!.trim() === "") last--;
+  if (/^전: ".*"$/.test(lines[last - 1] ?? "") && /^후: ".*"$/.test(lines[last]!) && last - 1 > start + 1)
+    throw new Refusal(`msg ${input.msg} already has 전/후`);
+  const out = [...lines.slice(0, last + 1), `전: "${input.before}"`, `후: "${input.after}"`, ...lines.slice(last + 1)];
+  const after = parseLedger(out.join("\n"));
+  if (after.length !== entries.length || after.some((e, i) => e.msg !== entries[i]!.msg))
+    throw new Refusal("--before and --after must not start a new ledger entry");
+  const tmp = `${ledgerPath(input.home)}.pair-${process.pid}`;
+  writeFileSync(tmp, out.join("\n"));
+  renameSync(tmp, ledgerPath(input.home));
+  return head;
 }
