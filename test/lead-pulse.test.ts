@@ -175,6 +175,7 @@ describe("lead pulse", () => {
     const s = setup();
     mkdirSync(join(s.state, "macmini"), { recursive: true });
     writeFileSync(join(s.state, "macmini", "lead-alive.json"), JSON.stringify({ at: T0 - 60 * 60_000 }));
+    writeFileSync(join(s.state, "macmini-pulse.json"), JSON.stringify({ seen: "fresh", fetched: true }));
     s.d.store.setStop(T0, "off");
     await leadPulse(s.d, { DORI_ROOM_SEND: "/fake/room.sh", DORI_MINI_FETCHED_AT: String(T0) });
     expect(s.w.calls.filter((c) => c.cmd === "/fake/room.sh")).toEqual([]);
