@@ -8,6 +8,10 @@
 #    --info=skip1 reports each such skipped file ("… is newer"); the sorted list goes to $H/state/owner-sync.newer and the log gets one count line
 #    only when that list changes. Backups, evidence/ and json are left out.
 #    The writer case lists (~/.omp-dori/writer-cases/*.txt) point at these paths, so a passage opens the same sentence on both Macs. rootfix-pr4-1116.
+# 5) 독후감·독서메모 written on the MacBook → the macmini's ~/sobaegi-lead/results/, new files only (--ignore-existing: a file the
+#    macmini already has is never overwritten). Two sources: the MacBook's own ~/sobaegi-lead/results/ and each omp lane's
+#    DORI_HOME/results/<lane>/독후감*.md (top level of the lane folder only; copies kept deeper as references stay). The ontology
+#    refresh (macmini 04:30) reads only the macmini's results folder, so a note written here reached it only after going up. sync-up-1117.
 # The log gets a line only when something was copied, the kept-as-newer list changed, or a step failed.
 set -uo pipefail
 SSH='ssh -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 -o BatchMode=yes'
@@ -39,4 +43,13 @@ else
     printf '%s\n' "$newer" > "$NEWER"
     say 독후감 "맥북이 더 새 것 $(printf '%s' "$newer" | grep -c .)개, 목록 $NEWER"
   fi
+fi
+UP=(-rti --ignore-existing -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' --exclude='_tools/')
+out=$("$RSYNC" "${UP[@]}" --include='*/' --include='*독후감*.md' --include='독서메모.md' --exclude='*' --prune-empty-dirs \
+  "$HOME/sobaegi-lead/results/" macmini:sobaegi-lead/results/ 2>&1) || out="FAILED $out"
+say 독후감올림 "$(printf '%s\n' "$out" | grep -E '^<f|^FAILED|rsync' | head -40)"
+if [ -d "$H/results" ]; then
+  out=$("$RSYNC" "${UP[@]}" --include='/*/' --include='/*/독후감*.md' --exclude='*' --prune-empty-dirs \
+    "$H/results/" macmini:sobaegi-lead/results/ 2>&1) || out="FAILED $out"
+  say 독후감올림 "$(printf '%s\n' "$out" | grep -E '^<f|^FAILED|rsync' | head -40)"
 fi
