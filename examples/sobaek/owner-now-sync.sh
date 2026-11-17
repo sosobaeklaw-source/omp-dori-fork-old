@@ -13,19 +13,19 @@
 #    (never overwritten). Two sources: the MacBook's own ~/sobaegi-lead/results/ and each omp lane's
 #    DORI_HOME/results/<lane>/독후감*.md (top level of the lane folder only; copies kept deeper as references stay). The ontology
 #    refresh (macmini 04:30) reads only the macmini's results folder, so a note written here reached it only after going up. sync-up-1117.
-# 5) ~/.omp-dori/독후감/소화본/ (the digests) → macmini ~/.omp-dori/독후감/소화본/. The MacBook copy is the only one anyone edits; copies go one way,
+# 6) ~/.omp-dori/독후감/소화본/ (the digests) → macmini ~/.omp-dori/독후감/소화본/. The MacBook copy is the only one anyone edits; copies go one way,
 #    so an edit made on the macmini is overwritten. There is no --delete: a digest retired on the MacBook must also be removed on the macmini by hand.
-# 6) Records between the Macs, one way each, record files only (no case folder, no lane report text). macmini → MacBook,
+# 7) Records between the Macs, one way each, record files only (no case folder, no lane report text). macmini → MacBook,
 #    from ~/sobaegi-lead/state/ to $H/state/macmini/: open-orders.json, reply.log, lead-alive.json (a file the macmini does not have yet is skipped).
-# 7) `dori lead-pulse` (src/lead-pulse.ts): is the lead's pane there, start it after two dead checks in a row, tell the room once
+# 8) `dori lead-pulse` (src/lead-pulse.ts): is the lead's pane there, start it after two dead checks in a row, tell the room once
 #    when the macmini's lead-alive.json above was not renewed for 15 minutes before this run's fetch of it (DORI_MINI_FETCHED_AT is
 #    set only when that fetch succeeded: after a failed fetch the pulse judges nothing and sends nothing). The local copy of that
 #    file is removed before the fetch, so what the pulse judges is a file this fetch brought: one the macmini no longer has is
-#    missing, never an old copy judged against a fresh fetch time. It runs after 6 so it reads the macmini's newest file,
+#    missing, never an old copy judged against a fresh fetch time. It runs after 7 so it reads the macmini's newest file,
 #    under PULSE_TIMEOUT seconds (default 90), and a failed or hung pulse never stops the copies that follow. launchd's PATH has no
 #    ~/.local/bin, where herdr lives, so it is added here.
-# 8) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
-#    files inbound.log, discord-sent.log, ready-reply.log, to-macmini.log, orders-closed.log, lead-alive.json (the pulse of 7), and
+# 9) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
+#    files inbound.log, discord-sent.log, ready-reply.log, to-macmini.log, orders-closed.log, lead-alive.json (the pulse of 8), and
 #    lanes/<file>.json made here from the lane records: the key, the status, lastActivityAt and the order ids the lane marks on
 #    purpose (`orders` in its record, or the `회장님 원문(<id>[, <id>])` line among the first five non-empty lines of its brief; see tools/open_orders.ts), never
 #    any text. It is built in lanes-summary.new and swapped in only when that succeeds; a lane file that cannot be read is skipped
