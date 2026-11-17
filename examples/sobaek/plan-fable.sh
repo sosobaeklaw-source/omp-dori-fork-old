@@ -73,6 +73,8 @@ if os.environ["ONTO"].strip():
             if used > 1200:
                 continue
             used += len(line)
+            if used > 1200:
+                line = line[:max(40, len(line) - (used - 1200))] + " …"
         kept.append(line)
     user += ("\n\n---\n온톨로지에서 꺼낸 공개 자료: 이 요청과 낱말이 겹치는, 우리가 공부해 둔 독후감·사실표 발췌다. 규칙 목록이 아니라 재료다. "
              "이 일에 맞는 대목만 브리프의 입력에 출처 경로와 함께 옮기고, 맞지 않는 것은 옮기지 않는다.\n\n" + "\n".join(kept))

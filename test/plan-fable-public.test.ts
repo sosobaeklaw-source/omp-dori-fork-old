@@ -57,6 +57,7 @@ test("ontology material reaches the planner only when onto-host is set and the h
   expect(withHost).toContain("온톨로지에서 꺼낸 공개 자료");
   expect(withHost).toContain("## 1. 소음성 난청 인정 기준");
   expect(withHost).not.toContain("둘째 줄");
+  expect(withHost).not.toContain("가".repeat(1300));
   expect(requestBody(material, false)).toBe("난청 글 리라이트");
   expect(requestBody(undefined, true)).toBe("난청 글 리라이트");
 });
