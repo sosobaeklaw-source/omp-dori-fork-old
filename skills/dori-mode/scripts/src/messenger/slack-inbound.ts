@@ -23,12 +23,18 @@ type Counted = { readonly id: string; readonly has_unreads?: boolean; readonly m
 
 export type InboundOptions = { readonly selfUserId: string; readonly threadsViewLimit?: number };
 
+/**
+ * One poll. Every message goes to `emit` only after all three sources were read, and the own-thread positions are saved
+ * only after every message was emitted: a failed read or emit moves no cursor, so the next poll returns them again.
+ */
 export const pollSlackInbound = async (
   slack: Slack,
   ledger: ThreadLedger,
   opts: InboundOptions,
-): Promise<Inbound[]> => {
+  emit: (message: Inbound) => void | Promise<void>,
+): Promise<void> => {
   const out: Inbound[] = [];
+  const seenUpTo: { channel: string; rootTs: string; ts: string }[] = [];
   const seen = new Set<string>();
   const add = (i: Inbound) => {
     const k = `${i.channel}:${i.ts}`;
@@ -46,8 +52,8 @@ export const pollSlackInbound = async (
     if (!channel) continue;
     for (const m of t.unread_replies ?? []) {
       if (!m.ts || !fromOthers(m)) continue;
+      // No position is taken from this partial view: an own thread's older unseen replies are read below.
       add({ source: "threads-view", channel, ts: m.ts, threadTs: m.thread_ts, user: m.user, text: m.text });
-      if (m.thread_ts) await ledger.markSeen(channel, m.thread_ts, m.ts);
     }
   }
 
@@ -66,7 +72,7 @@ export const pollSlackInbound = async (
       if (fromOthers(m))
         add({ source: "own-thread", channel: t.channel, ts: m.ts, threadTs: t.rootTs, user: m.user, text: m.text });
     }
-    if (newest !== t.seenTs) await ledger.markSeen(t.channel, t.rootTs, newest);
+    if (newest !== t.seenTs) seenUpTo.push({ channel: t.channel, rootTs: t.rootTs, ts: newest });
   }
 
   const counts = (await slack.call("client.counts", {})) as {
@@ -82,5 +88,6 @@ export const pollSlackInbound = async (
     if (c.has_unreads || (c.mention_count ?? 0) > 0)
       add({ source: "unread", channel: c.id, ts: "", text: `${c.mention_count ?? 0} mention(s), unread` });
   }
-  return out;
+  for (const message of out) await emit(message);
+  for (const s of seenUpTo) await ledger.markSeen(s.channel, s.rootTs, s.ts);
 };

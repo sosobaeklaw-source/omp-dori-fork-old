@@ -25,6 +25,7 @@ test("successful close records a pending lesson with the lane's repo", async () 
   const state = withState();
   try {
     const deps = depsFor(newWorld(), fakeClock(T0), state.dir);
+    await deps.registry.create(lane);
     // When an optional lesson accompanies close.
     const result = await closeLane(deps, lane, "verified", lesson);
     // Then both close and lesson persist.
@@ -63,6 +64,7 @@ test("lesson storage failure warns but does not block a valid close", async () =
   const state = withState();
   try {
     const deps = depsFor(newWorld(), fakeClock(T0), state.dir);
+    await deps.registry.create(lane);
     mkdirSync(join(state.dir, "lessons.jsonl"));
     // When the optional write fails.
     const result = await closeLane(deps, lane, "verified", lesson);
@@ -80,6 +82,7 @@ test("omitting a lesson leaves the existing close path independent of the journa
   const state = withState();
   try {
     const deps = depsFor(newWorld(), fakeClock(T0), state.dir);
+    await deps.registry.create(lane);
     writeFileSync(join(state.dir, "lessons.jsonl"), "invalid\n");
     // When no lesson is requested.
     const result = await closeLane(deps, lane, "verified");

@@ -64,8 +64,8 @@ describe("a session id used again after a migration moved its inbox away", () =>
     s.pane.status = "working";
     await migrated(s.d);
     await migrated(s.d, NEW, OLD);
-    await s.d.store.enqueue(OLD, { at: 2, from: "cli", text: "old id" });
-    await s.d.store.enqueue(NEW, { at: 2, from: "cli", text: "new id" });
+    await s.d.store.enqueue(OLD, { at: 2, from: "cli", text: "old id" }, false);
+    await s.d.store.enqueue(NEW, { at: 2, from: "cli", text: "new id" }, false);
     expect({ old: s.d.store.queued(OLD).map((m) => m.text), new: s.d.store.queued(NEW).map((m) => m.text) }).toEqual({
       old: ["old id"],
       new: ["new id"],

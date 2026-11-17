@@ -1,6 +1,6 @@
+import { isOmpArgv } from "../../../../src/runtime/omp.ts";
 import type { SessionRef } from "../../../../src/runtime/types.ts";
-import { isOmpCommand } from "./config.ts";
-import type { FlowDeps } from "./done-flow.ts";
+import { type FlowDeps, movedOn } from "./done-flow.ts";
 import type { GoalStatus } from "./lane-state.ts";
 import { trustedPaneState } from "./session-id.ts";
 import { runtimesOf } from "./run.ts";
@@ -34,7 +34,7 @@ const goalCommand = async (
   target: GoalStatus,
 ): Promise<"confirmed" | "unconfirmed" | "failed"> => {
   const rts = runtimesOf(deps);
-  const omp = isOmpCommand(deps.config.agentCommand);
+  const omp = isOmpArgv(deps.config.agentCommand);
   const shown = omp ? NO_GOAL_SHOWN : target === "paused" ? PAUSED_SHOWN : RESUMED_SHOWN;
   const before = count(await readScreen(rts, ref, 200), shown);
   if ((await sendVerified(rts, deps.clock, ref, text)) === "failed") return "failed";
@@ -66,12 +66,15 @@ export const pauseLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
   if (goal !== "confirmed")
     return { lane, lines: [`PAUSE_UNVERIFIED ${lane.key} /goal pause ${goal}; lane left ${status}`], code: 3 };
   const at = new Date(deps.clock.now()).toISOString();
-  const paused = withStatus(lane, "paused", note, at, {
-    pausedFrom: status,
-    pausedSeenWorking: undefined,
-    lastFreshnessNote: undefined,
-  });
-  await deps.registry.write(paused);
+  // The goal command took pane round trips: a claim or close written meanwhile is not overwritten with paused.
+  const paused = await deps.registry.transition(lane, (current) =>
+    withStatus(current, "paused", note, at, {
+      pausedFrom: status,
+      pausedSeenWorking: undefined,
+      lastFreshnessNote: undefined,
+    }),
+  );
+  if (!paused) return { lane, lines: [await movedOn(deps, lane, "pause (its goal is paused)")], code: 3 };
   const rts = runtimesOf(deps);
   const running = (await statusLookup(rts, ref)).status === "working";
   if (running) await rts.for(ref).keys(ref, ["escape"]);
@@ -93,13 +96,15 @@ export const resumeLane = async (deps: FlowDeps, lane: Lane, note: string): Prom
     return { lane, lines: [`RESUME_UNVERIFIED ${lane.key} /goal resume ${goal}; lane left paused`], code: 3 };
   const now = deps.clock.now();
   // Quiet time starts again at the resume: a long pause must not turn into an instant nudge.
-  const resumed = withStatus(lane, beforePause(lane), note, new Date(now).toISOString(), {
-    lastReplyAt: now,
-    pausedFrom: undefined,
-    pausedSeenWorking: undefined,
-    lastFreshnessNote: undefined,
-  });
-  await deps.registry.write(resumed);
+  const resumed = await deps.registry.transition(lane, (current) =>
+    withStatus(current, beforePause(current), note, new Date(now).toISOString(), {
+      lastReplyAt: now,
+      pausedFrom: undefined,
+      pausedSeenWorking: undefined,
+      lastFreshnessNote: undefined,
+    }),
+  );
+  if (!resumed) return { lane, lines: [await movedOn(deps, lane, "resume (its goal is resumed)")], code: 3 };
   return { lane: resumed, lines: [`RESUMED ${lane.key} as ${statusOf(resumed)}, goal resumed`], code: 0 };
 };
 
@@ -118,11 +123,16 @@ export const checkPausedLane = async (deps: FlowDeps, lane: Lane): Promise<Pause
   if (!working) {
     // Idle again: the next working stretch is new information and is reported again.
     if (lane.pausedSeenWorking || lane.lastFreshnessNote)
-      await deps.registry.write({ ...lane, pausedSeenWorking: undefined, lastFreshnessNote: undefined });
+      await deps.registry.transition(lane, (current) => ({
+        ...current,
+        pausedSeenWorking: undefined,
+        lastFreshnessNote: undefined,
+      }));
     return null;
   }
+  // Only while the lane is still paused: a resume written during the status read is never turned back.
   if (!lane.pausedSeenWorking) {
-    await deps.registry.write({ ...lane, pausedSeenWorking: true });
+    await deps.registry.transition(lane, (current) => ({ ...current, pausedSeenWorking: true }));
     return null;
   }
   return { lane, outcome: "working-while-paused" };

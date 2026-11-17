@@ -1,15 +1,18 @@
-import { mkdirSync, readdirSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { takeLock } from "./checkpoint-lock.ts";
 import type { BudgetLimits } from "./supervision-observe.ts";
 
+// A writer holds a lane's lock for one synchronous read and write, so a short wait covers any live contention.
+const LOCK_WAIT_MS = 5_000;
+const LOCK_RETRY_MS = 10;
+
 export const LANE_KEY = /^[a-z0-9][a-z0-9._-]{1,60}$/;
-/**
- * `lead` names the lead, never a lane: records the lead writes (lessons with `lane: "lead"`) and lead-only checks tell
- * the two apart by this key, so launch and adopt refuse it. LANE_KEY stays as it is because those records still carry it,
- * and keys are lowercase-only, so the exact match is the whole check.
- */
+// `lead` names the lead, never a lane: records the lead writes (lessons with `lane: "lead"`) and lead-only checks tell
+// the two apart by this key, so launch and adopt refuse it. LANE_KEY stays as it is because those records still carry
+// it, and keys are lowercase-only, so the exact match is the whole check.
 export const RESERVED_LANE_KEY = "lead";
 
 export type LaneStatus = "working" | "paused" | "done-claimed" | "verified-done" | "not-done" | "closed";
@@ -83,6 +86,13 @@ const sameSession = (a: SessionRef | undefined, b: SessionRef): boolean =>
 
 export const statusOf = (lane: Lane): LaneStatus => (lane.closedAt ? "closed" : (lane.status ?? "working"));
 
+/**
+ * The lane's status generation: every status change (a claim, objection, verification, pause, resume or close) goes
+ * through `withStatus` and appends one history entry, even when the status stays the same, as a second objection does.
+ * Bookkeeping fields (freshness notes, `claim.emitted`, a receipt) leave it as it is.
+ */
+const generation = (lane: Lane): string => `${lane.openedAt} ${lane.history?.length ?? 0} ${statusOf(lane)}`;
+
 export const withStatus = (
   lane: Lane,
   status: LaneStatus,
@@ -107,16 +117,85 @@ export class Registry {
   }
 
   async read(key: string): Promise<Lane | null> {
-    const f = Bun.file(this.path(key));
-    return (await f.exists()) ? upgradeLane((await f.json()) as Lane) : null;
+    return this.readNow(key);
+  }
+
+  /**
+   * Runs `fn` under the lane's writer lock. `fn` is synchronous, so the lock is held for one read and one write and
+   * never across pane, git or network I/O. Another writer's lock is waited out; a dead or stale one is taken over.
+   */
+  private async locked<T>(key: string, fn: () => T): Promise<T> {
+    mkdirSync(this.dir, { recursive: true });
+    const lock = `${this.path(key)}.lock`;
+    const fail = (m: string) => new Error(`lane registry lock of ${key} ${m}`);
+    const deadline = Date.now() + LOCK_WAIT_MS;
+    for (;;) {
+      const held = takeLock(lock, Date.now(), fail);
+      if (typeof held !== "string") {
+        try {
+          return fn();
+        } finally {
+          held();
+        }
+      }
+      if (Date.now() >= deadline) throw new Error(`lane registry locked: ${key} (${held})`);
+      await Bun.sleep(LOCK_RETRY_MS);
+    }
+  }
+
+  private readNow(key: string): Lane | null {
+    try {
+      return upgradeLane(JSON.parse(readFileSync(this.path(key), "utf8")) as Lane);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
   }
 
   // temp file + rename so a concurrent reader never sees a half-written lane
-  async write(lane: Lane): Promise<void> {
-    mkdirSync(this.dir, { recursive: true });
+  private writeNow(lane: Lane): void {
     const tmp = `${this.path(lane.key)}.${process.pid}.tmp`;
-    await Bun.write(tmp, JSON.stringify(lane, null, 1));
+    writeFileSync(tmp, JSON.stringify(lane, null, 1));
     renameSync(tmp, this.path(lane.key));
+  }
+
+  async write(lane: Lane): Promise<void> {
+    await this.locked(lane.key, () => this.writeNow(lane));
+  }
+
+  /** Registers a new lane only while its key has no record (false: another launch or adopt holds the key). */
+  async create(lane: Lane): Promise<boolean> {
+    return (await this.update(lane.key, (current) => (current ? null : lane))) !== null;
+  }
+
+  /** Removes `lane`'s record while it is still that registration: a launch undoing its own failed start. */
+  discard(lane: Lane): Promise<void> {
+    return this.locked(lane.key, () => {
+      const current = this.readNow(lane.key);
+      if (current && generation(current) === generation(lane)) rmSync(this.path(lane.key), { force: true });
+    });
+  }
+
+  /**
+   * Read-modify-write of one lane under its lock: `fn` gets the stored lane (or null) and returns the lane to store, or
+   * null to leave it. A lane held across I/O is changed here, never written back whole, so a change meanwhile is kept.
+   */
+  update(key: string, fn: (current: Lane | null) => Lane | null): Promise<Lane | null> {
+    return this.locked(key, () => {
+      const next = fn(this.readNow(key));
+      if (next) this.writeNow(next);
+      return next;
+    });
+  }
+
+  /**
+   * A change decided from `seen`, applied only while the stored lane has `seen`'s status generation (else null): a later
+   * claim, objection, pause or close, even a second objection to a not-done lane, is never overwritten.
+   */
+  transition(seen: Lane, next: (current: Lane) => Lane): Promise<Lane | null> {
+    return this.update(seen.key, (current) =>
+      current && generation(current) === generation(seen) ? next(current) : null,
+    );
   }
 
   // Reading never creates the lanes directory (dori boot is read-only); write() creates it.
@@ -132,9 +211,9 @@ export class Registry {
   }
 
   async list(): Promise<Lane[]> {
-    const lanes: Lane[] = [];
-    for (const f of this.files()) lanes.push(upgradeLane((await Bun.file(f).json()) as Lane));
-    return lanes;
+    return this.files()
+      .map((f) => this.readNow(basename(f, ".json")))
+      .filter((lane) => lane !== null);
   }
 
   /** Like list(), but a lane file that cannot be read, parsed, or holds no lane key is returned in `unreadable` instead of throwing. */
@@ -143,10 +222,11 @@ export class Registry {
     const unreadable: string[] = [];
     for (const f of this.files()) {
       try {
-        const lane: unknown = await Bun.file(f).json();
-        if (typeof lane !== "object" || lane === null || !("key" in lane) || typeof lane.key !== "string")
+        const lane: unknown = this.readNow(basename(f, ".json"));
+        if (lane === null) continue;
+        if (typeof lane !== "object" || !("key" in lane) || typeof lane.key !== "string")
           throw new Error("not a lane record");
-        lanes.push(upgradeLane(lane as Lane));
+        lanes.push(lane as Lane);
       } catch {
         unreadable.push(f);
       }

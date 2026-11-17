@@ -14,10 +14,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { processIdentity, sameProcess } from "../update/deployment-process.ts";
 import type { ProcessIdentity } from "../update/deployment-types.ts";
 import { saveDeploymentJson } from "../update/deployment-files.ts";
+import { processExists } from "../update/proc.ts";
 
 export type ConsumerPaths = {
   readonly home: string;
@@ -33,9 +34,12 @@ export type ConsumerPaths = {
   readonly staging: string;
   readonly links: readonly (readonly [string, string])[];
 };
-export const consumerPaths = (home = homedir()): ConsumerPaths => {
+export const consumerPaths = (home = homedir(), doriHome = join(home, ".dori")): ConsumerPaths => {
   home = resolve(home);
-  const dori = join(home, ".dori");
+  const dori = resolve(doriHome);
+  const primary = join(home, ".dori");
+  if (dori !== primary && (!relative(primary, dori).startsWith("../") || !relative(dori, primary).startsWith("../")))
+    throw new Error("An isolated consumer home must not contain or be inside the primary ~/.dori home");
   const root = join(dori, "releases");
   return {
     home,
@@ -49,12 +53,15 @@ export const consumerPaths = (home = homedir()): ConsumerPaths => {
     manifests: join(root, "consumer-manifests"),
     dependencies: join(root, "consumer-dependencies"),
     staging: join(root, "consumer-staging"),
-    links: [
-      [join(home, ".agents/skills/dori-mode"), join(dori, "src/skills/dori-mode")],
-      [join(home, ".omp/agent/extensions/omp-dori"), join(dori, "src/extension")],
-      [join(dori, "bin/dori"), join(dori, "src/skills/dori-mode/scripts/src/cli.ts")],
-      [join(dori, "bin/dori-harness"), join(dori, "src/src/cli.ts")],
-    ] as const,
+    links:
+      dori !== primary
+        ? []
+        : ([
+            [join(home, ".agents/skills/dori-mode"), join(dori, "src/skills/dori-mode")],
+            [join(home, ".omp/agent/extensions/omp-dori"), join(dori, "src/extension")],
+            [join(dori, "bin/dori"), join(dori, "src/skills/dori-mode/scripts/src/cli.ts")],
+            [join(dori, "bin/dori-harness"), join(dori, "src/src/cli.ts")],
+          ] as const),
   };
 };
 
@@ -177,7 +184,7 @@ export function acquireConsumerLock(paths: ConsumerPaths): () => void {
       typeof holder.bootId !== "string" ||
       typeof holder.executable !== "string" ||
       sameProcess(holder as ProcessIdentity) ||
-      (!processIdentity(holder.pid!) && lstatSync(`/proc/${holder.pid}`, { throwIfNoEntry: false }) !== undefined)
+      (!processIdentity(holder.pid!) && processExists(holder.pid!))
     )
       throw new Error("Consumer release lock is held; let its owner finish");
     const stale = createHash("sha256")

@@ -63,6 +63,11 @@ describe("OMP harness launches", () => {
     expect(agentCommand({ ...d, agentCmd: "bun /opt/bin/omp --model other" }, "lane")).toBe(
       "bun /opt/bin/omp --model other --dori-role lane",
     );
+    const source =
+      "bun --preload '/opt/agent tools/packages/coding-agent/scripts/omp.ts' '/opt/agent tools/packages/coding-agent/scripts/../src/cli.ts'";
+    expect(agentCommand({ ...d, agentCmd: source }, "dori")).toBe(`${source} --dori-role dori`);
+    const foreign = "bun --preload '/opt/agent tools/packages/coding-agent/scripts/omp.ts' /elsewhere/src/cli.ts";
+    expect(agentCommand({ ...d, agentCmd: foreign }, "dori")).toBe(foreign);
   });
 
   test("fresh review preserves the configured command prefix and passes model and prompt as literal arguments", async () => {

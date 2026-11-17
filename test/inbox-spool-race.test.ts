@@ -77,7 +77,7 @@ describe("a send to a session whose inbox a migration moves meanwhile reaches th
         migrated = migrateInbox(s.d, OLD, NEW);
       },
     );
-    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "late" });
+    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "late" }, false);
     expect(paused()).toBe(true);
     await migrated;
     await dutyTick(s.d);
@@ -98,7 +98,7 @@ describe("a send to a session whose inbox a migration moves meanwhile reaches th
         migrated = migrateInbox(s.d, OLD, NEW);
       },
     );
-    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "late" });
+    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "late" }, false);
     expect(paused()).toBe(true);
     await migrated;
     await dutyTick(s.d);
@@ -141,7 +141,7 @@ describe("a send to a session whose inbox a migration moves meanwhile reaches th
       route();
       await moveInbox(s.d, OLD, NEW, opts);
     });
-    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "waited" });
+    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "waited" }, false);
     expect(waits).toHaveBeenCalledTimes(1);
     expect({ old: texts(s.d, OLD), new: texts(s.d, NEW) }).toEqual({ old: [], new: ["waited"] });
   });
@@ -164,10 +164,10 @@ describe("a spooled message moved by a holder that stopped part way is queued ex
   async function twoEqual() {
     const s = setup();
     const msg = { at: s.d.now(), from: "cli", text: "same" };
-    await s.d.store.enqueue(OLD, msg);
+    await s.d.store.enqueue(OLD, msg, false);
     const lock = `${s.d.store.inboxPath(OLD)}.lock`;
     fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname(), at: s.d.now() }));
-    await s.d.store.enqueue(OLD, msg);
+    await s.d.store.enqueue(OLD, msg, false);
     fs.rmSync(lock);
     return s;
   }

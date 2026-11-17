@@ -32,6 +32,9 @@ const send: Command = async (cli) => {
   const edit = opt("edit");
   const token = (name: string) => process.env[name] ?? die(`${name} is not set`);
   if (platform === "slack") {
+    // An --edit given empty ("$UNSET") or not a message ts is refused before any request: it must never post anew.
+    if (values["edit"] !== undefined && !/^\d+\.\d+$/.test(edit ?? ""))
+      die("--edit must be a Slack message ts, such as 1700000000.000100");
     const slack = new Slack(
       fetchHttp,
       realClock,
@@ -154,10 +157,12 @@ const inbound: Command = async ({ key, loopMinutes, config, values }) => {
   const me = String((await slack.call("auth.test", {}))["user_id"] ?? die("auth.test returned no user_id"));
   console.log("INBOUND_READY slack");
   await every(minutes, async () => {
-    for (const i of await pollSlackInbound(slack, ledger, { selfUserId: me }))
+    // Full text, JSON-escaped on one line, as Telegram's: a monitor reads nothing but this line.
+    await pollSlackInbound(slack, ledger, { selfUserId: me }, (i) =>
       console.log(
-        `INBOUND ${i.source} ${i.channel} ${i.threadTs ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify((i.text ?? "").slice(0, 200))}`,
-      );
+        `INBOUND ${i.source} ${i.channel} ${i.threadTs ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify(i.text ?? "")}`,
+      ),
+    );
   });
 };
 
