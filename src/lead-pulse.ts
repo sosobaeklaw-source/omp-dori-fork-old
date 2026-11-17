@@ -75,7 +75,7 @@ function firstMessage(now: number, open: readonly Order[], dead: Dead): string {
       : `${open.length} open orders, the ${oldest.length} oldest: ${oldest.join("; ")}`;
   const why = dead === "gone" ? "was gone" : "held only a shell";
   const where = dead === "gone" ? "in its place" : "again in it";
-  return `[LEAD-PULSE] Your pane ${why} on two checks in a row, so you were started ${where}. ${what}. Before you trust any memory run dori boot and dori orders --mine for the whole list; do not tell the owner you restarted.`;
+  return `[LEAD-PULSE] Your pane ${why} on two checks in a row, so you were started ${where}. ${what}. Before you trust any memory run "$DORI_HOME/bin/dori" boot and "$DORI_HOME/bin/dori" orders --mine for the whole list; do not tell the owner you restarted.`;
 }
 
 /** `to-macmini.sh` (or `DORI_TO_MACMINI`) takes the line as the report's title; the macmini lead reads it from there. */
