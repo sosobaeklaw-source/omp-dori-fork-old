@@ -10,9 +10,10 @@ const T0 = Date.UTC(2026, 10, 17, 12, 0, 0);
 const MIN = 60_000;
 const idAt = (minutesAgo: number): string => String(BigInt(T0 - minutesAgo * MIN - 1420070400000) << 22n);
 
-function orders(opts: Parameters<typeof setup>[0] = {}) {
+function orders(opts: Parameters<typeof setup>[0] = {}, told: number | null = T0 - 400 * MIN) {
   const s = setup(opts);
   s.w.clock = T0;
+  if (told !== null) s.d.store.saveRun({ at: told, told, synced: [], findings: [], started: [], held: [], asked: [] });
   const state = homeStateDir(s.d.store.root);
   mkdirSync(state, { recursive: true });
   const post = (minutesAgo: number, body: string) =>
@@ -33,7 +34,9 @@ function orders(opts: Parameters<typeof setup>[0] = {}) {
   };
   const named = async (): Promise<string[]> =>
     (await s.tick({ maxStarts: 0 })).findings.filter((f) => f.startsWith("order "));
-  return { ...s, state, post, lane, named };
+  const everything = async (): Promise<string[]> =>
+    (await s.tick({ maxStarts: 0 })).findings.filter((f) => f.startsWith("order"));
+  return { ...s, state, post, lane, named, everything };
 }
 
 describe("hourly loop: open owner orders", () => {
@@ -123,5 +126,66 @@ describe("hourly loop: open owner orders", () => {
     expect(run.findings.filter((f) => f.startsWith("orders: "))).toHaveLength(1);
     expect(run.findings.some((f) => f.startsWith("order "))).toBe(false);
     expect(run.told).toBe(run.at);
+  });
+
+  test("many due orders give the count, the 10 oldest and one pointer, never the whole list", async () => {
+    const s = orders();
+    for (let i = 0; i < 14; i++) s.post(300 - i * 10, `합성 ${i}`);
+    const found = await s.everything();
+    expect(found).toHaveLength(12);
+    expect(found[0]).toBe("orders: 14 due, the 10 oldest below");
+    expect(found.slice(1, 11).map((f) => f.split(" ")[1])).toEqual(
+      Array.from({ length: 10 }, (_, i) => idAt(300 - i * 10)),
+    );
+    expect(found[11]).toBe("orders: the whole list is dori orders --mine");
+  });
+
+  test("a few due orders are all named, still with the count and the pointer", async () => {
+    const s = orders();
+    s.post(45, "하나");
+    s.post(50, "둘");
+    expect(await s.everything()).toEqual([
+      "orders: 2 due, the 2 oldest below",
+      `order ${idAt(50)} 답없음 50m: 둘`,
+      `order ${idAt(45)} 답없음 45m: 하나`,
+      "orders: the whole list is dori orders --mine",
+    ]);
+  });
+
+  test("the first report with no earlier one counts the due orders as told: the count alone, then only what crosses later", async () => {
+    const s = orders({}, null);
+    for (let i = 0; i < 14; i++) s.post(300 - i * 10, `합성 ${i}`);
+    const first = await s.tick({ maxStarts: 0 });
+    expect(first.findings.filter((f) => f.startsWith("order"))).toEqual([
+      "orders: 14 open orders are already due, none listed on this first report: dori orders --mine",
+    ]);
+    expect(first.told).toBe(first.at);
+    s.post(10, "새 지시");
+    s.w.clock += 30 * MIN;
+    expect(await s.everything()).toEqual([
+      "orders: 1 due, the 1 oldest below",
+      `order ${idAt(10)} 답없음 40m: 새 지시`,
+      "orders: the whole list is dori orders --mine",
+    ]);
+    s.w.clock += 30 * MIN;
+    expect(await s.everything()).toEqual([]);
+  });
+
+  test("a first report that did not reach the lead is a seed again: the lead never gets the backlog dump", async () => {
+    let down = true;
+    const s = orders(
+      {
+        exec: (inner) => async (cmd, argv, o) =>
+          down && cmd === "herdr" && argv[0] === "agent" && argv[2] === "w1:p1"
+            ? { code: 1, stdout: "", stderr: "lead pane hung" }
+            : inner(cmd, argv, o),
+      },
+      null,
+    );
+    for (let i = 0; i < 14; i++) s.post(300 - i * 10, `합성 ${i}`);
+    expect(await s.everything()).toHaveLength(1);
+    down = false;
+    s.w.clock += HOUR;
+    expect(await s.everything()).toHaveLength(1);
   });
 });

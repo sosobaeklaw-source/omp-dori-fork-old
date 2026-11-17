@@ -79,7 +79,9 @@ describe("lead pulse", () => {
     const [command] = s.w.panes.get("w1:p2")!.ran;
     expect(command).toContain("lead.md");
     expect(command).toContain("[LEAD-PULSE]");
-    expect(command).toContain(`${idAt(90)} 재해경위서`);
+    expect(command).toContain(`1 open orders, the 1 oldest: ${idAt(90)} 답없음 90m.`);
+    expect(command).toContain("run dori boot and dori orders --mine");
+    expect(command).not.toContain("재해경위서");
     expect(command).not.toContain("\n");
     expect(s.w.calls.filter((c) => c.cmd !== "herdr")).toEqual([]);
     await s.pulse();
@@ -174,5 +176,46 @@ describe("lead pulse", () => {
     await expect(s.pulse()).rejects.toThrow("ENOENT");
     expect(readFileSync(join(s.state, "lead-alive.json"), "utf8")).toBe(before);
     expect(existsSync(join(s.state, "lead-pulse.lock"))).toBe(false);
+  });
+
+  test("the first message to a restarted lead carries the count and the 10 oldest orders as id, state and age, never bodies or the whole list", async () => {
+    const s = setup();
+    for (let i = 0; i < 15; i++) s.order(500 - i * 20, `본문-${i}`);
+    s.w.panes.delete("w1:p1");
+    await s.pulse();
+    await s.pulse();
+    const [command] = s.w.panes.get("w1:p2")!.ran;
+    expect(command).toContain("15 open orders, the 10 oldest: ");
+    const shown = Array.from({ length: 10 }, (_, i) => `${idAt(500 - i * 20)} 답없음 ${500 - i * 20}m`);
+    expect(command).toContain(`${shown.join("; ")}.`);
+    for (let i = 10; i < 15; i++) expect(command).not.toContain(idAt(500 - i * 20));
+    expect(command).not.toContain("본문");
+    expect(command).toContain("dori boot and dori orders --mine for the whole list");
+    expect(command!.length).toBeLessThan(2000);
+  });
+
+  test("while the store's stop file exists the pulse is written but nothing is started or sent", async () => {
+    const s = setup();
+    s.order(90);
+    s.d.store.setStop(T0, "lead closed on purpose");
+    s.w.panes.delete("w1:p1");
+    await s.pulse();
+    const second = await s.pulse();
+    expect(second).toEqual({ at: T0, alive: false, openOrders: 1, oldestMinutes: 90, reviveFailed: false });
+    expect(s.file()).toEqual(second);
+    expect(s.creates()).toEqual([]);
+    expect(s.w.calls.filter((c) => c.cmd !== "herdr")).toEqual([]);
+    s.d.store.clearStop();
+    await s.pulse();
+    expect(s.creates()).toHaveLength(1);
+  });
+
+  test("while stopped the macmini's silence is not told to the room either", async () => {
+    const s = setup();
+    mkdirSync(join(s.state, "macmini"), { recursive: true });
+    writeFileSync(join(s.state, "macmini", "lead-alive.json"), JSON.stringify({ at: T0 - 60 * 60_000 }));
+    s.d.store.setStop(T0, "off");
+    await leadPulse(s.d, { DORI_ROOM_SEND: "/fake/room.sh", DORI_MINI_FETCHED_AT: String(T0) });
+    expect(s.w.calls.filter((c) => c.cmd === "/fake/room.sh")).toEqual([]);
   });
 });

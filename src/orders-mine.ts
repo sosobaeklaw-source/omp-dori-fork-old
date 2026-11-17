@@ -14,15 +14,9 @@ export const ordersArgv = (home: string, stateDir: string, since = "3d"): string
   ...["--since", since],
 ];
 
-const lines = (root: string, now: number, extra: string[]): string[] => {
-  const out: string[] = [];
-  runOrders([...ordersArgv(root, homeStateDir(root)), "--mine", "macbook", ...extra], (line) => out.push(line), now);
-  return out;
-};
-
 /** What `dori orders --mine --json` prints for the harness home `root`: every order of the last 3 days, closed ones too. */
-export const ordersMine = (root: string, now: number): { orders: Order[]; notes: string[] } =>
-  JSON.parse(lines(root, now, ["--json"]).join("\n")) as { orders: Order[]; notes: string[] };
-
-/** What `dori orders --mine` prints, one entry per line: the open orders, or `열린 지시 없음`. */
-export const ordersText = (root: string, now: number): string[] => lines(root, now, []);
+export const ordersMine = (root: string, now: number): { orders: Order[]; notes: string[] } => {
+  const out: string[] = [];
+  runOrders([...ordersArgv(root, homeStateDir(root)), "--mine", "macbook", "--json"], (line) => out.push(line), now);
+  return JSON.parse(out.join("\n")) as { orders: Order[]; notes: string[] };
+};

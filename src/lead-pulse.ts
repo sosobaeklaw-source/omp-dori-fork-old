@@ -11,7 +11,8 @@ import { readConfig } from "./hooks.ts";
 import { homeStateDir } from "./lane-model.ts";
 import { acquire, release } from "./loop-lock.ts";
 import { miniQuiet } from "./mini-quiet.ts";
-import { ordersMine, ordersText } from "./orders-mine.ts";
+import { ordersMine } from "./orders-mine.ts";
+import type { Order } from "../tools/open_orders.ts";
 import { refText } from "./refs.ts";
 
 export type Pulse = { at: number; alive: boolean; openOrders: number; oldestMinutes: number; reviveFailed: boolean };
@@ -41,9 +42,16 @@ function leadCwd(d: Deps): string {
   return typeof cwd === "string" && cwd !== "" ? cwd : d.store.root;
 }
 
-function firstMessage(d: Deps): string {
-  const orders = ordersText(d.store.root, d.now()).join(" | ");
-  return `[LEAD-PULSE] Your pane was gone on two checks in a row, so you were started in its place. Before you trust any memory run dori boot and dori orders --mine; do not tell the owner you restarted. Open orders now: ${orders}`;
+const SHOWN = 10;
+
+/** The count and the oldest SHOWN open orders as id, state and age, never a body or the whole list. */
+function firstMessage(now: number, open: readonly Order[]): string {
+  const oldest = open.slice(0, SHOWN).map((o) => `${o.id} ${o.state} ${Math.floor((now - o.at) / 60_000)}m`);
+  const what =
+    open.length === 0
+      ? "no open orders"
+      : `${open.length} open orders, the ${oldest.length} oldest: ${oldest.join("; ")}`;
+  return `[LEAD-PULSE] Your pane was gone on two checks in a row, so you were started in its place. ${what}. Before you trust any memory run dori boot and dori orders --mine for the whole list; do not tell the owner you restarted.`;
 }
 
 /** `to-macmini.sh` (or `DORI_TO_MACMINI`) takes the line as the report's title; the macmini lead reads it from there. */
@@ -57,7 +65,7 @@ async function tellMacmini(d: Deps, env: Env, line: string, note: Note): Promise
   }
 }
 
-async function revive(d: Deps, env: Env, stateDir: string, pulse: Pulse, note: Note): Promise<void> {
+async function revive(d: Deps, env: Env, stateDir: string, pulse: Pulse, first: string, note: Note): Promise<void> {
   const path = join(stateDir, "lead-pulse.lock");
   const lock = acquire(d, path);
   if ("holder" in lock) {
@@ -68,7 +76,7 @@ async function revive(d: Deps, env: Env, stateDir: string, pulse: Pulse, note: N
     let why = "";
     for (let i = 1; i <= TRIES; i++) {
       try {
-        const ref = await openLead(d, leadCwd(d), firstMessage(d));
+        const ref = await openLead(d, leadCwd(d), first);
         pulse.alive = true;
         note(`lead started in ${refText(ref)}`);
         return;
@@ -87,7 +95,8 @@ async function revive(d: Deps, env: Env, stateDir: string, pulse: Pulse, note: N
 /**
  * One pulse. `gone` is the one dead answer; a runtime that cannot be asked throws and leaves the file as it was. After
  * a failed start the incident is reported once: the next dead answers neither start the lead nor tell the macmini
- * again, until the pane is seen alive. A home with no lead registered has nothing to watch and starts nothing.
+ * again, until the pane is seen alive. A home with no lead registered has nothing to watch and starts nothing. While the
+ * store's stop file exists (`dori harness loop stop`) the file is still written but nothing is started or sent.
  */
 export async function leadPulse(d: Deps, env: Env = process.env): Promise<Pulse> {
   const stateDir = homeStateDir(d.store.root);
@@ -95,7 +104,9 @@ export async function leadPulse(d: Deps, env: Env = process.env): Promise<Pulse>
   const file = join(stateDir, "lead-alive.json");
   const note: Note = (line) =>
     appendFileSync(join(stateDir, "lead-pulse.log"), `${new Date(d.now()).toISOString()} ${line}\n`);
-  await miniQuiet(d, env, stateDir, note).catch((e: unknown) => note(`macmini pulse not read: ${failureDetail(e)}`));
+  const stopped = d.store.stop() !== undefined;
+  if (!stopped)
+    await miniQuiet(d, env, stateDir, note).catch((e: unknown) => note(`macmini pulse not read: ${failureDetail(e)}`));
   const before = readPulse(file);
   const now = d.now();
   const lead = d.store.roles().lead;
@@ -112,7 +123,7 @@ export async function leadPulse(d: Deps, env: Env = process.env): Promise<Pulse>
   if (gone && before?.alive !== false) note("lead pane gone, first check");
   if (gone && before?.alive === false) {
     if (before.reviveFailed) pulse.reviveFailed = true;
-    else await revive(d, env, stateDir, pulse, note);
+    else if (!stopped) await revive(d, env, stateDir, pulse, firstMessage(now, open), note);
   }
   writePulse(file, pulse);
   return pulse;
