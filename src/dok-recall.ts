@@ -37,7 +37,7 @@ const PHONE = /(?<!\d)0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}(?!\d)/;
 const CITE = /[~/\w.-]*sobaegi-lead\/results\/[^\s)`'"]*독후감[^\s)`'":]*\.md/gu;
 
 /** Words of `text`: Korean words keep their two-letter pieces too, since Korean compounds have no spaces. */
-export function terms(text: string): string[] {
+export function terms(text: string, pieces = true): string[] {
   const out: string[] = [];
   for (const raw of text
     .normalize("NFC")
@@ -48,7 +48,7 @@ export function terms(text: string): string[] {
       const w = PARTICLE.exec(raw)?.[1] ?? raw;
       if (w.length < 2 || COMMON.has(w)) continue;
       out.push(w);
-      if (w.length > 2) for (let i = 0; i + 2 <= w.length; i++) out.push(w.slice(i, i + 2));
+      if (pieces && w.length > 2) for (let i = 0; i + 2 <= w.length; i++) out.push(w.slice(i, i + 2));
     } else if (raw.length >= 3 && !COMMON.has(raw)) out.push(raw.slice(0, 6));
   }
   return out;
@@ -187,13 +187,16 @@ const pathList = (section: readonly string[]): boolean => {
  */
 export function bestPassage(note: Note, query: string, maxChars: number, minHit = 0): Passage | undefined {
   const asked = new Set(terms(query));
+  // minHit counts whole words: one compound like 재해경위서 would otherwise count as five hits by its two-letter pieces.
+  const whole = new Set(terms(query, false));
   const cuts = [0, ...note.lines.flatMap((l, i) => (i > 0 && /^#{1,3} /.test(l) ? [i] : [])), note.lines.length];
   let best: { start: number; end: number; hit: number } | undefined;
   for (let i = 0; i + 1 < cuts.length; i++) {
     const section = note.lines.slice(cuts[i], cuts[i + 1]);
     if (caseLines({ label: "", lines: section }).length === 0 || pathList(section)) continue;
-    const hit = new Set(terms(section.join("\n")).filter((t) => asked.has(t))).size;
-    if (hit < minHit) continue;
+    const words = terms(section.join("\n"));
+    if (new Set(words.filter((t) => whole.has(t))).size < minHit) continue;
+    const hit = new Set(words.filter((t) => asked.has(t))).size;
     if (!best || hit > best.hit) best = { start: cuts[i]!, end: cuts[i + 1]!, hit };
   }
   if (!best) return undefined;
