@@ -130,6 +130,11 @@ class ReviewGateTest(unittest.TestCase):
                                       headers={"Content-Type": "application/x-www-form-urlencoded"})
         with self.assertRaisesRegex(ReviewMissing, "보낼 수 있는 곳이 아니다"):
             c._open(form)
+        for name in ("X-HTTP-Method-Override", "x-http-method-override", "X_HTTP_METHOD_OVERRIDE"):
+            req = urllib.request.Request(w.API + "/posts/299", data=json.dumps({"status": "draft"}).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", name: "DELETE"})
+            with self.assertRaisesRegex(ReviewMissing, "방법 바꾸기 헤더"):
+                c._open(req)
         self.assertEqual(c.op.sent, [])
 
     def test_payload_shapes_that_skip_the_body_check_are_refused(self):
@@ -154,6 +159,19 @@ class ReviewGateTest(unittest.TestCase):
         st, _ = self.post(c, {"title": self.title})
         self.assertEqual(st, 200)
 
+    def test_rank_math_share_image_ids_are_checked_like_featured_media(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        c.op.files[w.API + "/media/999"] = json.dumps({"source_url": "https://sobaeklaw.co.kr/u/unread.png"}).encode()
+        c.op.files["https://sobaeklaw.co.kr/u/unread.png"] = b"PNG-unread"
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        for k in ("rank_math_facebook_image_id", "rank_math_twitter_image_id"):
+            self.assertBlocked(c, rf"{k} unread\.png", {"objectType": "post", "objectID": 299,
+                                                        "meta": {"rank_math_title": self.title, k: 999}}, url=rm)
+        st, _ = self.post(c, {"objectType": "post", "objectID": 299,
+                              "meta": {"rank_math_facebook_image": COVER, "rank_math_facebook_image_id": 843}}, url=rm)
+        self.assertEqual(st, 200)
+
     def test_status_other_than_draft_is_refused_and_brand_guard_runs_on_direct_open(self):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
@@ -171,8 +189,25 @@ class ReviewGateTest(unittest.TestCase):
                      f'<img src="{IMG}" srcset="{other} 2x">', f'<video poster="{other}"></video>'):
             self.assertBlocked(c, r"본문 그림 other\.png", {"content": body})
         for body in (f'<div style="background:url({other})"></div>', f'<iframe src="{other}"></iframe>',
-                     "<style>p{background:url(x)}</style>"):
+                     "<style>p{background:url(x)}</style>", f'<svg><image href="{other}"/></svg>',
+                     f'<svg><image xlink:href="{other}"/></svg>', f'<object data="{other}"></object>',
+                     f'<link rel="stylesheet" href="{other}">', f'<table background="{other}"></table>',
+                     f'<picture srcset="{other}"></picture>'):
             self.assertBlocked(c, "확인할 수 없는", {"content": body})
+
+    def test_links_are_not_images_and_nonce_stays_home(self):
+        (self.dir / "본문2.html").write_text(self.body + '<a href="https://www.law.go.kr/">법령</a>', encoding="utf-8")
+        self.record("본문2.html", "flow.png", "cover.jpg")
+        c = self.client()
+        c.nonce = "abcdef0123"
+        seen = []
+        opener_open = c.op.open
+        c.op.open = lambda req, timeout=60: (seen.append((req.full_url, req.get_header("X-wp-nonce"))), opener_open(req))[1]
+        st, _ = self.post(c, {"content": (self.dir / "본문2.html").read_text(encoding="utf-8")})
+        self.assertEqual(st, 200)
+        self.assertIn((IMG, None), seen)
+        st, _ = self.post(c, {"featured_media": 843})
+        self.assertIn((w.API + "/media/843", "abcdef0123"), seen)
 
     def test_reads_need_no_review(self):
         c = w.WP()

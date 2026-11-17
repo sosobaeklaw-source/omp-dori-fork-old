@@ -3,11 +3,13 @@
 로그인 정보는 Doppler·wp-totp를 경로로만 부르고 쿠키·비밀값은 메모리에만 둔다.
 GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든)은 _open 한 곳을 지난다. 예외는 login() 안의
 로그인 폼 둘뿐. 거기서 막힌 쪽으로 본다(fail closed): 허용한 모양이 아니면 보내지 않는다.
-  - 방법은 POST만, 주소는 /wp-json/wp/v2/{posts,pages,media}[/<번호>]와 /wp-json/rankmath/v1/updateMeta만.
+  - 방법은 POST만(X-HTTP-Method-Override 헤더 금지), 주소는 /wp-json/wp/v2/{posts,pages,media}[/<번호>]와
+    /wp-json/rankmath/v1/updateMeta만.
   - 그림 올리기(image/*, /media): 올리는 바이트의 sha256이 reviewed.json에 있어야 한다.
   - JSON은 dict만, 아는 칸만. content는 글자(str)만이고 그 sha256이 기록에 있어야 한다.
-    본문이 부르는 그림(img·source·video·audio의 src·srcset·poster·data-src 따위)은 하나하나 받아 sha256을 맞추고,
-    그 밖 태그의 src·CSS url()은 확인할 길이 없으니 막는다. featured_media·Rank Math 그림도 받아 맞춘다.
+    본문이 부르는 그림(img·source·video·audio·track의 src·srcset·poster·data-src 따위)은 하나하나 받아 sha256을 맞춘다.
+    허용 목록이라 <a href> 말고 바깥 자원을 부르는 속성(href·xlink:href·data·background·그 밖 태그의 src)과
+    CSS url()·<style>은 확인할 길이 없으니 막는다. featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다.
   - 제목·요약·대체 글·캡션·Rank Math 설명은 검수한 파일 안에 그 글자 그대로 있어야 한다.
   - status는 draft만 보낼 수 있다(발행 글 갱신은 status를 빼고 보낸다). brand_write_guard.assert_clean도 여기서.
   - 확인한 것이 하나도 없는 요청은 그림 붙이기(post)·draft 같은 메타 칸만일 때만 보낸다.
@@ -51,9 +53,11 @@ _META_ONLY = {"status", "post"}
 _RM_TEXT = ("rank_math_description", "rank_math_title", "rank_math_facebook_title", "rank_math_facebook_description",
             "rank_math_twitter_title", "rank_math_twitter_description")
 _RM_IMAGE = ("rank_math_facebook_image", "rank_math_twitter_image")
-_RM_PLAIN = ("rank_math_facebook_image_id", "rank_math_twitter_image_id", "rank_math_twitter_use_facebook")
-_MEDIA_TAGS = {"img", "source", "video", "audio", "picture", "track"}
-_SRC_ATTR = re.compile(r"(^|[-_])(src|srcset|poster)$")
+_RM_IMAGE_ID = ("rank_math_facebook_image_id", "rank_math_twitter_image_id")
+_RM_PLAIN = ("rank_math_twitter_use_facebook",)
+_MEDIA_TAGS = {"img", "source", "video", "audio", "track"}
+_MEDIA_ATTR = re.compile(r"(^|[-_:])(src|srcset|poster)$")
+_RESOURCE_ATTR = re.compile(r"(^|[-_:])(src|srcset|poster|href|data|background|lowsrc|dynsrc)$")
 
 
 class _Images(html.parser.HTMLParser):
@@ -62,12 +66,14 @@ class _Images(html.parser.HTMLParser):
         self.urls, self.bad = [], []
 
     def handle_starttag(self, tag, attrs):
+        """허용 목록: 그림·영상 태그의 src·srcset·poster는 받아 대조하고, <a href>만 그냥 둔다.
+        그 밖에 바깥 자원을 부르는 속성(href·xlink:href·data·background·src 따위)은 모두 막는다."""
         for k, v in attrs:
             if k == "style" and v and "url(" in v.lower():
                 self.bad.append(f"<{tag} style=url(...)>")
-            if not _SRC_ATTR.search(k) or not v:
+            if not v or not _RESOURCE_ATTR.search(k) or (tag == "a" and k == "href"):
                 continue
-            if tag not in _MEDIA_TAGS:
+            if tag not in _MEDIA_TAGS or not _MEDIA_ATTR.search(k):
                 self.bad.append(f"<{tag} {k}>")
             elif k.endswith("srcset"):
                 self.urls += [c.split()[0] for c in v.split(",") if c.strip()]
@@ -112,8 +118,9 @@ class WP:
         self.nonce = None
 
     def _fetch(self, url):
-        """검사용 읽기. 받지 못한 그림은 확인 못 한 것이니 막는다."""
-        st, _, b = self._open(urllib.request.Request(url, headers={"X-WP-Nonce": self.nonce or ""}))
+        """검사용 읽기. 받지 못한 그림은 확인 못 한 것이니 막는다. nonce는 우리 WP에만 붙인다."""
+        ours = urllib.parse.urlsplit(url).netloc == urllib.parse.urlsplit(BASE).netloc
+        st, _, b = self._open(urllib.request.Request(url, headers={"X-WP-Nonce": self.nonce or ""} if ours else {}))
         if st != 200:
             raise ReviewMissing(f"그림을 받아 확인하지 못했다({st}): {url}")
         return b
@@ -132,8 +139,10 @@ class WP:
         url = urllib.parse.urlsplit(req.full_url)
         target = f"{url.scheme}://{url.netloc}{url.path}"
         rankmath = target == BASE + "/wp-json/rankmath/v1/updateMeta"
-        if method != "POST" or url.query or not (rankmath or _WP_PATH.fullmatch(target)):
-            raise ReviewMissing(f"{where}: 보낼 수 있는 곳이 아니다(POST {API}/posts|pages|media[/번호], Rank Math updateMeta만)")
+        override = [h for h, _ in req.header_items() if h.lower().replace("_", "-") == "x-http-method-override"]
+        if method != "POST" or override or url.query or not (rankmath or _WP_PATH.fullmatch(target)):
+            raise ReviewMissing(f"{where}: 보낼 수 있는 곳이 아니다(POST {API}/posts|pages|media[/번호], Rank Math updateMeta만,"
+                                " 방법 바꾸기 헤더 금지)")
         body = req.data or b""
         ctype = (req.get_header("Content-type") or "").split(";")[0].strip().lower()
         if ctype.startswith("image/"):
@@ -158,9 +167,11 @@ class WP:
             if set(payload) != {"objectType", "objectID", "meta"} or not isinstance(payload["meta"], dict):
                 raise ReviewMissing(f"{where}: Rank Math는 objectType·objectID·meta만 보낸다")
             fields, texts_keys, image_keys, plain = payload["meta"], _RM_TEXT, _RM_IMAGE, _RM_PLAIN
+            media_keys = ("featured_media",) + _RM_IMAGE_ID
         else:
             fields, texts_keys, image_keys, plain = payload, _TEXT, (), _PLAIN
-        unknown = sorted(set(fields) - set(texts_keys) - set(image_keys) - set(plain) - {"content", "featured_media"})
+            media_keys = ("featured_media",)
+        unknown = sorted(set(fields) - set(texts_keys) - set(image_keys) - set(plain) - set(media_keys) - {"content"})
         if unknown:
             raise ReviewMissing(f"{where}: 확인하지 않는 칸은 보내지 않는다: {', '.join(unknown)}")
         if payload.get("status", "draft") != "draft":
@@ -181,9 +192,11 @@ class WP:
         for k in image_keys:
             if fields.get(k):
                 items.append((f"{k} {str(fields[k]).rsplit('/', 1)[-1]}", self._fetch(str(fields[k]))))
-        if fields.get("featured_media"):
-            m = json.loads(self._fetch(f"{API}/media/{int(fields['featured_media'])}"))
-            items.append((f"대표 그림 {m['source_url'].rsplit('/', 1)[-1]}", self._fetch(m["source_url"])))
+        for k in media_keys:
+            if fields.get(k):
+                m = json.loads(self._fetch(f"{API}/media/{int(fields[k])}"))
+                name = "대표 그림" if k == "featured_media" else k
+                items.append((f"{name} {m['source_url'].rsplit('/', 1)[-1]}", self._fetch(m["source_url"])))
         if not items and not texts and not set(fields) <= _META_ONLY:
             raise ReviewMissing(f"{where}: 확인할 글자·그림이 하나도 없는 요청이다")
         check_bytes(doc, items)
