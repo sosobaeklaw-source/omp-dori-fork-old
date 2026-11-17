@@ -3,8 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { bestPassage, briefQuery, citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
-import { loadCaseNames } from "../src/ready-reply.ts";
+import { loadNameHashes } from "../src/ready-reply.ts";
 import { buildRequest, readRange } from "../src/writer-request.ts";
+import { fakeNames, hashFiles } from "./name-hashes.ts";
+
+/** Made-up names none of the fixtures hold, for the tests that are not about names. */
+const NONE = fakeNames()!;
 
 const filler = (topic: string, n: number) =>
   Array.from({ length: n }, (_, i) => `${topic} 이야기를 ${i}번째로 적은 줄이다. 다른 일과 겹치지 않는 내용이다.`);
@@ -86,7 +90,7 @@ test("the brief's topic ranks first, and the passage is the section that shares 
   const query = "카드뉴스 문구를 법률가 말로 다시 쓴다";
   const ranked = rank(query, notes);
   expect(ranked[0]!.note.path).toEndWith("cardnews-1112/독후감_카드뉴스.md");
-  const { kept } = recall(query, ranked, 1, 2000, []);
+  const { kept } = recall(query, ranked, 1, 2000, NONE);
   expect(kept).toHaveLength(1);
   expect(kept[0]!.start).toBe(7);
   expect(readRange(`${kept[0]!.path}:${kept[0]!.start}-${kept[0]!.end}`).lines[0]).toBe(
@@ -99,13 +103,13 @@ test("the budget keeps notes in rank order and names the next ones as over budge
   const query = "카드뉴스 영상 팩스";
   const ranked = rank(query, notes);
   expect(ranked).toHaveLength(3);
-  const roomy = recall(query, ranked, 3, 100_000, []);
+  const roomy = recall(query, ranked, 3, 100_000, NONE);
   expect(roomy.kept.map((p) => p.path)).toEqual(ranked.map((s) => s.note.path));
   expect(roomy.over).toEqual([]);
-  const tight = recall(query, ranked, 2, 100_000, []);
+  const tight = recall(query, ranked, 2, 100_000, NONE);
   expect(tight.kept.map((p) => p.path)).toEqual(ranked.slice(0, 2).map((s) => s.note.path));
   expect(tight.over.map((p) => p.path)).toEqual([ranked[2]!.note.path]);
-  for (const p of recall(query, ranked, 3, 300, []).kept) expect(p.chars).toBeLessThanOrEqual(100);
+  for (const p of recall(query, ranked, 3, 300, NONE).kept) expect(p.chars).toBeLessThanOrEqual(100);
 });
 
 test("a note other briefs and writer-cases cite ranks higher; the brief being recalled for is not counted", () => {
@@ -166,7 +170,7 @@ test("a note with no case line gives no passage; two notes keep their shared wor
   const notes = loadNotes(root);
   const ranked = rank("팩스", notes);
   expect(ranked).toHaveLength(2);
-  const { kept, over } = recall("팩스", ranked, 5, 5000, []);
+  const { kept, over } = recall("팩스", ranked, 5, 5000, NONE);
   expect(kept.map((p) => p.path)).toEqual([join(root, "b-1110", "독후감.md")]);
   expect(over).toEqual([]);
 });
@@ -191,12 +195,8 @@ test("a passage holding a client name, registration number, phone number or case
   const query = "name rrn phone path clean";
   const ranked = rank(query, loadNotes(root));
   expect(ranked).toHaveLength(5);
-  // sanjai-agent's name_denylist.json shape, the list dok_recall falls back to.
-  const list = join(root, "name_denylist.json");
-  writeFileSync(list, JSON.stringify({ _note: "실명 사전", names: ["홍길순", "x"] }));
-  const names = loadCaseNames(list)!;
-  expect(names).toEqual(["홍길순"]);
-  const { kept, over } = recall(query, ranked, 10, 100_000, names);
+  const f = hashFiles(["홍길순"]);
+  const { kept, over } = recall(query, ranked, 10, 100_000, loadNameHashes(f.hashes, f.saltFile)!);
   expect([...kept, ...over].map((p) => relative(root, p.path))).toEqual(["clean-1113/독후감.md"]);
 });
 
@@ -213,7 +213,7 @@ test("of two copies one line apart, the passage they share is given once", () =>
   }
   const ranked = rank("팩스 보내기", loadNotes(root));
   expect(ranked).toHaveLength(2);
-  const { kept, over } = recall("팩스 보내기", ranked, 5, 5000, []);
+  const { kept, over } = recall("팩스 보내기", ranked, 5, 5000, NONE);
   expect(kept).toHaveLength(1);
   expect(kept[0]!.start).toBe(6);
   expect(over).toEqual([]);

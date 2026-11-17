@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { caseReason } from "./ready-reply.ts";
+import { caseReason, type NameHashes } from "./ready-reply.ts";
 import { caseLines } from "./writer-request.ts";
 
 const COMMON = new Set(
@@ -207,7 +207,7 @@ export interface Recall {
 /**
  * Keep passages of the ranked notes in order until `limit` notes or `maxChars` characters would be crossed. Each
  * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget. The passages
- * go to a writing model, so one holding a name of `names` (the client-name list), a registration number, a phone
+ * go to a writing model, so one holding a client name (matched by salted hash, `names`), a registration number, a phone
  * number or a case-folder path is left out, and so is one whose text a kept or listed passage already has.
  */
 export function recall(
@@ -215,7 +215,7 @@ export function recall(
   ranked: readonly Scored[],
   limit: number,
   maxChars: number,
-  names: readonly string[],
+  names: NameHashes,
 ): Recall {
   const kept: Passage[] = [];
   const over: Passage[] = [];
