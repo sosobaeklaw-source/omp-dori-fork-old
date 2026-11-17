@@ -1,6 +1,7 @@
 // The lead pulse: asks the runtime whether the lead's pane is still there and writes `<stateDir>/lead-alive.json`.
 // Two dead answers in a row start the lead once, the way `dori up` does, with the open orders as its first message.
-// It sends nothing to the owner: a start that fails twice goes to the macmini as one line, and the macmini tells.
+// Starting the lead sends nothing to the owner: a start that fails twice goes to the macmini as one line, and the macmini
+// tells. The one line the MacBook itself sends to the shared room is about the macmini going quiet (mini-quiet.ts).
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openLead } from "./cli-up.ts";
@@ -9,6 +10,7 @@ import type { Deps } from "./harness.ts";
 import { readConfig } from "./hooks.ts";
 import { homeStateDir } from "./lane-model.ts";
 import { acquire, release } from "./loop-lock.ts";
+import { miniQuiet } from "./mini-quiet.ts";
 import { ordersMine, ordersText } from "./orders-mine.ts";
 import { refText } from "./refs.ts";
 
@@ -93,6 +95,7 @@ export async function leadPulse(d: Deps, env: Env = process.env): Promise<Pulse>
   const file = join(stateDir, "lead-alive.json");
   const note: Note = (line) =>
     appendFileSync(join(stateDir, "lead-pulse.log"), `${new Date(d.now()).toISOString()} ${line}\n`);
+  await miniQuiet(d, env, stateDir, note).catch((e: unknown) => note(`macmini pulse not read: ${failureDetail(e)}`));
   const before = readPulse(file);
   const now = d.now();
   const lead = d.store.roles().lead;
