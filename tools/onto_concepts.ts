@@ -10,14 +10,17 @@
  */
 import { renameSync, writeFileSync } from "node:fs";
 import { one, parse } from "../src/cli-args.ts";
-import { CONCEPT_TYPES, type Concept, conceptsPath, guidelineWords } from "../src/onto-concepts.ts";
+import { readStudyDirs } from "../src/dok-recall.ts";
+import { allowedSource, CONCEPT_TYPES, type Concept, conceptsPath, guidelineWords } from "../src/onto-concepts.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
 
 const USAGE = `usage:
   onto_concepts [--host macmini|local] [--db PATH]
       -> DORI_HOME/ontology-concepts.json: each concept (${CONCEPT_TYPES.join(", ")}) with its aliases, the concepts
-         linked to it and the guidelines (지침문서) it is cited under most. DB defaults to
+         linked to it and the guidelines (지침문서) it is cited under most, but only when it has at least one fact of
+         origin public_reading.jsonl from an allowed study folder without a review flag (sanjai-agent's STUDY_DIRS,
+         read at run time; without it nothing is exported). DB defaults to
          ~/sanjai-agent/outbox/omonyang/ontology/onto.sqlite on the host.`;
 
 const TYPES = CONCEPT_TYPES.map((t) => `'${t}'`).join(",");
@@ -33,6 +36,11 @@ const QUERIES = {
              join objects g on g.id = l2.dst_id and g.type = '지침문서'
              where s.type in (${TYPES}) group by s.id, g.name having n >= 3 order by s.id, n desc`,
   guidelines: `select name from objects where type = '지침문서'`,
+  // The concepts exportable to a writing model: origin public_reading.jsonl and no review flag. The source folder
+  // is checked in JS (allowedSource), the sanjai-agent allowlist read at run time (readStudyDirs).
+  publicFacts: `select distinct f.object_id as id, f.source as source from facts f
+                  left join review_flags r on r.fact_id = f.id
+                  where f.origin = 'public_reading.jsonl' and r.fact_id is null`,
 };
 
 const quote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -45,7 +53,11 @@ function query(host: string, db: string, sql: string): Record<string, string | n
     host === "local"
       ? ["sqlite3", "-json", uri]
       : ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", "-S", "none", host, `sqlite3 -json file:${remote}`];
-  const r = Bun.spawnSync(cmd, { stdin: Buffer.from(sql), stdout: "pipe", stderr: "pipe" });
+  const r = Bun.spawnSync(cmd, {
+    stdin: Buffer.from(sql),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (r.exitCode !== 0) throw new Refusal(`sqlite3 on ${host} failed: ${r.stderr.toString().trim()}`);
   const out = r.stdout.toString().trim();
   return out ? JSON.parse(out) : [];
@@ -60,6 +72,16 @@ try {
   const db = one(a, "db") ?? "~/sanjai-agent/outbox/omonyang/ontology/onto.sqlite";
   const dbPath = host === "local" && db.startsWith("~/") ? `${process.env["HOME"]}/${db.slice(2)}` : db;
   const objects = query(host, dbPath, QUERIES.objects);
+  // Only concepts with an allowed, unflagged public fact are exported; the allowlist is sanjai-agent's own, read at
+  // run time. Without it nothing is exported rather than everything.
+  const allow = readStudyDirs();
+  if (!allow)
+    throw new Refusal(
+      "cannot read sanjai-agent STUDY_DIRS (DORI_STUDY_DIRS, ~/sanjai-agent, ~/.omp-dori/onto-host): refusing to export",
+    );
+  const publicIds = new Set<number>();
+  for (const r of query(host, dbPath, QUERIES.publicFacts))
+    if (allowedSource(String(r["source"]), allow)) publicIds.add(Number(r["id"]));
   const name = new Map(objects.map((o) => [Number(o["id"]), String(o["name"])]));
   const terms = new Map<number, Set<string>>([...name.keys()].map((id) => [id, new Set<string>()]));
   for (const r of query(host, dbPath, QUERIES.aliases)) terms.get(Number(r["id"]))?.add(String(r["alias"]));
@@ -90,6 +112,7 @@ try {
     }
   }
   const concepts: Concept[] = objects
+    .filter((o) => publicIds.has(Number(o["id"])))
     .map((o) => {
       const id = Number(o["id"]);
       const own = String(o["name"]);
@@ -100,7 +123,9 @@ try {
   const path = conceptsPath(defaultHome());
   writeFileSync(`${path}.tmp`, `${JSON.stringify({ made: new Date().toISOString(), concepts }, null, 1)}\n`);
   renameSync(`${path}.tmp`, path);
-  console.log(`WROTE ${path} ${concepts.length} concepts of ${objects.length}`);
+  console.log(
+    `WROTE ${path} ${concepts.length} concepts of ${objects.length} (${publicIds.size} with an allowed public fact)`,
+  );
 } catch (e) {
   if (!(e instanceof Refusal)) throw e;
   console.error(e.message);

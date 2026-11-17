@@ -5,10 +5,11 @@
  * others' words. Only concept objects are exported (law and rulings, diseases, judging factors, proof documents,
  * keywords, body parts, occupations): never cases, people, workplaces, accounts or documents, whose names can be
  * clients'. Numeric thresholds (숫자기준: 3년, 85dB) are left out too: "3년" stands in every 공상 or 시효 article and
- * would pull the 난청 guidelines into it.
+ * would pull the 난청 guidelines into it. A concept is exported only with at least one fact of origin
+ * `public_reading.jsonl` from an allowed study folder and without a review flag — what tools/onto_concepts.ts keeps.
  *
  * `<home>/ontology-concepts.json` holds `{"made": ISO, "concepts": [{"type", "name", "terms": [...]}]}`; it is made by
- * tools/onto_concepts.ts from four read-only queries and only read here.
+ * tools/onto_concepts.ts from six read-only queries and only read here.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,12 +25,26 @@ export interface Concept {
 
 export const conceptsPath = (home: string): string => join(home, "ontology-concepts.json");
 
+/**
+ * sanjai-agent's `is_allowed_source` rule (scripts/ontology/refresh_public.py): a source under the
+ * `sobaegi-lead/results` tree is public only from an allowed top folder (`allow`, read at run time); a source
+ * outside the results tree is refused.
+ */
+export function allowedSource(source: string, allow: readonly string[]): boolean {
+  const parts = source.split("/");
+  const at = parts.findIndex((p, i) => i > 0 && parts[i - 1] === "sobaegi-lead" && p === "results");
+  return at !== -1 && at + 1 < parts.length && allow.includes(parts[at + 1]!);
+}
+
 /** The exported concepts, or undefined when the file is missing or not the shape above. */
 export function loadConcepts(home: string): { made: string; concepts: Concept[] } | undefined {
   const path = conceptsPath(home);
   if (!existsSync(path)) return undefined;
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as { made?: unknown; concepts?: unknown };
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
+      made?: unknown;
+      concepts?: unknown;
+    };
     if (typeof raw.made !== "string" || !Array.isArray(raw.concepts)) return undefined;
     const concepts = raw.concepts.filter(
       (c): c is Concept =>
@@ -78,5 +93,8 @@ export function expandQuery(query: string, concepts: readonly Concept[]): Expand
     extra.push(...others);
     used.push(`${hit}→${others.join(", ")}`);
   }
-  return { query: extra.length ? `${query}\n${extra.join("\n")}` : query, used };
+  return {
+    query: extra.length ? `${query}\n${extra.join("\n")}` : query,
+    used,
+  };
 }

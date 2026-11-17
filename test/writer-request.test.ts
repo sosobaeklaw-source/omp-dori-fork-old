@@ -12,7 +12,13 @@ describe("writer request", () => {
   test("each kind gets its own rejections, the all-kind ones and every repeat pair, then the task", () => {
     const { home, lane, task, notes } = setup();
     for (const kind of Object.keys(KIND_ONLY) as Kind[]) {
-      const built = buildRequest({ home, kind, model: "argon", laneDir: lane, tasks: [task] });
+      const built = buildRequest({
+        home,
+        kind,
+        model: "argon",
+        laneDir: lane,
+        tasks: [task],
+      });
       const body = readFileSync(built.path, "utf8");
       for (const [other, words] of Object.entries(KIND_ONLY)) expect(body.includes(words)).toBe(other === kind);
       expect(body).toContain("every kind rejection");
@@ -34,8 +40,21 @@ describe("writer request", () => {
 
   test("bodies are numbered in the lane's requests folder with the counts beside them", () => {
     const { home, lane, task, notes } = setup();
-    const first = buildRequest({ home, kind: "card", model: "hydrogen", laneDir: lane, tasks: [task] });
-    const second = buildRequest({ home, kind: "card", model: "argon", laneDir: lane, tasks: [task], label: "s2" });
+    const first = buildRequest({
+      home,
+      kind: "card",
+      model: "hydrogen",
+      laneDir: lane,
+      tasks: [task],
+    });
+    const second = buildRequest({
+      home,
+      kind: "card",
+      model: "argon",
+      laneDir: lane,
+      tasks: [task],
+      label: "s2",
+    });
     expect(first.path).toBe(join(lane, "requests", "01_hydrogen.txt"));
     expect(second.path).toBe(join(lane, "requests", "02_argon_s2.txt"));
     expect(readFileSync(join(lane, "requests", "02_argon_s2.count"), "utf8")).toBe(
@@ -46,8 +65,14 @@ describe("writer request", () => {
   test("a case line counts only above the task line", () => {
     const { notes } = setup();
     const r = [readRange(`${notes}:1-5`)];
-    expect(countCases("rule: put the deadline first.", r)[0]).toMatchObject({ hit: 0, total: 2 });
-    expect(countCases(`${CASE_1}\n${END}\n`, r)[0]).toMatchObject({ hit: 1, total: 2 });
+    expect(countCases("rule: put the deadline first.", r)[0]).toMatchObject({
+      hit: 0,
+      total: 2,
+    });
+    expect(countCases(`${CASE_1}\n${END}\n`, r)[0]).toMatchObject({
+      hit: 1,
+      total: 2,
+    });
     expect(countCases(`intro\n${END}\n${CASE_1}\n${CASE_2}\n`, r)[0]).toMatchObject({ hit: 0, total: 2 });
   });
 
@@ -55,9 +80,16 @@ describe("writer request", () => {
     const { home, lane, task, notes } = setup();
     const run = (...args: string[]) => {
       const p = Bun.spawnSync(["bun", join(import.meta.dir, "../tools/writer_request.ts"), ...args], {
-        env: { ...process.env, DORI_HOME: home, DORI_NOTES_ROOT: join(home, "no-notes") },
+        env: {
+          ...process.env,
+          DORI_HOME: home,
+          DORI_NOTES_ROOT: join(home, "no-notes"),
+        },
       });
-      return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() };
+      return {
+        code: p.exitCode,
+        out: p.stdout.toString() + p.stderr.toString(),
+      };
     };
     const extra = join(home, "extra.md");
     writeFileSync(extra, `${CASE_2}\n`);
@@ -106,6 +138,7 @@ describe("writer request", () => {
             DORI_NAME_HASHES: f.hashes,
             DORI_NAME_HASH_SALT_FILE: f.saltFile,
             DORI_NOTES_ROOT: root,
+            DORI_STUDY_DIRS: "seo-1111",
             ...env,
           },
         },
@@ -155,7 +188,14 @@ describe("writer request", () => {
       expect(() => readRange(`${notes}:${span}`)).toThrow("PATH:START-END");
     expect(() => readRange(`${notes}:1-99`)).toThrow("file has 6");
     const build = (spec: string) => () =>
-      buildRequest({ home, kind: "seo", model: "argon", laneDir: lane, tasks: [task], cases: [spec] });
+      buildRequest({
+        home,
+        kind: "seo",
+        model: "argon",
+        laneDir: lane,
+        tasks: [task],
+        cases: [spec],
+      });
     expect(build(`${notes}:3-4`)).toThrow("holds no case line");
     const trap = join(home, "trap.md");
     writeFileSync(trap, `${CASE_1}\n${END}\n`);
@@ -174,7 +214,15 @@ describe("writer request", () => {
     const id = "1571654989041115348";
     expect(() => addEntry({ home, kinds: "card", msg: id, text: "x", repeats: "999" })).toThrow("not in the ledger");
     expect(() => addEntry({ home, kinds: "blog", msg: id, text: "x" })).toThrow(Refusal);
-    addEntry({ home, kinds: "card", msg: id, text: "new words", repeats: "102", before: "a b", after: "c d" });
+    addEntry({
+      home,
+      kinds: "card",
+      msg: id,
+      text: "new words",
+      repeats: "102",
+      before: "a b",
+      after: "c d",
+    });
     expect(() => addEntry({ home, kinds: "card", msg: id, text: "again" })).toThrow("already in the ledger");
     expect(readFileSync(ledgerPath(home), "utf8")).toEndWith(
       `\n## 2026-11-16 07:35 · card · msg ${id} · post - · 반복 102\n원문: "new words"\n전: "a b"\n후: "c d"\n`,
@@ -227,6 +275,9 @@ describe("writer request", () => {
       "[b] goes on after a blank line",
     );
     expect(() => fillSheet(sheet, "```\n[a]\nA\n[b]\nB\n```\n")).toThrow("[b] holds a code fence");
-    expect(fillSheet(sheet, "[a]\nA 첫 줄\nA 둘째 줄\n\n[b]\nB\n\n")).toEqual({ a: "A 첫 줄\nA 둘째 줄", b: "B" });
+    expect(fillSheet(sheet, "[a]\nA 첫 줄\nA 둘째 줄\n\n[b]\nB\n\n")).toEqual({
+      a: "A 첫 줄\nA 둘째 줄",
+      b: "B",
+    });
   });
 });

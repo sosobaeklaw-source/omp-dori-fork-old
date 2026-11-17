@@ -28,6 +28,78 @@ const GATHERED = /(?:^|\/)research\/local$/;
 const PHONE = /(?<!\d)0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}(?!\d)/;
 const CITE = /[~/\w.-]*sobaegi-lead\/results\/[^\s)`'"]*독후감[^\s)`'":]*\.md/gu;
 
+/** The python that prints sanjai-agent's STUDY_DIRS, the single allowlist of folders the recall may read. */
+export const STUDY_LIST_PY =
+  "import scripts.ontology.refresh_public as r; print('\\n'.join(f for f, _ in r.STUDY_DIRS))";
+
+/**
+ * The allowed study folders, read at run time from sanjai-agent itself so the list is never copied into this repo:
+ * DORI_STUDY_DIRS (comma-separated), then the local ~/sanjai-agent's venv python, then ssh to the host in
+ * ~/.omp-dori/onto-host (DORI_ONTO_HOST, DORI_SANJAI_PYTHON override). Undefined when none of them could be read —
+ * the caller then recalls nothing rather than everything.
+ */
+export function readStudyDirs(from: { python?: string; host?: string } = {}): string[] | undefined {
+  const env = process.env["DORI_STUDY_DIRS"];
+  if (env && env.trim())
+    return [
+      ...new Set(
+        env
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ];
+  const home = homedir();
+  const run = (cmd: string[], cwd?: string, stdin?: Buffer): string[] | undefined => {
+    try {
+      const r = Bun.spawnSync(cmd, {
+        ...(cwd === undefined ? {} : { cwd }),
+        stdin: stdin ?? "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (r.exitCode !== 0) return undefined;
+      const dirs = [
+        ...new Set(
+          Buffer.from(r.stdout)
+            .toString()
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean),
+        ),
+      ];
+      return dirs.length > 0 ? dirs : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const agent = join(home, "sanjai-agent");
+  if (existsSync(join(agent, "scripts", "ontology", "refresh_public.py"))) {
+    const python = from.python ?? process.env["DORI_SANJAI_PYTHON"] ?? join(agent, ".venv", "bin", "python3");
+    const local = run([python, "-c", STUDY_LIST_PY], agent);
+    if (local) return local;
+  }
+  const hostFile = join(home, ".omp-dori", "onto-host");
+  const host =
+    from.host ?? process.env["DORI_ONTO_HOST"] ?? (existsSync(hostFile) ? readFileSync(hostFile, "utf8").trim() : "");
+  if (!host) return undefined;
+  return run(
+    [
+      "ssh",
+      "-o",
+      "ConnectTimeout=10",
+      "-o",
+      "BatchMode=yes",
+      "-S",
+      "none",
+      host,
+      "cd ~/sanjai-agent && ./.venv/bin/python3 -",
+    ],
+    undefined,
+    Buffer.from(STUDY_LIST_PY),
+  );
+}
+
 const bagOf = (text: string): Bag => {
   const bag: Bag = new Map();
   for (const t of terms(text)) bag.set(t, (bag.get(t) ?? 0) + 1);
@@ -38,9 +110,11 @@ const sizeOf = (bag: Bag): number => [...bag.values()].reduce((a, b) => a + b, 0
 /**
  * Every `*독후감*.md` under `root`, one per content, copies and backups left out. Of files with the same text (md5)
  * the one with the shortest path below `root` stays, the alphabetically first on a tie, whatever order the disk lists
- * them in. Notes come back in path order.
+ * them in. Notes come back in path order. With `allow`, only those top folders of `root` are read at all — the
+ * sanjai-agent allowlist `readStudyDirs` returns, never other folders or loose files under the root.
  */
-export function loadNotes(root: string): Note[] {
+export function loadNotes(root: string, allow?: readonly string[]): Note[] {
+  const only = allow === undefined ? undefined : new Set(allow);
   const kept = new Map<string, Note>();
   const below = (path: string): string => relative(root, path);
   const walk = (dir: string): void => {
@@ -48,6 +122,8 @@ export function loadNotes(root: string): Note[] {
       const name = e.name.normalize("NFC");
       const path = join(dir, e.name);
       if (name.startsWith(".") || name === "node_modules" || COPY.test(name) || GATHERED.test(below(path))) continue;
+      // An allowlist means its top folders are the only thing read under the root: no other folder, no loose file.
+      if (only !== undefined && dir === root && !(e.isDirectory() && only.has(name))) continue;
       if (e.isDirectory()) walk(path);
       else if (name.endsWith(".md") && name.includes("독후감") && !name.includes("색인")) {
         const text = readFileSync(path, "utf8");
@@ -123,7 +199,10 @@ export function rank(query: string, notes: readonly Note[], cited: ReadonlyMap<s
         const w = (note.head.get(t) ?? 0) / h + (2 * (note.tag.get(t) ?? 0)) / g;
         if (w > 0) score += sat(w) * idf(n, df.get(t)!);
       }
-      return { note, score: score * (1 + Math.log1p(cited.get(note.sum) ?? 0)) };
+      return {
+        note,
+        score: score * (1 + Math.log1p(cited.get(note.sum) ?? 0)),
+      };
     })
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score);
@@ -192,12 +271,18 @@ export interface Recalled {
 }
 
 /** Defaults for a writing request: a few strong passages, not a long tail (see `recall`). */
-export const RECALL = { limit: 6, maxChars: 6000, floor: 0.5, minHit: 2 } as const;
+export const RECALL = {
+  limit: 6,
+  maxChars: 6000,
+  floor: 0.5,
+  minHit: 2,
+} as const;
 
 /**
  * The passages a writing request needs for `text` (its task and sheet): the query widened by the ontology's
- * concepts, ranked over the notes under `root` with the citations in `home`, kept within the budget, client names
- * and case paths left out (`recall`).
+ * concepts, ranked over the notes under `root`'s allowed top folders (`allow`, else the run-time sanjai-agent
+ * allowlist; with no readable allowlist nothing is recalled), kept within the budget, client names and case paths
+ * left out (`recall`).
  */
 export function recallFor(
   home: string,
@@ -210,10 +295,11 @@ export function recallFor(
     maxChars: number;
     floor?: number;
     minHit?: number;
+    allow?: readonly string[];
   },
 ): Recalled {
   const { query, used } = expandQuery(text, opts.concepts);
-  const notes = loadNotes(opts.root);
+  const notes = loadNotes(opts.root, opts.allow ?? readStudyDirs() ?? []);
   if (notes.length === 0) return { specs: [], onto: used };
   const { kept } = recall(query, rank(query, notes, citations(home)), opts.limit, opts.maxChars, names, opts);
   return { specs: kept.map(label), onto: used };

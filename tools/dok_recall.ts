@@ -10,18 +10,21 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { need, one, parse } from "../src/cli-args.ts";
-import { briefQuery, citations, label, loadNotes, rank, recall } from "../src/dok-recall.ts";
+import { briefQuery, citations, label, loadNotes, rank, readStudyDirs, recall } from "../src/dok-recall.ts";
 import { homeStateDir } from "../src/lane-model.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
 import { Refusal } from "../src/refusal.ts";
 import { defaultHome } from "../src/test-home.ts";
 
 const USAGE = `usage:
-  dok_recall BRIEF [--root DIR] [--limit N] [--max-chars CHARS]
+  dok_recall BRIEF [--root DIR] [--allow a,b,c] [--limit N] [--max-chars CHARS]
       -> up to N passages (default 10) of at most CHARS/N characters each, CHARS in all (default 8000), best
          first, one PATH:START-END a line; then the notes the budget left out, as "# over budget: PATH:START-END"
-         lines. DIR defaults to ~/sobaegi-lead/results. Notes cited in DORI_HOME/briefs and writer-cases rank higher.
-         Passages holding a client name, registration or phone number or case-folder path are left out.`;
+         lines. DIR defaults to ~/sobaegi-lead/results, read only in its allowed top folders: sanjai-agent's
+         STUDY_DIRS at run time (local ~/sanjai-agent, then ssh to ~/.omp-dori/onto-host), or --allow's folders.
+         When no allowlist can be read, nothing is recalled and one line says so. Notes cited in DORI_HOME/briefs
+         and writer-cases rank higher. Passages holding a client name, registration or phone number or case-folder
+         path are left out.`;
 
 try {
   const a = parse(process.argv.slice(2));
@@ -35,7 +38,17 @@ try {
   const saltFile = process.env["DORI_NAME_HASH_SALT_FILE"] ?? join(stateDir, "name_hash_salt");
   const names = loadNameHashes(hashFile, saltFile);
   if (!names) throw new Refusal(`no readable client-name hashes and salt (${hashFile}, ${saltFile})`);
-  const notes = loadNotes(one(a, "root") ?? join(homedir(), "sobaegi-lead", "results"));
+  // The allowlist is sanjai-agent's own (never a copy in this repo); without one, nothing is recalled.
+  const given = one(a, "allow")
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allow = given && given.length > 0 ? given : readStudyDirs();
+  if (!allow)
+    throw new Refusal(
+      "cannot read sanjai-agent STUDY_DIRS (DORI_STUDY_DIRS, ~/sanjai-agent, ~/.omp-dori/onto-host): nothing is recalled",
+    );
+  const notes = loadNotes(one(a, "root") ?? join(homedir(), "sobaegi-lead", "results"), allow);
   if (notes.length === 0) throw new Refusal("no 독후감 notes under the root");
   const query = briefQuery(readFileSync(brief, "utf8"));
   const ranked = rank(query, notes, citations(defaultHome(), brief));
