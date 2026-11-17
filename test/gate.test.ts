@@ -46,20 +46,34 @@ describe("review + merge gate", () => {
     expect(w.usage.filter((e) => e.name === "dori.review_completed")).toHaveLength(2);
   });
 
-  test("the receipt keeps the whole summary, and a PR view behind the pushed branch follows the branch head", async () => {
+  test("the receipt keeps the whole summary, and a PR view behind the pushed head follows refs/pull/<n>/head, never a branch name", async () => {
     const { w, d } = setup();
     const pushed = "b".repeat(40);
+    const decoy = "c".repeat(40);
     w.gh = (argv) =>
       argv[1] === "view"
-        ? { code: 0, stdout: JSON.stringify({ headRefOid: head, headRefName: "feat/x" }) }
+        ? { code: 0, stdout: JSON.stringify({ headRefOid: head, headRefName: "main" }) }
         : { code: 1, stdout: "" };
     const long = `${"x".repeat(5000)}\nVERDICT: CLEAR`;
-    w.reviewer = (argv) =>
-      argv[0] === "ls-remote" ? { code: 0, stdout: `${pushed}\trefs/heads/feat/x\n` } : { code: 0, stdout: long };
+    w.reviewer = (argv) => {
+      if (argv[0] !== "ls-remote") return { code: 0, stdout: long };
+      const ref = argv.at(-1);
+      if (ref === "refs/pull/10/head") return { code: 0, stdout: `${pushed}\trefs/pull/10/head\n` };
+      return { code: 0, stdout: `${decoy}\t${ref}\n` };
+    };
     expect(await review(d, "o/r#10")).toEqual({ verdict: "CLEAR", sha: pushed });
     expect(d.store.receipt("o/r#10", head)).toBeUndefined();
     expect(d.store.receipt("o/r#10", pushed)!.summary).toBe(long);
-    expect(w.calls.some((c) => c.argv.includes(`https://github.com/o/r.git`))).toBe(true);
+    const asked = w.calls.filter((c) => c.argv[0] === "ls-remote").map((c) => c.argv);
+    expect(asked).toEqual([["ls-remote", "https://github.com/o/r.git", "refs/pull/10/head"]]);
+  });
+
+  test("an ls-remote that fails leaves the PR view's head", async () => {
+    const { w, d } = setup();
+    gh(w, []);
+    w.reviewer = (argv) =>
+      argv[0] === "ls-remote" ? { code: 128, stdout: "" } : { code: 0, stdout: "VERDICT: CLEAR" };
+    expect(await review(d, "o/r#11")).toEqual({ verdict: "CLEAR", sha: head });
   });
 
   test("exit 0 without a VERDICT line: bounded stdout tail kept privately, no receipt", async () => {

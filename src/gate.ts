@@ -21,20 +21,14 @@ async function gh(d: Deps, argv: readonly string[]): Promise<string> {
 }
 
 /**
- * The PR head. Right after a push GitHub's PR view can still name the previous commit, so the branch's real head from
- * `git ls-remote` wins when the two differ; an ls-remote that fails or names no commit leaves the PR view's head.
+ * The PR head. Right after a push GitHub's PR view can still name the previous commit, so the head from `git ls-remote` of
+ * the base repository's `refs/pull/<n>/head` wins when the two differ (a branch name could also be a fork's, or the base's
+ * own); an ls-remote that fails or names no commit leaves the PR view's head.
  */
 export async function headSha(d: Deps, pr: PrRef): Promise<string> {
-  const out = JSON.parse(
-    await gh(d, ["pr", "view", String(pr.number), "--repo", pr.repo, "--json", "headRefOid,headRefName"]),
-  );
+  const out = JSON.parse(await gh(d, ["pr", "view", String(pr.number), "--repo", pr.repo, "--json", "headRefOid"]));
   const viewed = String(out.headRefOid);
-  if (!out.headRefName) return viewed;
-  const remote = await d.exec("git", [
-    "ls-remote",
-    `https://github.com/${pr.repo}.git`,
-    `refs/heads/${out.headRefName}`,
-  ]);
+  const remote = await d.exec("git", ["ls-remote", `https://github.com/${pr.repo}.git`, `refs/pull/${pr.number}/head`]);
   const live = remote.code === 0 ? /^([0-9a-f]{40})\s/m.exec(remote.stdout)?.[1] : undefined;
   return live ?? viewed;
 }
