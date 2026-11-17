@@ -18,17 +18,24 @@ function setup() {
   d.store.setRole("lead", href("w1:p1"));
   const state = homeStateDir(d.store.root);
   mkdirSync(join(state, "macmini"), { recursive: true });
-  const env = { DORI_ROOM_SEND: ROOM };
+  const env: Record<string, string | undefined> = { DORI_ROOM_SEND: ROOM };
   const notes: string[] = [];
   const mini = (secondsOld: number) =>
     writeFileSync(
       join(state, "macmini", "lead-alive.json"),
       JSON.stringify({ at: w.clock - secondsOld * 1000, alive: true }),
     );
-  const check = () => miniQuiet(d, env, state, (line) => notes.push(line));
+  const fetchedAt = (at: number | null) => {
+    env["DORI_MINI_FETCHED_AT"] = at === null ? undefined : String(at);
+  };
+  const check = (at: number | null = w.clock) => {
+    fetchedAt(at);
+    return miniQuiet(d, env, state, (line) => notes.push(line));
+  };
   const sent = () => w.calls.filter((c) => c.cmd === ROOM).map((c) => c.argv);
-  const marker = () => JSON.parse(readFileSync(join(state, "macmini-pulse.json"), "utf8")) as { seen: string };
-  return { w, d, state, env, notes, mini, check, sent, marker };
+  const marker = () =>
+    JSON.parse(readFileSync(join(state, "macmini-pulse.json"), "utf8")) as { seen: string; fetched: boolean };
+  return { w, d, state, env, notes, mini, check, fetchedAt, sent, marker };
 }
 
 describe("the macmini's pulse, seen from the MacBook", () => {
@@ -95,6 +102,7 @@ describe("the macmini's pulse, seen from the MacBook", () => {
     s.w.reviewer = () => {
       throw new Error("spawn ENOENT");
     };
+    s.fetchedAt(s.w.clock);
     const pulse = await leadPulse(s.d, s.env);
     expect(pulse.alive).toBe(true);
     expect(JSON.parse(readFileSync(join(s.state, "lead-alive.json"), "utf8")).alive).toBe(true);
@@ -108,8 +116,46 @@ describe("the macmini's pulse, seen from the MacBook", () => {
     const s = setup();
     s.mini(30 * 60);
     mkdirSync(join(s.state, "macmini-pulse.json"));
+    s.fetchedAt(s.w.clock);
     const pulse = await leadPulse(s.d, s.env);
     expect(pulse.alive).toBe(true);
     expect(readFileSync(join(s.state, "lead-pulse.log"), "utf8")).toContain("macmini pulse not read:");
+  });
+
+  test("a fetch that failed judges nothing: an old copy on disk is not the macmini going quiet, and it is logged once", async () => {
+    const s = setup();
+    s.mini(5 * 60 * 60);
+    await s.check(null);
+    await s.check(null);
+    s.fetchedAt(null);
+    const pulse = await leadPulse(s.d, s.env);
+    expect(pulse.alive).toBe(true);
+    expect(s.sent()).toEqual([]);
+    expect(s.notes).toEqual(["macmini records were not fetched this run: its pulse was not judged"]);
+    await s.check();
+    expect(s.sent()).toEqual([["맥미니가 300분째 조용해"]]);
+  });
+
+  test("a failed fetch in the middle of an incident neither repeats the line nor forgets that it was sent", async () => {
+    const s = setup();
+    s.mini(20 * 60);
+    await s.check();
+    await s.check(null);
+    await s.check();
+    expect(s.sent()).toHaveLength(1);
+    expect(s.marker()).toEqual({ seen: "stale", fetched: true });
+    await s.check(null);
+    expect(s.notes.filter((n) => n.startsWith("macmini records were not fetched"))).toHaveLength(2);
+  });
+
+  test("staleness is judged at the time of the fetch, not at the time of the check", async () => {
+    const s = setup();
+    s.mini(20 * 60);
+    await s.check(s.w.clock - 10 * 60_000);
+    expect(s.sent()).toEqual([]);
+    expect(s.marker().seen).toBe("fresh");
+    s.w.clock += 60 * MIN;
+    await s.check(s.w.clock - 59 * 60_000);
+    expect(s.sent()).toEqual([["맥미니가 21분째 조용해"]]);
   });
 });

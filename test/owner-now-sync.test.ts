@@ -26,7 +26,7 @@ function rig(dori: string) {
   };
   put(
     join(bin, "ssh"),
-    `#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -o) shift 2;; macmini) shift; break;; *) break;; esac; done\ncmd="$*"\ncase "$cmd" in */Users/*) exit 255;; esac\ncd "${remote}" && HOME="${remote}" exec /bin/sh -c "$cmd"\n`,
+    `#!/bin/sh\n[ -n "$SSH_FAIL" ] && exit 255\nwhile [ $# -gt 0 ]; do case "$1" in -o) shift 2;; macmini) shift; break;; *) break;; esac; done\ncmd="$*"\ncase "$cmd" in */Users/*) exit 255;; esac\ncd "${remote}" && HOME="${remote}" exec /bin/sh -c "$cmd"\n`,
     0o755,
   );
   put(join(h, "bin", "dori"), dori.replaceAll("@ROOT@", root), 0o755);
@@ -77,6 +77,7 @@ const PULSE = `#!/bin/bash
 ls "$HOME/.omp-dori/state/macmini" > "@ROOT@/saw-macmini.txt" 2>&1
 echo "$PATH" > "@ROOT@/path.txt"
 echo "$@" > "@ROOT@/args.txt"
+echo "\${DORI_MINI_FETCHED_AT-unset}" > "@ROOT@/fetched.txt"
 echo '{"at":1,"alive":true}' > "$HOME/.omp-dori/state/lead-alive.json"
 `;
 
@@ -197,5 +198,20 @@ describe.skipIf(!rsync)("owner-now-sync.sh: records between the Macs", () => {
       [ORDER, ["lane-a", "quoter"]],
       [OTHER, ["lane-a"]],
     ]);
+  });
+
+  test("the pulse is told the fetch time only when this run fetched the macmini's records", () => {
+    const ok = rig(PULSE);
+    ok.mini("lead-alive.json", '{"at":2}');
+    const before = Date.now();
+    ok.run();
+    const stamp = Number(readFileSync(join(ok.root, "fetched.txt"), "utf8"));
+    expect(stamp).toBeGreaterThan(before - 1000);
+    expect(stamp).toBeLessThan(Date.now() + 1000);
+    const down = rig(PULSE);
+    down.mini("lead-alive.json", '{"at":2}');
+    const r = down.run({ SSH_FAIL: "1" });
+    expect(r.out).toContain("기록받음 FAILED");
+    expect(readFileSync(join(down.root, "fetched.txt"), "utf8")).toBe("\n");
   });
 });

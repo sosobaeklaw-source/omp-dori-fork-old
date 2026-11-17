@@ -15,7 +15,8 @@
 # 6) Records between the Macs, one way each, record files only (no case folder, no lane report text). macmini → MacBook,
 #    from ~/sobaegi-lead/state/ to $H/state/macmini/: open-orders.json, reply.log, lead-alive.json (a file the macmini does not have yet is skipped).
 # 7) `dori lead-pulse` (src/lead-pulse.ts): is the lead's pane there, start it after two dead checks in a row, tell the room once
-#    when the macmini's lead-alive.json above has not been renewed for 15 minutes. It runs after 6 so it reads the macmini's newest file,
+#    when the macmini's lead-alive.json above was not renewed for 15 minutes before this run's fetch of it (DORI_MINI_FETCHED_AT is
+#    set only when that fetch succeeded: after a failed fetch the pulse judges nothing and sends nothing). It runs after 6 so it reads the macmini's newest file,
 #    under PULSE_TIMEOUT seconds (default 90), and a failed or hung pulse never stops the copies that follow. launchd's PATH has no
 #    ~/.local/bin, where herdr lives, so it is added here.
 # 8) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
@@ -69,11 +70,12 @@ if [ -d "$H/results" ]; then
 fi
 
 mkdir -p "$H/state/macmini"
-out=$("$RSYNC" -dti -e "$SSH" --include=open-orders.json --include=reply.log --include=lead-alive.json --exclude='*' \
-  macmini:sobaegi-lead/state/ "$H/state/macmini/" 2>&1) || out="FAILED $out"
+fetched=""
+if out=$("$RSYNC" -dti -e "$SSH" --include=open-orders.json --include=reply.log --include=lead-alive.json --exclude='*' \
+  macmini:sobaegi-lead/state/ "$H/state/macmini/" 2>&1); then fetched=$(( $(date +%s) * 1000 )); else out="FAILED $out"; fi
 say 기록받음 "$(printf '%s\n' "$out" | grep -E '^[<>]f|^FAILED|rsync' | head -40)"
 
-out=$(PATH="$HOME/.local/bin:$PATH" /usr/bin/perl -e 'alarm shift; exec @ARGV' "${PULSE_TIMEOUT:-90}" "$H/bin/dori" lead-pulse 2>&1) || out="FAILED $out"
+out=$(DORI_MINI_FETCHED_AT="$fetched" PATH="$HOME/.local/bin:$PATH" /usr/bin/perl -e 'alarm shift; exec @ARGV' "${PULSE_TIMEOUT:-90}" "$H/bin/dori" lead-pulse 2>&1) || out="FAILED $out"
 say lead-pulse "$(printf '%s\n' "$out" | grep -v -E '^PULSE alive=true .* reviveFailed=false$' | head -20)"
 
 lanes="$H/state/lanes-summary"
