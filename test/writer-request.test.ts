@@ -99,7 +99,7 @@ describe("writer request", () => {
     expect(first.path).toBe(join(lane, "requests", "01_hydrogen.txt"));
     expect(second.path).toBe(join(lane, "requests", "02_argon_s2.txt"));
     expect(readFileSync(join(lane, "requests", "02_argon_s2.count"), "utf8")).toBe(
-      `dok=2 reject=2 repeat=2\n${notes}:1-5 2/2\n`,
+      `dok=2 reject=2 repeat=2 recall=0 onto=0\n${notes}:1-5 2/2\n# 원자 2개 (독후감경로:줄)\n[${notes}:2] ${CASE_1}\n[${notes}:5] ${CASE_2}\n`,
     );
   });
 

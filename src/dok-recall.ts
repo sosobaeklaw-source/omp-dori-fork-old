@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { type Concept, expandQuery } from "./onto-concepts.ts";
 import { caseReason, type NameHashes } from "./ready-reply.ts";
 import { caseLines } from "./writer-request.ts";
 
@@ -245,3 +246,28 @@ export const label = (p: Passage): string => {
   const path = p.path.startsWith(`${home}/`) ? `~/${p.path.slice(home.length + 1)}` : p.path;
   return `${path}:${p.start}-${p.end}`;
 };
+
+export interface Recalled {
+  /** `~/PATH:START-END` per kept passage, best first. */
+  readonly specs: string[];
+  /** The ontology concepts that widened the query (`expandQuery`'s `used`). */
+  readonly onto: string[];
+}
+
+/**
+ * The passages a writing request needs for `text` (its task and sheet): the query widened by the ontology's
+ * concepts, ranked over the notes under `root` with the citations in `home`, kept within the budget, client names
+ * and case paths left out (`recall`).
+ */
+export function recallFor(
+  home: string,
+  text: string,
+  names: NameHashes,
+  opts: { root: string; concepts: readonly Concept[]; limit: number; maxChars: number },
+): Recalled {
+  const { query, used } = expandQuery(text, opts.concepts);
+  const notes = loadNotes(opts.root);
+  if (notes.length === 0) return { specs: [], onto: used };
+  const { kept } = recall(query, rank(query, notes, citations(home)), opts.limit, opts.maxChars, names);
+  return { specs: kept.map(label), onto: used };
+}

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { bestPassage, briefQuery, citations, loadNotes, rank, recall, terms } from "../src/dok-recall.ts";
+import { bestPassage, briefQuery, citations, loadNotes, rank, recall, recallFor, terms } from "../src/dok-recall.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
 import { buildRequest, readRange } from "../src/writer-request.ts";
 import { fakeNames, hashFiles } from "./name-hashes.ts";
@@ -159,6 +159,35 @@ test("a section whose one paragraph is longer than the budget still gives a rang
     cases: [`${p.path}:${p.start}-${p.end}`],
   });
   expect(built.dok).toBe(1);
+});
+
+test("an ontology alias finds the note written under the other name, and the request lists its atoms by line", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-onto-")), "results");
+  mkdirSync(join(root, "injury-1110"), { recursive: true });
+  const note = join(root, "injury-1110", "독후감.md");
+  const lines = ["# 독후감 — 상병 이름", "", "## 다발성골절 및 내부 장기손상", ...filler("장기손상", 2)];
+  writeFileSync(note, `${lines.join("\n")}\n`);
+  const concepts = [{ type: "상병", name: "T0291", terms: ["다발성골절 및 내부 장기손상"] }];
+  const home = mkdtempSync(join(tmpdir(), "dok-onto-home-"));
+  const opts = { root, concepts, limit: 5, maxChars: 5000 };
+  expect(recallFor(home, "T0291 요양", NONE, { ...opts, concepts: [] }).specs).toEqual([]);
+  const got = recallFor(home, "T0291 요양", NONE, opts);
+  expect(got.onto).toEqual(["T0291→다발성골절 및 내부 장기손상"]);
+  expect(got.specs).toHaveLength(1);
+  const task = join(home, "task.md");
+  writeFileSync(task, "T0291 요양 글을 쓴다\n");
+  const built = buildRequest({
+    home,
+    kind: "seo",
+    model: "argon",
+    laneDir: join(home, "lane"),
+    tasks: [task],
+    recalled: got,
+  });
+  const count = readFileSync(built.path.replace(/\.txt$/, ".count"), "utf8").split("\n");
+  expect(count[0]).toEndWith("recall=1 onto=1");
+  expect(count).toContain("# 온톨로지: T0291→다발성골절 및 내부 장기손상");
+  expect(count).toContain(`[${note}:4] ${lines[3]}`);
 });
 
 test("a note with no case line gives no passage; two notes keep their shared words", () => {

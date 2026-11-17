@@ -56,6 +56,7 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "resume",
   "help",
   "list",
+  "no-recall",
 ]);
 
 export function parse(argv: readonly string[]): Args {

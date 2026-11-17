@@ -111,8 +111,30 @@ export interface Range {
 }
 
 /** A case line: at least 15 characters once trimmed, and neither a heading nor a table rule. */
-export const caseLines = (r: Range): string[] =>
-  r.lines.map((l) => l.trim()).filter((s) => s.length >= 15 && !s.startsWith("#") && !/^[|\-: ]+$/.test(s));
+const isCase = (s: string): boolean => s.length >= 15 && !s.startsWith("#") && !/^[|\-: ]+$/.test(s);
+
+export const caseLines = (r: Range): string[] => r.lines.map((l) => l.trim()).filter(isCase);
+
+/**
+ * The case lines of `ranges` as atoms, each under `path:LINE`, once per line however many ranges hold it. This list
+ * goes into the count file, and the delivery review (sanjai-agent scripts/delivery_review) shows for each atom the
+ * body sentence that carries it, or 미반영.
+ */
+export function atomsOf(ranges: readonly Range[]): { at: string; text: string }[] {
+  const seen = new Set<string>();
+  const out: { at: string; text: string }[] = [];
+  for (const r of ranges) {
+    const m = /^(.+):(\d+)-\d+$/.exec(r.label)!;
+    r.lines.forEach((line, i) => {
+      const at = `${m[1]}:${Number(m[2]) + i}`;
+      const text = line.trim();
+      if (!isCase(text) || seen.has(at)) return;
+      seen.add(at);
+      out.push({ at, text });
+    });
+  }
+  return out;
+}
 
 /** Everything above this line is case material; the case lines are looked for only there. */
 export const END = "=== The task ===";
@@ -152,6 +174,12 @@ export interface BuildInput {
   /** Extra `path:START-END` ranges for this topic, after the kind's own. */
   readonly cases?: readonly string[];
   readonly label?: string | undefined;
+  /**
+   * Passages recalled for this request's own text (dok-recall's `recallFor`), after the kind's and `cases`; one the
+   * others already hold whole is dropped. `onto` names the ontology concepts that widened the query; `off` says why
+   * nothing was recalled.
+   */
+  readonly recalled?: { readonly specs: readonly string[]; readonly onto: readonly string[]; readonly off?: string };
 }
 
 export interface Built {
@@ -165,7 +193,16 @@ export function buildRequest(input: BuildInput): Built {
   if (input.tasks.length === 0 && !input.sheet) throw new Refusal("give the lane's task text with --task FILE");
   for (const t of input.tasks) if (!existsSync(t)) throw new Refusal(`no task file ${t}`);
   const sheet = input.sheet === undefined ? undefined : readSheet(input.sheet, END);
-  const ranges = kindRanges(input.home, input.kind, input.cases);
+  const fixed = kindRanges(input.home, input.kind, input.cases);
+  const holds = (spec: string): boolean => {
+    const m = /^(.+):(\d+)-(\d+)$/.exec(spec)!;
+    return fixed.some((r) => {
+      const f = /^(.+):(\d+)-(\d+)$/.exec(r.label)!;
+      return f[1] === m[1] && Number(f[2]) <= Number(m[2]) && Number(f[3]) >= Number(m[3]);
+    });
+  };
+  const recalled = (input.recalled?.specs ?? []).filter((s) => !holds(s)).map(readRange);
+  const ranges = [...fixed, ...recalled];
   if (ranges.length === 0)
     throw new Refusal(
       `no case notes for ${input.kind}: add PATH:START-END lines to ${casesPath(input.home, input.kind)}`,
@@ -198,9 +235,16 @@ export function buildRequest(input: BuildInput): Built {
   writeFileSync(path, body);
   const counts = countCases(body, ranges);
   const dok = counts.reduce((n, c) => n + c.hit, 0);
-  const head = `dok=${dok} reject=${reject.length} repeat=${repeat.length}`;
+  const r = input.recalled;
+  const head = `dok=${dok} reject=${reject.length} repeat=${repeat.length} recall=${r?.off ? "off" : recalled.length} onto=${r?.onto.length ?? 0}`;
   const lines = counts.map((c) => `${c.label} ${c.hit}/${c.total}`);
-  writeFileSync(join(dir, `${stem}.count`), [head, ...lines, ""].join("\n"));
+  const trace = [
+    ...(r?.off ? [`# recall off: ${r.off}`] : []),
+    ...(r?.onto.length ? [`# 온톨로지: ${r.onto.join(" | ")}`] : []),
+    `# 원자 ${atomsOf(ranges).length}개 (독후감경로:줄)`,
+    ...atomsOf(ranges).map((a) => `[${a.at}] ${a.text}`),
+  ];
+  writeFileSync(join(dir, `${stem}.count`), [head, ...lines, ...trace, ""].join("\n"));
   return { path, dok, reject: reject.length, repeat: repeat.length };
 }
 
