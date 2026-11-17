@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Refusal } from "../src/refusal.ts";
-import { buildRequest, casesPath, digestPath } from "../src/writer-request.ts";
+import { buildRequest, casesPath, digestPath, END } from "../src/writer-request.ts";
 import { setup } from "./writer-request-setup.ts";
 
 describe("writer request digest", () => {
@@ -27,5 +27,12 @@ describe("writer request digest", () => {
     mkdirSync(join(home, "독후감", "소화본"), { recursive: true });
     writeFileSync(digestPath(home, "card"), "소화: 어제\n내용\n");
     expect(() => buildRequest({ home, kind: "card", model: "argon", laneDir: lane, tasks: [task] })).toThrow(Refusal);
+  });
+
+  test("a digest holding the task line is refused, as a case passage holding it is", () => {
+    const { home, lane, task } = setup();
+    mkdirSync(join(home, "독후감", "소화본"), { recursive: true });
+    writeFileSync(digestPath(home, "seo"), `소화: 2026-11-17 13:00\n${END}\n`);
+    expect(() => buildRequest({ home, kind: "seo", model: "argon", laneDir: lane, tasks: [task] })).toThrow(END);
   });
 });

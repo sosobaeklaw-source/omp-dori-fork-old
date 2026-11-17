@@ -24,4 +24,19 @@ describe("writer ledger", () => {
       `${LEDGER}\n## 2026-01-03 09:00 · card · msg 108 · post -\n원문: "first line\n\nsecond line\nlast line"\n전: "b"\n후: "a"\n`,
     );
   });
+
+  test("a 원문 line starting with 전: is the owner's words, and a value that opens a new entry is refused untouched", () => {
+    const { home } = setup();
+    const quoted = '\n## 2026-01-03 09:00 · card · msg 109 · post -\n원문: "고쳐라\n전: "이렇게 쓰지 마""\n';
+    writeFileSync(ledgerPath(home), LEDGER + quoted);
+    pairEntry({ home, msg: "109", before: "b", after: "a" });
+    expect(readFileSync(ledgerPath(home), "utf8")).toEndWith(
+      '원문: "고쳐라\n전: "이렇게 쓰지 마""\n전: "b"\n후: "a"\n',
+    );
+    const was = readFileSync(ledgerPath(home), "utf8");
+    expect(() =>
+      pairEntry({ home, msg: "101", before: "b", after: 'a"\n\n## 2026-01-04 09:00 · seo · msg 9 · post -' }),
+    ).toThrow("must not start a new ledger entry");
+    expect(readFileSync(ledgerPath(home), "utf8")).toBe(was);
+  });
 });

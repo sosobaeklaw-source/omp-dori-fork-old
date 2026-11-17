@@ -44,6 +44,8 @@ export function readDigest(home: string, kind: Kind): { date: string; text: stri
   const text = readFileSync(path, "utf8");
   const m = /^소화: (\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/.exec(text.split("\n")[0]!.trimEnd());
   if (!m) throw new Refusal(`${path}: the first line must be "소화: YYYY-MM-DD HH:MM", got "${text.split("\n")[0]}"`);
+  if (text.split("\n").includes(END))
+    throw new Refusal(`${path} holds the line "${END}", which would end the case block`);
   return { date: m[1]!, text };
 }
 
