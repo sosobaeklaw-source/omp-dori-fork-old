@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { alive } from "../skills/dori-mode/scripts/src/checkpoint-lock.ts";
 import { need, one, parse } from "../src/cli-args.ts";
-import { type Recalled, recallFor } from "../src/dok-recall.ts";
+import { RECALL, type Recalled, recallFor } from "../src/dok-recall.ts";
 import { homeStateDir } from "../src/lane-model.ts";
 import { conceptsPath, loadConcepts } from "../src/onto-concepts.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
@@ -24,22 +24,19 @@ import { sendOnSeat } from "../src/writer-seat.ts";
  * (DORI_HOME/ontology-concepts.json, tools/onto_concepts.ts). Passages go to a writing model, so without the
  * client-name hashes (the same files dok_recall reads) nothing is recalled and the count file says why.
  */
-function recallPassages(home: string, texts: readonly string[]): Recalled & { off?: string } {
+function recallPassages(home: string, texts: readonly string[]): Recalled & { off?: string; concepts: string } {
   const stateDir = homeStateDir(home);
   const hashFile = process.env["DORI_NAME_HASHES"] ?? join(stateDir, "case-name-hashes.json");
   const saltFile = process.env["DORI_NAME_HASH_SALT_FILE"] ?? join(stateDir, "name_hash_salt");
   const names = loadNameHashes(hashFile, saltFile);
-  if (!names) return { specs: [], onto: [], off: `no readable client-name hashes and salt (${hashFile})` };
-  const concepts = loadConcepts(home);
+  const concepts = loadConcepts(home)?.concepts;
+  const have = concepts ? `${concepts.length} concepts` : `no ${conceptsPath(home)}`;
+  if (!names)
+    return { specs: [], onto: [], concepts: have, off: `no readable client-name hashes and salt (${hashFile})` };
   const root = process.env["DORI_NOTES_ROOT"] ?? join(homedir(), "sobaegi-lead", "results");
-  if (!existsSync(root)) return { specs: [], onto: [], off: `no notes root ${root}` };
-  const got = recallFor(home, texts.map((t) => readFileSync(t, "utf8")).join("\n"), names, {
-    root,
-    concepts: concepts?.concepts ?? [],
-    limit: 10,
-    maxChars: 8000,
-  });
-  return concepts ? got : { ...got, onto: [`(no ${conceptsPath(home)})`] };
+  if (!existsSync(root)) return { specs: [], onto: [], concepts: have, off: `no notes root ${root}` };
+  const text = texts.map((t) => readFileSync(t, "utf8")).join("\n");
+  return { ...recallFor(home, text, names, { root, concepts: concepts ?? [], ...RECALL }), concepts: have };
 }
 
 const USAGE = `usage:
@@ -73,7 +70,10 @@ try {
     const sheet = one(a, "sheet");
     const recalled = a.flags.has("no-recall")
       ? { specs: [], onto: [], off: "--no-recall" }
-      : recallPassages(home, [...tasks, ...(sheet ? [sheet] : [])].filter((f) => existsSync(f)));
+      : recallPassages(
+          home,
+          [...tasks, ...(sheet ? [sheet] : [])].filter((f) => existsSync(f)),
+        );
     const built = buildRequest({
       home,
       kind: kindOf(one(a, "kind")),

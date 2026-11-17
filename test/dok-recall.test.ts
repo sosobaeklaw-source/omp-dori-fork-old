@@ -112,6 +112,35 @@ test("the budget keeps notes in rank order and names the next ones as over budge
   for (const p of recall(query, ranked, 3, 300, NONE).kept) expect(p.chars).toBeLessThanOrEqual(100);
 });
 
+test("a weak tail is cut: under the floor or sharing too few words, and a reading-list section never counts", () => {
+  const root = join(mkdtempSync(join(tmpdir(), "dok-floor-")), "results");
+  const note = (rel: string, lines: string[]) => {
+    mkdirSync(join(root, rel, ".."), { recursive: true });
+    writeFileSync(join(root, rel), `${lines.join("\n")}\n`);
+  };
+  note("noise-1111/독후감_난청.md", ["# 독후감 — 소음성 난청 청력 기준", "", ...filler("난청 청력", 4)]);
+  note("incident-1109/독후감_경위서.md", ["# 독후감 — 재해경위서 틀", "", ...filler("경위서 난청", 4)]);
+  note("read-1113/독후감_읽은것.md", [
+    "# 독후감 — 소음성 난청 청력 자료",
+    "",
+    "## 읽은 것",
+    "- `~/sobaegi-lead/results/noise-1111/독후감_난청.md` 소음성 난청 청력 기준을 정리한 글이다",
+    "- `~/sobaegi-lead/results/noise-1111/지침_원문.pdf` 소음성 난청 청력 업무처리기준 원문이다",
+  ]);
+  // Topics of their own, so the query's words are held by under half the notes and count.
+  for (const t of ["팩스", "영상", "카드뉴스", "휴업급여"])
+    note(`${t}-1110/독후감.md`, [`# 독후감 — ${t}`, "", ...filler(t, 4)]);
+  const query = "소음성 난청 청력 기준";
+  const ranked = rank(query, loadNotes(root));
+  const all = recall(query, ranked, 5, 100_000, NONE).kept.map((p) => relative(root, p.path));
+  expect(all).toContain("incident-1109/독후감_경위서.md");
+  expect(all).not.toContain("read-1113/독후감_읽은것.md");
+  const strict = recall(query, ranked, 5, 100_000, NONE, { minHit: 3 }).kept.map((p) => relative(root, p.path));
+  expect(strict).toEqual(["noise-1111/독후감_난청.md"]);
+  const floored = recall(query, ranked, 5, 100_000, NONE, { floor: 0.99 }).kept;
+  expect(floored.map((p) => relative(root, p.path))).toEqual(["noise-1111/독후감_난청.md"]);
+});
+
 test("a note other briefs and writer-cases cite ranks higher; the brief being recalled for is not counted", () => {
   const root = tree();
   const notes = loadNotes(root);

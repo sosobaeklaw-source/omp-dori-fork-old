@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { hashFiles } from "./name-hashes.ts";
 import { Refusal } from "../src/refusal.ts";
 import {
   addEntry,
@@ -115,7 +116,7 @@ describe("writer request", () => {
     const { home, lane, task, notes } = setup();
     const run = (...args: string[]) => {
       const p = Bun.spawnSync(["bun", join(import.meta.dir, "../tools/writer_request.ts"), ...args], {
-        env: { ...process.env, DORI_HOME: home },
+        env: { ...process.env, DORI_HOME: home, DORI_NOTES_ROOT: join(home, "no-notes") },
       });
       return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() };
     };
@@ -131,6 +132,82 @@ describe("writer request", () => {
     writeFileSync(join(home, "noend.txt"), `${CASE_1}\n${CASE_2}\n`);
     expect(run("count", join(home, "noend.txt"), "--kind", "seo")).toMatchObject({ code: 1 });
     expect(run("count", join(home, "noend.txt"), "--kind", "seo").out).toContain(`no "${END}" line`);
+  });
+
+  test("build says why nothing was recalled, and a recalled range the kind's list already overlaps is dropped", () => {
+    const { home, lane, task, notes } = setup();
+    const f = hashFiles();
+    const root = join(home, "results");
+    mkdirSync(join(root, "seo-1111"), { recursive: true });
+    // The task "Write section 2." is the query; the overlap case (notes.md:4-6 against the kind's 1-5) is below.
+    writeFileSync(
+      join(root, "seo-1111", "독후감.md"),
+      `# 독후감 — section 2\n\n## section 2 writing\nWrite section 2 the way the owner fixed it last time.\n`,
+    );
+    const run = (env: Record<string, string>, ...extra: string[]) => {
+      const p = Bun.spawnSync(
+        [
+          "bun",
+          join(import.meta.dir, "../tools/writer_request.ts"),
+          "build",
+          "--kind",
+          "seo",
+          "--model",
+          "argon",
+          "--lane-dir",
+          lane,
+          "--task",
+          task,
+          ...extra,
+        ],
+        {
+          env: {
+            ...process.env,
+            DORI_HOME: home,
+            DORI_NAME_HASHES: f.hashes,
+            DORI_NAME_HASH_SALT_FILE: f.saltFile,
+            DORI_NOTES_ROOT: root,
+            ...env,
+          },
+        },
+      );
+      expect(p.exitCode).toBe(0);
+      const out = p.stdout.toString();
+      return readFileSync(`${/BUILT (\S+)\.txt/.exec(out)![1]}.count`, "utf8").split("\n");
+    };
+    expect(run({ DORI_NAME_HASHES: join(home, "none.json") })).toContain(
+      `# recall off: no readable client-name hashes and salt (${join(home, "none.json")})`,
+    );
+    expect(run({ DORI_NOTES_ROOT: join(home, "none") })).toContain(`# recall off: no notes root ${join(home, "none")}`);
+    expect(run({}, "--no-recall")).toContain("# recall off: --no-recall");
+    const on = run({});
+    expect(on[0]).toEndWith("recall=1 onto=0");
+    expect(on).toContain(`# 온톨로지 개념: no ${join(home, "ontology-concepts.json")}`);
+    expect(on.some((l) => l.startsWith(`[${join(root, "seo-1111", "독후감.md")}:4]`))).toBe(true);
+    const overlap = buildRequest({
+      home,
+      kind: "seo",
+      model: "argon",
+      laneDir: lane,
+      tasks: [task],
+      recalled: { specs: [`${notes}:4-6`, `${notes}:5-5`], onto: [] },
+    });
+    expect(readFileSync(overlap.path.replace(/\.txt$/, ".count"), "utf8").split("\n")[0]).toEndWith("recall=0 onto=0");
+  });
+
+  test("a recalled passage holding the task line is skipped, not a reason to refuse the request", () => {
+    const { home, lane, task } = setup();
+    const other = join(home, "other.md");
+    writeFileSync(other, `${CASE_1}\n${END}\n${CASE_2}\n`);
+    const built = buildRequest({
+      home,
+      kind: "seo",
+      model: "argon",
+      laneDir: lane,
+      tasks: [task],
+      recalled: { specs: [`${other}:1-3`], onto: [] },
+    });
+    expect(readFileSync(built.path, "utf8")).not.toContain(`[${other}:1-3]`);
   });
 
   test("a range must be PATH:START-END inside the file, hold a case line and not hold the task line", () => {

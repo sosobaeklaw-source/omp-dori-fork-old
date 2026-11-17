@@ -175,11 +175,17 @@ export interface BuildInput {
   readonly cases?: readonly string[];
   readonly label?: string | undefined;
   /**
-   * Passages recalled for this request's own text (dok-recall's `recallFor`), after the kind's and `cases`; one the
-   * others already hold whole is dropped. `onto` names the ontology concepts that widened the query; `off` says why
-   * nothing was recalled.
+   * Passages recalled for this request's own text (dok-recall's `recallFor`), after the kind's and `cases`. One whose
+   * lines the others already give, wholly or in part, is dropped, and so is one holding the task line. `onto` names
+   * the ontology concepts that widened the query, `concepts` what the ontology export held (`12 concepts` or
+   * `no PATH`), and `off` says why nothing was recalled.
    */
-  readonly recalled?: { readonly specs: readonly string[]; readonly onto: readonly string[]; readonly off?: string };
+  readonly recalled?: {
+    readonly specs: readonly string[];
+    readonly onto: readonly string[];
+    readonly concepts?: string;
+    readonly off?: string;
+  };
 }
 
 export interface Built {
@@ -194,20 +200,25 @@ export function buildRequest(input: BuildInput): Built {
   for (const t of input.tasks) if (!existsSync(t)) throw new Refusal(`no task file ${t}`);
   const sheet = input.sheet === undefined ? undefined : readSheet(input.sheet, END);
   const fixed = kindRanges(input.home, input.kind, input.cases);
-  const holds = (spec: string): boolean => {
-    const m = /^(.+):(\d+)-(\d+)$/.exec(spec)!;
-    return fixed.some((r) => {
-      const f = /^(.+):(\d+)-(\d+)$/.exec(r.label)!;
-      return f[1] === m[1] && Number(f[2]) <= Number(m[2]) && Number(f[3]) >= Number(m[3]);
-    });
+  const spot = (label: string) => {
+    const m = /^(.+):(\d+)-(\d+)$/.exec(label)!;
+    const path = m[1]!.startsWith("~/") ? join(homedir(), m[1]!.slice(2)) : m[1]!;
+    return { path, start: Number(m[2]), end: Number(m[3]) };
   };
-  const recalled = (input.recalled?.specs ?? []).filter((s) => !holds(s)).map(readRange);
+  const taken = fixed.map((r) => spot(r.label));
+  const recalled = (input.recalled?.specs ?? [])
+    .filter((s) => {
+      const p = spot(s);
+      return !taken.some((f) => f.path === p.path && f.start <= p.end && p.start <= f.end);
+    })
+    .map(readRange)
+    .filter((r) => !r.lines.includes(END) && caseLines(r).length > 0);
   const ranges = [...fixed, ...recalled];
   if (ranges.length === 0)
     throw new Refusal(
       `no case notes for ${input.kind}: add PATH:START-END lines to ${casesPath(input.home, input.kind)}`,
     );
-  for (const r of ranges) {
+  for (const r of fixed) {
     if (caseLines(r).length === 0) throw new Refusal(`${r.label} holds no case line`);
     if (r.lines.includes(END)) throw new Refusal(`${r.label} holds the line "${END}", which would end the case block`);
   }
@@ -240,6 +251,7 @@ export function buildRequest(input: BuildInput): Built {
   const lines = counts.map((c) => `${c.label} ${c.hit}/${c.total}`);
   const trace = [
     ...(r?.off ? [`# recall off: ${r.off}`] : []),
+    ...(r?.concepts ? [`# 온톨로지 개념: ${r.concepts}`] : []),
     ...(r?.onto.length ? [`# 온톨로지: ${r.onto.join(" | ")}`] : []),
     `# 원자 ${atomsOf(ranges).length}개 (독후감경로:줄)`,
     ...atomsOf(ranges).map((a) => `[${a.at}] ${a.text}`),

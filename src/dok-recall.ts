@@ -172,19 +172,28 @@ export interface Passage {
   readonly chars: number;
 }
 
+const PATHY = /(?:~\/|\/Users\/|[\w가-힣.-]+\/[\w가-힣.-]+\.(?:md|txt|pdf|hwpx?|json|png))/;
+/** Half or more of the section's text lines name a file path: a list of what was read, not a lesson. */
+const pathList = (section: readonly string[]): boolean => {
+  const text = section.filter((l) => l.trim() && !/^#/.test(l));
+  return text.length > 0 && text.filter((l) => PATHY.test(l)).length * 2 >= text.length;
+};
+
 /**
  * The note's section (split at `#`–`###` headings) sharing most of the query's words, cut to `maxChars`. Only
- * sections holding a case line (writer-request's `caseLines`) count, and the cut always keeps the section's first
- * case line, so `writer_request` never refuses the range. A note with no case line gives none.
+ * sections holding a case line (writer-request's `caseLines`) and at least `minHit` of the query's words count, and
+ * a section that is mostly file paths (a "읽은 것" reading list) never does. The cut always keeps the section's first
+ * case line, so `writer_request` never refuses the range. A note with no such section gives none.
  */
-export function bestPassage(note: Note, query: string, maxChars: number): Passage | undefined {
+export function bestPassage(note: Note, query: string, maxChars: number, minHit = 0): Passage | undefined {
   const asked = new Set(terms(query));
   const cuts = [0, ...note.lines.flatMap((l, i) => (i > 0 && /^#{1,3} /.test(l) ? [i] : [])), note.lines.length];
   let best: { start: number; end: number; hit: number } | undefined;
   for (let i = 0; i + 1 < cuts.length; i++) {
     const section = note.lines.slice(cuts[i], cuts[i + 1]);
-    if (caseLines({ label: "", lines: section }).length === 0) continue;
+    if (caseLines({ label: "", lines: section }).length === 0 || pathList(section)) continue;
     const hit = new Set(terms(section.join("\n")).filter((t) => asked.has(t))).size;
+    if (hit < minHit) continue;
     if (!best || hit > best.hit) best = { start: cuts[i]!, end: cuts[i + 1]!, hit };
   }
   if (!best) return undefined;
@@ -207,9 +216,12 @@ export interface Recall {
 
 /**
  * Keep passages of the ranked notes in order until `limit` notes or `maxChars` characters would be crossed. Each
- * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget. The passages
- * go to a writing model, so one holding a client name (matched by salted hash, `names`), a registration number, a phone
- * number or a case-folder path is left out, and so is one whose text a kept or listed passage already has.
+ * passage gets at most `maxChars / limit` characters, so one long section never takes the whole budget. A note
+ * scoring under `floor` times the score of the first note that gave a passage is not taken, and a passage must share `minHit` of the query's
+ * words (see `bestPassage`): a long tail of weakly matching notes is what pulls a 재해경위서 template into a SEO
+ * request. The passages go to a writing model, so one holding a client name (matched by salted hash, `names`), a
+ * registration number, a phone number or a case-folder path is left out, and so is one whose text a kept or listed
+ * passage already has.
  */
 export function recall(
   query: string,
@@ -217,14 +229,18 @@ export function recall(
   limit: number,
   maxChars: number,
   names: NameHashes,
+  { floor = 0, minHit = 0 }: { floor?: number; minHit?: number } = {},
 ): Recall {
   const kept: Passage[] = [];
   const over: Passage[] = [];
   const seen = new Set<string>();
+  let top: number | undefined;
   let used = 0;
-  for (const { note } of ranked) {
-    const p = bestPassage(note, query, Math.floor(maxChars / limit));
+  for (const { note, score } of ranked) {
+    if (top !== undefined && score < top * floor) break;
+    const p = bestPassage(note, query, Math.floor(maxChars / limit), minHit);
     if (!p) continue;
+    top ??= score;
     const text = note.lines.slice(p.start - 1, p.end).join("\n");
     if (seen.has(text)) continue;
     seen.add(text);
@@ -254,6 +270,9 @@ export interface Recalled {
   readonly onto: string[];
 }
 
+/** Defaults for a writing request: a few strong passages, not a long tail (see `recall`). */
+export const RECALL = { limit: 6, maxChars: 6000, floor: 0.5, minHit: 2 } as const;
+
 /**
  * The passages a writing request needs for `text` (its task and sheet): the query widened by the ontology's
  * concepts, ranked over the notes under `root` with the citations in `home`, kept within the budget, client names
@@ -263,11 +282,18 @@ export function recallFor(
   home: string,
   text: string,
   names: NameHashes,
-  opts: { root: string; concepts: readonly Concept[]; limit: number; maxChars: number },
+  opts: {
+    root: string;
+    concepts: readonly Concept[];
+    limit: number;
+    maxChars: number;
+    floor?: number;
+    minHit?: number;
+  },
 ): Recalled {
   const { query, used } = expandQuery(text, opts.concepts);
   const notes = loadNotes(opts.root);
   if (notes.length === 0) return { specs: [], onto: used };
-  const { kept } = recall(query, rank(query, notes, citations(home)), opts.limit, opts.maxChars, names);
+  const { kept } = recall(query, rank(query, notes, citations(home)), opts.limit, opts.maxChars, names, opts);
   return { specs: kept.map(label), onto: used };
 }
