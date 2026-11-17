@@ -2,7 +2,7 @@
  * The owner's rejection ledger (`<home>/반복지적.md`): his words when he sent work back, verbatim, one `## ` entry
  * each, an entry marked `반복 <id>` when he said it again. `writer-request.ts` copies the entries into every request.
  */
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Refusal } from "./refusal.ts";
 
@@ -98,4 +98,24 @@ export function addEntry(input: AddInput): string {
   parseLedger(lines.join("\n"));
   appendFileSync(ledgerPath(input.home), `${lines.join("\n")}\n`);
   return lines[1]!;
+}
+
+/**
+ * Put the sentences fixed for one entry, `전:` then `후:`, after the entry's last non-blank line (where `addEntry`
+ * writes them), however many lines its 원문 runs over. Every other byte of the ledger stays as it was. Refused when
+ * the msg is not in the ledger or already has them.
+ */
+export function pairEntry(input: { home: string; msg: string; before: string; after: string }): string {
+  const entry = readLedger(input.home).find((e) => e.msg === input.msg);
+  if (!entry) throw new Refusal(`msg ${input.msg} is not in the ledger`);
+  const lines = entry.block.split("\n");
+  if (lines.some((l) => l.startsWith("전: ") || l.startsWith("후: ")))
+    throw new Refusal(`msg ${input.msg} already has 전/후`);
+  const text = readFileSync(ledgerPath(input.home), "utf8");
+  const end = text.indexOf(entry.block) + entry.block.length;
+  writeFileSync(
+    ledgerPath(input.home),
+    `${text.slice(0, end)}\n전: "${input.before}"\n후: "${input.after}"${text.slice(end)}`,
+  );
+  return lines[0]!;
 }

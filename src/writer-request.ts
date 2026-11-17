@@ -1,6 +1,11 @@
 /**
  * The one path from case notes and the owner's own rejection words to a writing model's request body.
  *
+ * When `<home>/독후감/소화본/<kind>.md` exists (the digest: the current understanding of the kind, first line
+ * `소화: YYYY-MM-DD HH:MM`), the body opens with it whole as section 0, and a kind with a digest needs no case-note
+ * list. Sections 2 and 3 still go in whole, so nothing the digest left out drops away unseen. Without a digest the
+ * body is exactly as below.
+ *
  * Every body starts, verbatim and never summarized, with:
  *   1. the case-note passages (독후감) for the kind, each range under its `path:START-END` label;
  *   2. the owner's rejection entries of that kind, copied from the ledger;
@@ -29,6 +34,18 @@ import { markLeadAfter, readSheet, SHEET_ASK } from "./writer-sheet.ts";
 
 const WRITERS = ["argon", "hydrogen"] as const;
 export type Writer = (typeof WRITERS)[number];
+
+export const digestPath = (home: string, kind: Kind): string => join(home, "독후감", "소화본", `${kind}.md`);
+
+/** The kind's digest and its `소화:` date, or undefined when there is none. */
+export function readDigest(home: string, kind: Kind): { date: string; text: string } | undefined {
+  const path = digestPath(home, kind);
+  if (!existsSync(path)) return undefined;
+  const text = readFileSync(path, "utf8");
+  const m = /^소화: (\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/.exec(text.split("\n")[0]!.trimEnd());
+  if (!m) throw new Refusal(`${path}: the first line must be "소화: YYYY-MM-DD HH:MM", got "${text.split("\n")[0]}"`);
+  return { date: m[1]!, text };
+}
 
 export const casesPath = (home: string, kind: Kind): string => join(home, "writer-cases", `${kind}.txt`);
 
@@ -164,7 +181,8 @@ export function buildRequest(input: BuildInput): Built {
     .map(readRange)
     .filter((r) => !r.lines.includes(END) && caseLines(r).length > 0);
   const ranges = [...fixed, ...recalled];
-  if (ranges.length === 0)
+  const digest = readDigest(input.home, input.kind);
+  if (ranges.length === 0 && !digest)
     throw new Refusal(
       `no case notes for ${input.kind}: add PATH:START-END lines to ${casesPath(input.home, input.kind)}`,
     );
@@ -174,6 +192,7 @@ export function buildRequest(input: BuildInput): Built {
   }
   const { reject, repeat } = selectEntries(readLedger(input.home), input.kind);
   const body = [
+    ...(digest ? [`=== 0. 지금의 이해 (소화본), verbatim. ===`, "", digest.text.trimEnd(), ""] : []),
     "=== 1. Case notes (독후감), verbatim. Each passage is under its source path:lines. ===",
     ...ranges.flatMap((r) => ["", `[${r.label}]`, ...r.lines]),
     "",
@@ -197,7 +216,7 @@ export function buildRequest(input: BuildInput): Built {
   const counts = countCases(body, ranges);
   const dok = counts.reduce((n, c) => n + c.hit, 0);
   const r = input.recalled;
-  const head = `dok=${dok} reject=${reject.length} repeat=${repeat.length} recall=${r?.off ? "off" : recalled.length} onto=${r?.onto.length ?? 0}`;
+  const head = `dok=${dok} reject=${reject.length} repeat=${repeat.length} recall=${r?.off ? "off" : recalled.length} onto=${r?.onto.length ?? 0}${digest ? ` digest=${digest.date}` : ""}`;
   const lines = counts.map((c) => `${c.label} ${c.hit}/${c.total}`);
   const trace = [
     ...(r?.off ? [`# recall off: ${r.off}`] : []),
