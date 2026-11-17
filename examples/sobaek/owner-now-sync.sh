@@ -16,7 +16,9 @@
 #    from ~/sobaegi-lead/state/ to $H/state/macmini/: open-orders.json, reply.log, lead-alive.json (a file the macmini does not have yet is skipped).
 # 7) `dori lead-pulse` (src/lead-pulse.ts): is the lead's pane there, start it after two dead checks in a row, tell the room once
 #    when the macmini's lead-alive.json above was not renewed for 15 minutes before this run's fetch of it (DORI_MINI_FETCHED_AT is
-#    set only when that fetch succeeded: after a failed fetch the pulse judges nothing and sends nothing). It runs after 6 so it reads the macmini's newest file,
+#    set only when that fetch succeeded: after a failed fetch the pulse judges nothing and sends nothing). The local copy of that
+#    file is removed before the fetch, so what the pulse judges is a file this fetch brought: one the macmini no longer has is
+#    missing, never an old copy judged against a fresh fetch time. It runs after 6 so it reads the macmini's newest file,
 #    under PULSE_TIMEOUT seconds (default 90), and a failed or hung pulse never stops the copies that follow. launchd's PATH has no
 #    ~/.local/bin, where herdr lives, so it is added here.
 # 8) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
@@ -70,6 +72,7 @@ if [ -d "$H/results" ]; then
 fi
 
 mkdir -p "$H/state/macmini"
+rm -f "$H/state/macmini/lead-alive.json"
 fetched=""
 if out=$("$RSYNC" -dti -e "$SSH" --include=open-orders.json --include=reply.log --include=lead-alive.json --exclude='*' \
   macmini:sobaegi-lead/state/ "$H/state/macmini/" 2>&1); then fetched=$(( $(date +%s) * 1000 )); else out="FAILED $out"; fi
@@ -89,7 +92,10 @@ for path in sorted(glob.glob(os.path.join(home, "lanes", "*.json"))):
     try:
         lane = json.load(open(path))
         key, status = lane["key"], lane["status"]
-        ids = [str(x) for x in lane["orders"]] if isinstance(lane.get("orders"), list) else []
+        listed = lane["orders"] if isinstance(lane.get("orders"), list) else []
+        ids = [x for x in listed if isinstance(x, str)]
+        if len(ids) < len(listed):
+            print("%s orders: %d non-string entries ignored (ids must be strings)" % (os.path.basename(path), len(listed) - len(ids)))
         try:
             head = [l.strip() for l in open(os.path.join(home, "briefs", key + ".md"), encoding="utf-8", errors="replace") if l.strip()][:5]
         except OSError:

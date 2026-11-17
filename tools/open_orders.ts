@@ -9,9 +9,11 @@
  * `incoming` table (by the logs' `INBOUND_READY owner=` ids and `--owner`, when any); one id on both Macs is one order.
  * A lane belongs to an order only through a mark made on purpose: an `orders: ["<id>", …]` array in its record, or a
  * header line of `briefs/<key>.md` beside its lanes folder: one of its first five non-empty lines that starts with
- * `회장님 원문(<id>…)` (the ids inside the brackets count; words beside them and text after the bracket do not). An id
- * quoted anywhere else, in the record or the brief, attaches
- * nothing, and a `lost` lane (superseded or not) attaches nothing either. States, from records only, never from a
+ * `회장님 원문(<id>…)` (the ids inside the brackets count; words beside them and text after the bracket do not). The
+ * ids of `orders` are strings: a number (or anything else that is not a string) is ignored and named on the `# 못 읽음:` line. An id quoted anywhere else, in the
+ * record or the brief, attaches nothing, and a `lost` lane (superseded or not) attaches nothing either. What the other
+ * Mac's --orders-json brings keeps each order's own `macs`; its lanes are used only for a Mac whose own --lanes folder is
+ * not read in this run (the folder read here is newer than that Mac's copy of it), once per Mac and key. States, from records only, never from a
  * reply's words: 닫힘 (a `closes=<id>` in a sent or reply log, a `REPLIED <lane> <id>
  * <reply>` READY reply, the closed log, or 닫힘 in the other Mac's --orders-json), 일하는중 (a lane not ready or done;
  * quiet minutes and Mac shown), 결과미전달 (every lane ready or done), 약속만 (no lane, a `reply=`/`to=` answer
@@ -66,9 +68,14 @@ const sinceMs = (raw: string): number => {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 };
 
-/** The order ids a lane names on purpose: `orders` in its record, and the header of its brief. */
-function marked(record: Record<string, unknown>, brief: string): string[] {
-  const listed = Array.isArray(record["orders"]) ? record["orders"].map(String) : [];
+/**
+ * The order ids a lane names on purpose: `orders` in its record (strings only: a JSON number above 2^53 has already lost
+ * its digits, so anything that is not a string is ignored and counted in `ignored`), and the header of its brief.
+ */
+function marked(record: Record<string, unknown>, brief: string, ignored: { count: number }): string[] {
+  const entries: unknown[] = Array.isArray(record["orders"]) ? record["orders"] : [];
+  const listed = entries.filter((x): x is string => typeof x === "string");
+  ignored.count += entries.length - listed.length;
   const head = brief
     .split("\n")
     .map((line) => line.trim())
@@ -90,6 +97,13 @@ export function computeOrders(v: Values, now: number): { orders: Order[]; notes:
   const closedBy = new Map<string, string>();
   const answered = new Set<string>();
   const owners = new Set(list(v, "owner"));
+  const readHere = new Set(
+    list(v, "lanes")
+      .map(tagged)
+      .filter(([, dir]) => existsSync(dir))
+      .map(([mac]) => mac),
+  );
+  const imported = new Map<string, Lane>();
   const add = (id: string, mac: string, body: string) => {
     const o = orders.get(id) ?? { id, at: atOf(id), body: short(body), macs: [], lanes: [] };
     if (!o.macs.includes(mac)) o.macs.push(mac);
@@ -129,10 +143,17 @@ export function computeOrders(v: Values, now: number): { orders: Order[]; notes:
   for (const [mac, path] of list(v, "orders-json").map(tagged))
     guarded(path, notes, () => {
       for (const o of (JSON.parse(readFileSync(path, "utf8")) as { orders: Order[] }).orders) {
-        add(o.id, mac, o.body);
+        const owned = Array.isArray(o.macs) && o.macs.length ? o.macs.map(String) : [mac];
+        for (const own of owned) add(o.id, own, o.body);
         for (const lane of o.lanes) {
-          lanes.push(lane);
-          laneOrders.set(lane, [o.id]);
+          if (readHere.has(lane.mac)) continue;
+          const id = `${lane.mac} ${lane.key}`;
+          const first = imported.get(id) ?? lane;
+          if (!imported.has(id)) {
+            imported.set(id, lane);
+            lanes.push(lane);
+          }
+          laneOrders.set(first, [...new Set([...(laneOrders.get(first) ?? []), o.id])]);
         }
         if (o.state === "닫힘") closedBy.set(o.id, `${mac} 목록: ${o.closedBy ?? "닫힘"}`);
       }
@@ -166,7 +187,10 @@ export function computeOrders(v: Values, now: number): { orders: Order[]; notes:
           const at = Number(r["lastActivityAt"] ?? r["createdAt"] ?? 0);
           const lane: Lane = { key: r["key"], mac, status: r["status"], lastActivityAt: at };
           lanes.push(lane);
-          laneOrders.set(lane, marked(r, existsSync(brief) ? readFileSync(brief, "utf8") : ""));
+          const ignored = { count: 0 };
+          laneOrders.set(lane, marked(r, existsSync(brief) ? readFileSync(brief, "utf8") : "", ignored));
+          if (ignored.count)
+            notes.push(`${join(dir, name)} orders: 글자가 아닌 항목 ${ignored.count}개는 무시함(번호는 글자여야 함)`);
         } catch (e) {
           notes.push(`${join(dir, name)} ${message(e)}`);
         }

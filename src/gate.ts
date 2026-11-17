@@ -8,6 +8,9 @@ import type { MergeOutcome } from "./telemetry.ts";
 
 export type PrRef = { repo: string; number: number; id: string };
 
+/** The most a receipt's summary keeps of the reviewer's output; a longer one is cut to its tail and kept whole beside the receipt. */
+export const SUMMARY_MAX = 64 * 1024;
+
 export function parsePr(s: string): PrRef {
   const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(s);
   if (!m) throw new Refusal(`PR must look like owner/repo#123, got ${s}`);
@@ -74,13 +77,20 @@ export async function review(
   }
   if (res.code !== 0) throw new Error(`reviewer exited ${res.code}: ${res.stderr.trim()}`);
   const verdict = last[1] as "CLEAR" | "BLOCK";
+  const output = res.stdout.trim();
+  let summary = output;
+  if (output.length > SUMMARY_MAX) {
+    const whole = join(d.store.root, "receipts", `${pr.id.replaceAll("/", "__").replace("#", "_")}@${sha}.full.txt`);
+    writeFileSync(whole, output, { mode: 0o600 });
+    summary = `[output cut to its last ${SUMMARY_MAX} of ${output.length} characters; the whole output is in ${whole}]\n${output.slice(-SUMMARY_MAX)}`;
+  }
   d.store.saveReceipt({
     pr: pr.id,
     sha,
     verdict,
     model: hook ? "hook" : (model ?? "default"),
     at: d.now(),
-    summary: res.stdout.trim(),
+    summary,
   });
   d.usage.record({ name: "dori.review_completed", verdict });
   return { verdict, sha };

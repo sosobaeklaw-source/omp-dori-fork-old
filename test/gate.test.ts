@@ -64,8 +64,27 @@ describe("review + merge gate", () => {
     expect(await review(d, "o/r#10")).toEqual({ verdict: "CLEAR", sha: pushed });
     expect(d.store.receipt("o/r#10", head)).toBeUndefined();
     expect(d.store.receipt("o/r#10", pushed)!.summary).toBe(long);
+    expect(readdirSync(join(d.store.root, "receipts")).filter((n) => n.endsWith(".full.txt"))).toEqual([]);
     const asked = w.calls.filter((c) => c.argv[0] === "ls-remote").map((c) => c.argv);
     expect(asked).toEqual([["ls-remote", "https://github.com/o/r.git", "refs/pull/10/head"]]);
+  });
+
+  test("a summary over 64 KB keeps its tail and the verdict in the receipt, says so, and the whole output sits beside it", async () => {
+    const { w, d } = setup();
+    gh(w, []);
+    const huge = `HEAD-MARK\n${"y".repeat(70_000)}\nVERDICT: BLOCK`;
+    w.reviewer = (argv) => (argv[0] === "ls-remote" ? { code: 1, stdout: "" } : { code: 0, stdout: huge });
+    expect(await review(d, "o/r#12")).toEqual({ verdict: "BLOCK", sha: head });
+    const summary = d.store.receipt("o/r#12", head)!.summary;
+    const whole = join(d.store.root, "receipts", `o__r_12@${head}.full.txt`);
+    expect(summary.length).toBeLessThan(65_536 + 300);
+    expect(summary).toStartWith(
+      `[output cut to its last 65536 of ${huge.length} characters; the whole output is in ${whole}]\n`,
+    );
+    expect(summary).toEndWith("\nVERDICT: BLOCK");
+    expect(summary).not.toContain("HEAD-MARK");
+    expect(readFileSync(whole, "utf8")).toBe(huge);
+    expect(statSync(whole).mode & 0o777).toBe(0o600);
   });
 
   test("an ls-remote that fails leaves the PR view's head", async () => {
