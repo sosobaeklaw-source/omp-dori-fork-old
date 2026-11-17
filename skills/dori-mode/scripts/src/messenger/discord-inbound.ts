@@ -99,7 +99,9 @@ export const discordInbound = async (
   /** An emit may finish later (a voice transcript); the cursor moves only once it has, so a crash replays it. */
   const deliver = (message: Message, store: DiscordInboundStore, emit: Emit): void | Promise<void> => {
     const printed = isOwnerMessage(message, ownerId, botId) ? emit(toInbound(message)) : undefined;
-    if (printed instanceof Promise) return printed.then(() => store.save(message.id));
+    // Any thenable counts, not only a native Promise, so no emit can have its cursor saved before it finishes.
+    if (typeof (printed as PromiseLike<unknown> | undefined)?.then === "function")
+      return Promise.resolve(printed).then(() => store.save(message.id));
     store.save(message.id); // Checkpoint only after successful delivery; filtered messages still advance the cursor.
   };
   const pollChannel = async (channelId: string, store: DiscordInboundStore, emit: Emit): Promise<void> => {
