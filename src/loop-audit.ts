@@ -16,7 +16,8 @@ const hours = (ms: number): number => Math.floor(ms / HOUR);
 
 export async function audit(d: Deps, run: LoopRun): Promise<void> {
   const now = d.now();
-  const prev = d.store.lastRun()?.at;
+  // The last report that reached the lead, not the last run: a run whose report did not arrive named nothing.
+  const prev = run.told || undefined;
   // Which reminder window an age falls in: -1 before READY_HOURS, then 0, 1, … every READY_REPEAT_HOURS.
   const window = (age: number): number =>
     age < READY_HOURS * HOUR ? -1 : Math.floor((age - READY_HOURS * HOUR) / (READY_REPEAT_HOURS * HOUR));

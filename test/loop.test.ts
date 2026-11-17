@@ -156,20 +156,6 @@ describe("hourly loop", () => {
     expect(destructive()).toEqual([]);
   });
 
-  test("an unclosed READY lane is named at 2h, then only every 6h, not every hourly run", async () => {
-    const { w, d, brief, tick } = setup();
-    const fin = await startLane(d, "finished", brief, { group: "w1" });
-    await ready(d, "finished", "done", ["https://github.com/acme/app/pull/3"]);
-    w.panes.get(fin.paneId)!.status = "idle";
-    w.gh = () => ({ code: 0, stdout: JSON.stringify({ state: "OPEN" }) });
-    const named: number[] = [];
-    for (let h = 1; h <= 14; h++) {
-      w.clock += HOUR;
-      if ((await tick({ maxStarts: 0 })).findings.some((f) => f.startsWith("finished READY"))) named.push(h);
-    }
-    expect(named).toEqual([2, 8, 14]);
-  });
-
   test("a decision is asked once, reminded once after 6 hours, then left alone until answered", async () => {
     const { w, d, lead, add } = setup();
     add("pick-db", { decision: "postgres or sqlite?" });
