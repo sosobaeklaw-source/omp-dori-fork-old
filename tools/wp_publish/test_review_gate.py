@@ -1,8 +1,11 @@
 """공개 글에는 읽은 기록(reviewed.json)이 있는 본문·그림만 올린다. 네트워크는 가짜: python3 -m unittest discover -s tools/wp_publish"""
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
+import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import redirect_stdout
@@ -55,9 +58,9 @@ class ReviewGateTest(unittest.TestCase):
                                               encoding="utf-8")
         self.reviewed = self.dir / "reviewed.json"
 
-    def record(self, *names):
+    def record(self, *names, texts=None):
         review_gate.record(self.reviewed, [self.dir / n for n in names], "opencodex/anthropic/claude-opus-5-5",
-                           self.dir / "findings.md")
+                           self.dir / "findings.md", texts)
 
     def client(self, ack="본문 첫 화면과 순서도 그림, 대표 그림을 폰 크기로 열어 봤다"):
         c = w.WP(reviewed=self.reviewed, ack=ack)
@@ -85,6 +88,32 @@ class ReviewGateTest(unittest.TestCase):
         self.assertIn("90일 기한이 첫 화면에 보인다", out)
         log = json.loads((self.dir / "publish_log.jsonl").read_text(encoding="utf-8").splitlines()[0])
         self.assertEqual(log["ack"], "본문 첫 화면과 순서도 그림, 대표 그림을 폰 크기로 열어 봤다")
+        self.assertEqual(log["status"], 200)
+
+    def test_log_is_written_after_the_response_with_its_status(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        sent = c.op.open
+
+        def fail(req, timeout=60):
+            if req.get_method() == "GET":
+                return sent(req)
+            raise urllib.error.HTTPError(req.full_url, 500, "boom", {}, io.BytesIO(b"{}"))
+        c.op.open = fail
+        st, _ = self.post(c, {"content": self.body})
+        self.assertEqual(st, 500)
+        log = [json.loads(x) for x in (self.dir / "publish_log.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([x["status"] for x in log], [500])
+
+        def down(req, timeout=60):
+            if req.get_method() == "GET":
+                return sent(req)
+            raise urllib.error.URLError("no route")
+        c.op.open = down
+        with self.assertRaises(urllib.error.URLError):
+            self.post(c, {"content": self.body})
+        log = [json.loads(x) for x in (self.dir / "publish_log.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(log[-1]["status"], "네트워크 오류 URLError")
 
     def test_no_reviewed_record_blocks(self):
         self.assertBlocked(self.client(), "reviewed.json이 없다", {"content": self.body})
@@ -146,15 +175,17 @@ class ReviewGateTest(unittest.TestCase):
         self.assertBlocked(c, "확인하지 않는 칸.*slug", {"slug": "x"})
         self.assertBlocked(c, "확인하지 않는 칸.*meta", {"meta": {"rank_math_description": "읽지 않은 설명"}})
 
-    def test_public_text_fields_must_be_in_a_read_file(self):
-        self.record("본문.html", "flow.png", "cover.jpg")
+    def test_public_text_fields_must_equal_the_recorded_value(self):
+        self.record("본문.html", "flow.png", "cover.jpg", texts={"title": self.title, "rank_math_description": "읽은 설명"})
         c = self.client()
         self.assertBlocked(c, r"읽히지 않았다\(2개\): title, excerpt", {"title": "읽지 않은 제목", "excerpt": "읽지 않은 요약"})
+        self.assertBlocked(c, r"읽히지 않았다\(1개\): title", {"title": "추가상병"})  # 본문 속 한 단어
+        self.assertBlocked(c, r"읽히지 않았다\(1개\): excerpt", {"excerpt": self.title})  # 다른 칸의 값
         rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
         self.assertBlocked(c, "rank_math_description", {"objectType": "post", "objectID": 299,
-                                                         "meta": {"rank_math_description": "읽지 않은 설명"}}, url=rm)
+                                                         "meta": {"rank_math_description": "읽은"}}, url=rm)
         st, _ = self.post(c, {"objectType": "post", "objectID": 299,
-                              "meta": {"rank_math_description": self.title}}, url=rm)
+                              "meta": {"rank_math_description": "읽은 설명"}}, url=rm)
         self.assertEqual(st, 200)
         st, _ = self.post(c, {"title": self.title})
         self.assertEqual(st, 200)
@@ -171,6 +202,15 @@ class ReviewGateTest(unittest.TestCase):
         st, _ = self.post(c, {"objectType": "post", "objectID": 299,
                               "meta": {"rank_math_facebook_image": COVER, "rank_math_facebook_image_id": 843}}, url=rm)
         self.assertEqual(st, 200)
+
+    def test_bad_media_id_or_answer_names_the_field(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        c.op.files[w.API + "/media/7"] = b'{"id": 7}'
+        c.op.files[w.API + "/media/8"] = b"not json"
+        self.assertBlocked(c, r"대표 그림\(featured_media='x'\)", {"featured_media": "x"})
+        self.assertBlocked(c, r"대표 그림\(featured_media=7\).*KeyError", {"featured_media": 7})
+        self.assertBlocked(c, r"대표 그림\(featured_media=8\)", {"featured_media": 8})
 
     def test_status_other_than_draft_is_refused_and_brand_guard_runs_on_direct_open(self):
         self.record("본문.html", "flow.png", "cover.jpg")
@@ -192,8 +232,38 @@ class ReviewGateTest(unittest.TestCase):
                      "<style>p{background:url(x)}</style>", f'<svg><image href="{other}"/></svg>',
                      f'<svg><image xlink:href="{other}"/></svg>', f'<object data="{other}"></object>',
                      f'<link rel="stylesheet" href="{other}">', f'<table background="{other}"></table>',
-                     f'<picture srcset="{other}"></picture>'):
+                     f'<picture srcset="{other}"></picture>',
+                     # 네 번째 리뷰: 이 파서와 브라우저가 다르게 읽는 모양, 서버가 그림을 넣는 모양
+                     f'<!--><img src="{other}"> -->', f'<!---><img src="{other}"> -->', "<!-- 그냥 주석 -->",
+                     '[gallery ids="901,902"]', '<p>[caption id="a"]x[/caption]</p>',
+                     '<!-- wp:latest-posts {"displayFeaturedImage":true} /-->', '<!-- wp:image {"id":901} -->',
+                     '<!-- wp:gallery -->', '<!-- wp:paragraph {"style":{"background":"url(x)"}} -->',
+                     '<!-- wp:paragraph {"x":"--><img src=x>"} -->',
+                     f'<iframe srcdoc="&lt;img src={other}&gt;"></iframe>', f'<p srcdoc="x">a</p>',
+                     f'<script>document.write("<img src={other}>")</script>',
+                     '<script type="application/ld+json">{"image":"x"}</script>',
+                     f"<p style=\"background-image:image-set('{other}' 1x)\">a</p>",
+                     f'<p style="background:u\\72l({other})">a</p>', "<embed src=x>", "<form action=x></form>",
+                     "<a href=\"javascript:alert(1)\">a</a>", "<a href=\"//evil.example/x\">a</a>",
+                     "https://www.youtube.com/watch?v=abc", "<p>https://twitter.com/x/status/1</p>",
+                     "<p>a <![CDATA[x]]> b</p>", "<?php echo 1 ?>"):
             self.assertBlocked(c, "확인할 수 없는", {"content": body})
+
+    def test_ordinary_post_shapes_still_go_through(self):
+        body = ('<!-- wp:heading {"level":3} -->\n<h3 id="a">제목</h3>\n<!-- /wp:heading -->\n'
+                '<!-- wp:paragraph -->\n<p>본문 <a href="https://www.law.go.kr/x" rel="noopener" target="_blank">법령</a>'
+                ' <a href="#a">위로</a> <a href="/contact/">문의</a> 1 &lt; 2, 85[dB(A)] [별표 3]</p>\n<!-- /wp:paragraph -->\n'
+                '<!-- wp:table {"className":"is-style-stripes"} -->\n<figure class="wp-block-table"><table><thead><tr>'
+                '<th scope="col">칸</th></tr></thead><tbody><tr><td data-label="칸">값</td></tr></tbody></table>'
+                '<figcaption>표</figcaption></figure>\n<!-- /wp:table -->\n'
+                f'<figure><img src="{IMG}" alt="순서" loading="lazy" decoding="async" width="800" height="600"'
+                ' style="max-width:100%;height:auto"></figure>\n'
+                '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1,2 3,4" fill="none" stroke="#000"'
+                ' stroke-width="2"/></svg>\n<details><summary>더 보기</summary><p>내용</p></details>\n')
+        (self.dir / "본문3.html").write_text(body, encoding="utf-8")
+        self.record("본문3.html", "flow.png")
+        st, _ = self.post(self.client(), {"content": body})
+        self.assertEqual(st, 200)
 
     def test_links_are_not_images_and_nonce_stays_home(self):
         (self.dir / "본문2.html").write_text(self.body + '<a href="https://www.law.go.kr/">법령</a>', encoding="utf-8")
@@ -217,11 +287,12 @@ class ReviewGateTest(unittest.TestCase):
             self.post(c, {"content": "x"})
         self.assertEqual(c.op.sent, [])
 
-    def test_check_texts_ignores_files_changed_after_record(self):
-        self.record("본문.html", "flow.png", "cover.jpg")
-        (self.dir / "본문.html").write_text(self.body + "<p>나중에 끼운 문장</p>", encoding="utf-8")
-        with self.assertRaisesRegex(ReviewMissing, "title"):
-            review_gate.check_texts(review_gate.load(self.reviewed), [("title", "나중에 끼운 문장")])
+    def test_record_cli_keeps_texts(self):
+        out = self.dir / "r.json"
+        subprocess.run([sys.executable, str(Path(review_gate.__file__)), "record", str(out), "--model", "m",
+                        "--findings", str(self.dir / "findings.md"), "--text", f"title={self.title}",
+                        "--text", "excerpt=a=b", str(self.dir / "본문.html")], check=True, capture_output=True)
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["texts"], {"title": self.title, "excerpt": "a=b"})
 
 
 if __name__ == "__main__":

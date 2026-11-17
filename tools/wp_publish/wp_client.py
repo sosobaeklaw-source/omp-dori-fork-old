@@ -7,15 +7,21 @@ GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든
     /wp-json/rankmath/v1/updateMeta만.
   - 그림 올리기(image/*, /media): 올리는 바이트의 sha256이 reviewed.json에 있어야 한다.
   - JSON은 dict만, 아는 칸만. content는 글자(str)만이고 그 sha256이 기록에 있어야 한다.
-    본문이 부르는 그림(img·source·video·audio·track의 src·srcset·poster·data-src 따위)은 하나하나 받아 sha256을 맞춘다.
-    허용 목록이라 <a href> 말고 바깥 자원을 부르는 속성(href·xlink:href·data·background·그 밖 태그의 src)과
-    CSS url()·<style>은 확인할 길이 없으니 막는다. featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다.
-  - 제목·요약·대체 글·캡션·Rank Math 설명은 검수한 파일 안에 그 글자 그대로 있어야 한다.
+    본문 HTML은 허용 목록으로 읽는다: 아는 태그·속성만 받고 모르는 것(script·iframe·object·embed·srcdoc 따위)은 막는다.
+    그림·영상 태그(img·source·video·audio·track)의 src·srcset·poster·data-src는 하나하나 받아 sha256을 맞추고,
+    <a href> 말고 바깥 자원을 부르는 속성, style 속 url·image·역슬래시, 그림을 서버에서 넣을 수 있는 것
+    (wp:블록 주석 밖의 주석, 그림·동적 블록, [단축코드], 한 줄짜리 주소(oEmbed))은 확인할 길이 없으니 막는다.
+    featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다.
+  - 제목·요약·대체 글·캡션·Rank Math 설명은 검수 기록(texts)에 그 칸 이름으로 적힌 값과 똑같아야 한다.
   - status는 draft만 보낼 수 있다(발행 글 갱신은 status를 빼고 보낸다). brand_write_guard.assert_clean도 여기서.
   - 확인한 것이 하나도 없는 요청은 그림 붙이기(post)·draft 같은 메타 칸만일 때만 보낸다.
-하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다. 다 맞으면 findings.md 첫 문단과 읽은 모델을 보여 주고,
-리드가 무엇을 열어 보았는지 적은 한 줄(ack, 비어 있으면 안 됨)을 reviewed.json 옆 publish_log.jsonl에 남긴 뒤 보낸다.
-WP(reviewed=...)를 주지 않으면 읽기만 된다. 레인 스크립트가 c._open(...)으로 직접 POST해도 같은 검사를 지난다.
+하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다. 다 맞으면 findings.md 첫 문단과 읽은 모델을 보여 주고 보낸다.
+응답을 받은 뒤 상태 코드와 리드가 무엇을 열어 보았는지 적은 한 줄(ack, 비어 있으면 안 됨)을 reviewed.json 옆
+publish_log.jsonl에 남긴다. WP(reviewed=...)를 주지 않으면 읽기만 된다. 레인 스크립트가 c._open(...)으로 직접 POST해도
+같은 검사를 지난다.
+
+이 파일을 합쳐도 지금 레인 결과 폴더의 옛 wp_client.py 복사본과 그것을 부르는 스크립트(publish_299.py 따위)는
+막히지 않는다. 그 스크립트가 아래처럼 이 경로를 불러야 검사가 걸린다.
 
 사용(레인 스크립트):
     sys.path.insert(0, str(Path.home() / "src/omp-dori/tools/wp_publish"))
@@ -56,40 +62,108 @@ _RM_IMAGE = ("rank_math_facebook_image", "rank_math_twitter_image")
 _RM_IMAGE_ID = ("rank_math_facebook_image_id", "rank_math_twitter_image_id")
 _RM_PLAIN = ("rank_math_twitter_use_facebook",)
 _MEDIA_TAGS = {"img", "source", "video", "audio", "track"}
-_MEDIA_ATTR = re.compile(r"(^|[-_:])(src|srcset|poster)$")
-_RESOURCE_ATTR = re.compile(r"(^|[-_:])(src|srcset|poster|href|data|background|lowsrc|dynsrc)$")
+_MEDIA_URL_ATTRS = {"src", "srcset", "poster", "data-src", "data-srcset"}
+_COMMON_ATTRS = {"class", "id", "title", "lang", "dir", "role", "style", "width", "height", "align"}
+_SVG_ATTRS = {"viewbox", "xmlns", "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "points", "d",
+              "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "transform", "opacity"}
+_TAG_ATTRS = {
+    **{t: set() for t in ("p", "div", "span", "strong", "b", "em", "i", "u", "s", "mark", "small", "sub", "sup", "br", "hr",
+                          "h1", "h2", "h3", "h4", "h5", "h6", "ul", "li", "dl", "dt", "dd", "blockquote", "q", "cite",
+                          "code", "pre", "kbd", "abbr", "del", "ins", "figure", "figcaption", "picture", "caption",
+                          "table", "thead", "tbody", "tfoot", "tr", "colgroup", "summary",
+                          "main", "header", "footer", "section", "article", "aside", "nav")},
+    "a": {"href", "rel", "target", "name"}, "ol": {"start", "reversed", "type"}, "col": {"span"},
+    "td": {"colspan", "rowspan", "headers", "data-label"}, "th": {"colspan", "rowspan", "headers", "scope", "data-label"},
+    "time": {"datetime"}, "details": {"open"},
+    "img": _MEDIA_URL_ATTRS | {"alt", "sizes", "loading", "decoding"},
+    "source": _MEDIA_URL_ATTRS | {"type", "media", "sizes"},
+    "video": {"src", "poster", "controls", "preload", "muted", "loop", "playsinline", "autoplay"},
+    "audio": {"src", "controls", "preload", "muted", "loop"},
+    "track": {"src", "kind", "srclang", "label", "default"},
+    **{t: _SVG_ATTRS | {"aria-hidden", "focusable"} for t in ("svg", "g", "path", "polyline", "polygon", "line", "circle",
+                                                             "rect", "ellipse")},
+}
+_BLOCKS = {"paragraph", "heading", "list", "list-item", "table", "quote", "pullquote", "separator", "spacer", "group",
+           "columns", "column", "details", "html", "preformatted", "code"}
+_BLOCK_COMMENT = re.compile(r"<!-- /?wp:([a-z0-9-]+(?:/[a-z0-9-]+)?)(?: (\{(?:(?!-->)[^<>])*\}))? /?-->")
+_BLOCK_ATTR_MEDIA = re.compile(r"url|src|image|media|featured|\"ids?\"|//", re.I)
+_SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[A-Za-z][\w-]*")  # [dB(A)] 같은 소음 단위는 글자다(그런 단축코드는 없다)
+_OEMBED_LINE = re.compile(r"^\s*(?:<p>\s*)?https?://[^\s<>\"]+\s*(?:</p>)?\s*$", re.I | re.M)
+_STYLE_BAD = re.compile(r"\\|url|image|expression|@|/\*", re.I)
+_HREF_OK = re.compile(r"(https?:|mailto:|tel:|#|/(?!/))", re.I)
 
 
 class _Images(html.parser.HTMLParser):
+    """허용 목록: 아는 태그·속성만 받는다. 그림·영상 태그의 주소 속성은 모아 대조하고, 그 밖은 막는다."""
+
     def __init__(self):
-        super().__init__(convert_charrefs=True)
+        super().__init__(convert_charrefs=False)  # &lt; 같은 글자 참조는 handle_entityref로 따로 와서 아래 검사를 비켜 간다
         self.urls, self.bad = [], []
 
     def handle_starttag(self, tag, attrs):
-        """허용 목록: 그림·영상 태그의 src·srcset·poster는 받아 대조하고, <a href>만 그냥 둔다.
-        그 밖에 바깥 자원을 부르는 속성(href·xlink:href·data·background·src 따위)은 모두 막는다."""
+        allowed = _TAG_ATTRS.get(tag)
+        if allowed is None:
+            self.bad.append(f"<{tag}>")
+            return
         for k, v in attrs:
-            if k == "style" and v and "url(" in v.lower():
-                self.bad.append(f"<{tag} style=url(...)>")
-            if not v or not _RESOURCE_ATTR.search(k) or (tag == "a" and k == "href"):
-                continue
-            if tag not in _MEDIA_TAGS or not _MEDIA_ATTR.search(k):
+            if k not in allowed and k not in _COMMON_ATTRS and not k.startswith("aria-"):
                 self.bad.append(f"<{tag} {k}>")
-            elif k.endswith("srcset"):
-                self.urls += [c.split()[0] for c in v.split(",") if c.strip()]
-            else:
-                self.urls.append(v.strip())
+            elif k == "style" and v and _STYLE_BAD.search(v):
+                self.bad.append(f"<{tag} style=…>")
+            elif tag == "a" and k == "href" and v and not _HREF_OK.match(v.strip()):
+                self.bad.append(f"<a href={v.strip()[:20]}>")
+            elif tag in _MEDIA_TAGS and k in _MEDIA_URL_ATTRS and v:
+                if k.endswith("srcset"):
+                    self.urls += [c.split()[0] for c in v.split(",") if c.strip()]
+                else:
+                    self.urls.append(v.strip())
+
+    handle_startendtag = handle_starttag
+
+    def handle_data(self, data):
+        if re.search(r"<[A-Za-z/!?]", data):  # 이 파서는 글자로 읽었지만 브라우저는 태그로 읽을 수 있는 조각
+            self.bad.append("읽지 못한 < 조각")
+
+    def handle_comment(self, data):
+        if not _BLOCK_COMMENT.fullmatch(f"<!--{data}-->"):
+            self.bad.append(f"wp 블록이 아닌 주석 {data[:12]!r}")
+
+    def handle_decl(self, decl):
+        self.bad.append(f"<!{decl[:20]}>")
+
+    def unknown_decl(self, data):
+        self.bad.append(f"<![{data[:20]}>")
+
+    def handle_pi(self, data):
+        self.bad.append(f"<?{data[:20]}>")
 
 
 def _body_images(content, where):
     """본문이 부르는 그림 주소 전부. 확인할 수 없는 모양은 막는다."""
+    bad = []
+    pos = 0
+    while (i := content.find("<!--", pos)) >= 0:
+        m = _BLOCK_COMMENT.match(content, i)
+        if not m:
+            bad.append(f"wp 블록이 아닌 주석 {content[i:i + 12]!r}")
+            pos = i + 4
+            continue
+        name, attrs = m.group(1), m.group(2) or ""
+        if name.removeprefix("core/") not in _BLOCKS:
+            bad.append(f"wp:{name} 블록")
+        elif _BLOCK_ATTR_MEDIA.search(attrs):
+            bad.append(f"wp:{name} 블록 속성 {attrs[:30]}")
+        pos = m.end()
+    if m := _SHORTCODE.search(content):
+        bad.append(f"단축코드 {m.group(0)}")
+    if m := _OEMBED_LINE.search(content):
+        bad.append(f"한 줄짜리 주소(oEmbed) {m.group(0).strip()[:40]}")
     p = _Images()
     p.feed(content)
     p.close()
-    if re.search(r"<style\b", content, re.I):
-        p.bad.append("<style>")
-    if p.bad:
-        raise ReviewMissing(f"{where}: 본문에 확인할 수 없는 그림·외부 자원이 있다: {', '.join(dict.fromkeys(p.bad))}")
+    bad += p.bad
+    if bad:
+        raise ReviewMissing(f"{where}: 본문에 확인할 수 없는 그림·외부 자원이 있다: {', '.join(dict.fromkeys(bad))}")
     return list(dict.fromkeys(p.urls))
 
 
@@ -126,10 +200,10 @@ class WP:
         return b
 
     def _gate(self, req):
-        """GET·HEAD 밖은 허용한 모양만, 읽은 기록이 있는 글자·그림만 보낸다."""
+        """GET·HEAD 밖은 허용한 모양만, 읽은 기록이 있는 글자·그림만 보낸다. 쓰기면 True."""
         method = req.get_method()
         if method in ("GET", "HEAD"):
-            return
+            return False
         where = f"{method} {req.full_url}"
         if self.reviewed is None:
             raise ReviewMissing(f"{where}: 읽은 기록을 WP(reviewed=...)로 주지 않았다")
@@ -154,11 +228,15 @@ class WP:
         else:
             raise ReviewMissing(f"{where}: JSON·그림 밖 본문({ctype or '형식 없음'})은 보내지 않는다")
         print(f"[검수 기록] 읽은 모델 {doc.get('model')} · {doc.get('at')}\n{first_paragraph(doc)}\n[리드] {self.ack}")
+        return True
+
+    def _log(self, req, status):
+        """응답을 받은 뒤 상태 코드와 함께 남긴다. 실패한 쓰기도 실패로 남는다."""
         log = Path(self.reviewed).with_name("publish_log.jsonl")
         with log.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                                "request": f"{method} {req.full_url}", "reviewed": str(self.reviewed),
-                                "ack": self.ack}, ensure_ascii=False) + "\n")
+                                "request": f"{req.get_method()} {req.full_url}", "status": status,
+                                "reviewed": str(self.reviewed), "ack": self.ack}, ensure_ascii=False) + "\n")
 
     def _gate_json(self, doc, where, payload, rankmath):
         if not isinstance(payload, dict) or not payload:
@@ -194,22 +272,34 @@ class WP:
                 items.append((f"{k} {str(fields[k]).rsplit('/', 1)[-1]}", self._fetch(str(fields[k]))))
         for k in media_keys:
             if fields.get(k):
-                m = json.loads(self._fetch(f"{API}/media/{int(fields[k])}"))
                 name = "대표 그림" if k == "featured_media" else k
-                items.append((f"{name} {m['source_url'].rsplit('/', 1)[-1]}", self._fetch(m["source_url"])))
+                try:
+                    m = json.loads(self._fetch(f"{API}/media/{int(fields[k])}"))
+                    src = m["source_url"]
+                    if not isinstance(src, str):
+                        raise TypeError(src)
+                except (ValueError, TypeError, KeyError) as e:
+                    raise ReviewMissing(f"{where}: {name}({k}={fields[k]!r})의 그림 주소를 확인하지 못했다: {e!r}") from None
+                items.append((f"{name} {src.rsplit('/', 1)[-1]}", self._fetch(src)))
         if not items and not texts and not set(fields) <= _META_ONLY:
             raise ReviewMissing(f"{where}: 확인할 글자·그림이 하나도 없는 요청이다")
         check_bytes(doc, items)
         check_texts(doc, texts)
 
     def _open(self, req, timeout=60, _login_form=False):
-        if not _login_form:
-            self._gate(req)
+        write = not _login_form and self._gate(req)
         try:
             r = self.op.open(req, timeout=timeout)
-            return r.status, r.geturl(), r.read()
+            st, url, b = r.status, r.geturl(), r.read()
         except urllib.error.HTTPError as e:
-            return e.code, req.full_url, e.read()
+            st, url, b = e.code, req.full_url, e.read()
+        except OSError as e:
+            if write:
+                self._log(req, f"네트워크 오류 {e.__class__.__name__}")
+            raise
+        if write:
+            self._log(req, st)
+        return st, url, b
 
     def login(self):
         url = BASE + "/sbk-entrance"

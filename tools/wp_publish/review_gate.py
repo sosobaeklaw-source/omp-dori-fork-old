@@ -1,12 +1,16 @@
 """공개 글(WP)에는 검수 에이전트가 읽은 기록이 있는 글자·그림만 올린다.
 
 검수 쪽(검수가 끝나면 결과 폴더에 한 장):
-    python3 review_gate.py record <reviewed.json> --model <읽은 모델> --findings <findings.md> <본문.html> <그림>...
-  → {"files": [{"path", "sha256"}...], "model", "at", "findings"}. 판정은 적지 않는다. 읽었다는 사실만 적는다.
+    python3 review_gate.py record <reviewed.json> --model <읽은 모델> --findings <findings.md> \\
+        [--text title=<읽은 제목>] [--text excerpt=<읽은 요약>] ... <본문.html> <그림>...
+  → {"files": [{"path", "sha256"}...], "texts": {칸: 값}, "model", "at", "findings"}.
+  판정은 적지 않는다. 읽었다는 사실만 적는다.
 
 발행 쪽: wp_client.WP(reviewed=..., ack=...)가 올릴 본문과 그 본문이 부르는 그림(대표 그림 포함)의
-sha256을 check_bytes로 이 기록과 맞춰 본다. 하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다.
+sha256을 check_bytes로, 제목·요약·대체 글·Rank Math 설명은 check_texts로 같은 칸 값과 똑같은지 이 기록과 맞춰 본다.
+하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다.
 검수 메모에 지적이 남아 있어도 막지 않는다. 받아들일지는 리드가 findings 첫 문단을 읽고 정하고, 그 한 줄(ack)이 발행 기록에 남는다.
+이 기록은 누구든 만들 수 있다. 검수 에이전트만 만들게 하거나 서명하는 일은 남은 일이다.
 """
 import argparse
 import datetime
@@ -24,11 +28,12 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def record(out, files, model, findings):
+def record(out, files, model, findings, texts=None):
     if not Path(findings).is_file():
         raise SystemExit(f"findings.md가 없다: {findings}")
     doc = {"files": [{"path": str(Path(f).resolve()), "sha256": sha(Path(f).read_bytes())} for f in files],
-           "model": model, "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+           "texts": dict(texts or {}), "model": model,
+           "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
            "findings": str(Path(findings).resolve())}
     Path(out).write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
     return doc
@@ -54,17 +59,12 @@ def check_bytes(doc, items):
 
 
 def check_texts(doc, items):
-    """items: [(이름, 글자)]. 제목·요약·대체 글·설명은 읽은 파일(기록한 뒤 바뀌지 않은 것) 안에 그대로 있어야 한다."""
-    read = {f["sha256"] for f in doc["files"]}
-    bodies = []
-    for f in doc["files"]:
-        p = Path(f["path"])
-        if p.is_file() and sha(p.read_bytes()) in read:
-            bodies.append(p.read_text(encoding="utf-8", errors="replace"))
-    unread = [name for name, text in items if text.strip() and not any(text in b for b in bodies)]
+    """items: [(칸 이름, 글자)]. 제목·요약·대체 글·설명은 검수 기록 texts의 같은 칸 값과 똑같아야 한다."""
+    read = doc.get("texts") or {}
+    unread = [name for name, text in items if text.strip() and read.get(name) != text]
     if unread:
         raise ReviewMissing(f"읽히지 않았다({len(unread)}개): " + ", ".join(unread)
-                            + ". 이 글자가 검수한 파일 안에 없다. 검수에 넣고 reviewed.json을 새로 남겨라")
+                            + ". 이 칸 값이 검수 기록(texts)과 다르다. 검수받은 값으로 보내거나 --text로 기록을 새로 남겨라")
 
 
 def first_paragraph(doc):
@@ -79,7 +79,11 @@ if __name__ == "__main__":
     ap.add_argument("out")
     ap.add_argument("--model", required=True)
     ap.add_argument("--findings", required=True)
+    ap.add_argument("--text", action="append", default=[], metavar="칸=값")
     ap.add_argument("files", nargs="+")
     a = ap.parse_args()
-    print(json.dumps(record(a.out, a.files, a.model, a.findings), ensure_ascii=False, indent=1))
+    if bad := [t for t in a.text if "=" not in t]:
+        raise SystemExit(f"--text는 칸=값 모양이어야 한다: {bad}")
+    texts = dict(t.split("=", 1) for t in a.text)
+    print(json.dumps(record(a.out, a.files, a.model, a.findings, texts), ensure_ascii=False, indent=1))
     sys.exit(0)
