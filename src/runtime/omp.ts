@@ -1,12 +1,8 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { outsideRealHomeUnderTest } from "../test-home.ts";
 import type { Exec } from "./exec.ts";
-import { ConfigError } from "./select.ts";
 import type { ForegroundProcess, Probe } from "./types.ts";
 
-type Env = Readonly<Record<string, string | undefined>>;
 type PaneState = {
   readonly paneId: string;
   readonly role: "dori" | "lane";
@@ -19,38 +15,6 @@ type PaneState = {
   readonly agentStatus?: "idle" | "working";
 };
 type Proc = { readonly pid: number; readonly ppid: number; readonly command: string };
-
-const expandHome = (path: string): string =>
-  path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
-
-/** The extension's config/state precedence; callers with loaded config pass stateDir explicitly. */
-export const ompStateDir = (env: Env, fallback?: string): string =>
-  outsideRealHomeUnderTest(configuredStateDir(env, fallback));
-
-function configuredStateDir(env: Env, fallback?: string): string {
-  if (env["DORI_STATE_DIR"] !== undefined) return expandHome(env["DORI_STATE_DIR"]);
-  const doriHome = env["DORI_HOME"] ?? join(homedir(), ".dori");
-  const path = env["DORI_CONFIG"] ?? join(doriHome, "config.json");
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    return fallback ?? join(doriHome, "state");
-  }
-  let config: unknown;
-  try {
-    config = JSON.parse(raw);
-  } catch (e) {
-    throw new ConfigError(`${path} is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
-  }
-  if (typeof config !== "object" || config === null || Array.isArray(config))
-    throw new ConfigError(`${path} must hold a JSON object`);
-  const stateDir: unknown = Reflect.get(config, "stateDir");
-  if (stateDir === undefined || stateDir === null) return expandHome(fallback ?? join(doriHome, "state"));
-  if (typeof stateDir !== "string" || !stateDir) throw new ConfigError(`${path}: "stateDir" must be a nonempty string`);
-  return expandHome(stateDir);
-}
 
 // The one classification of OMP's launch forms: the `omp` command, its published package CLI under Bun or Node, and the
 // pinned source launcher (`bun --preload <pkg>/scripts/omp.ts [--preload <timer>] <pkg>/[scripts/../]src/cli.ts`).

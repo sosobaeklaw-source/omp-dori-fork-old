@@ -9,7 +9,7 @@ import { agentCommand, defaultAgentCmd, defaultDeps, harnessLaunchEnv } from "..
 import { installBundle } from "../src/release/install.ts";
 import { releasePath } from "../src/release/state.ts";
 import { startLane } from "../src/lanes.ts";
-import { ompStateDir } from "../src/runtime/omp.ts";
+import { ompStateDir } from "../src/runtime/omp-state-dir.ts";
 import { ConfigError } from "../src/runtime/select.ts";
 import { World } from "./fake.ts";
 import { setup } from "./harness-setup.ts";

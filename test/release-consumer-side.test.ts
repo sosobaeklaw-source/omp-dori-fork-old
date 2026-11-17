@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 import { installBundle, rollbackRelease } from "../src/release/install.ts";
 import { saveJson } from "../src/release/files.ts";
 import { nativeOmp } from "../src/release/provision.ts";
-import { ompStateDir } from "../src/runtime/omp.ts";
+import { ompStateDir } from "../src/runtime/omp-state-dir.ts";
 import { fixture } from "./release-consumer-setup.ts";
 
 test("an isolated consumer leaves primary discovery untouched and its CLI ignores inherited primary selection", async () => {
