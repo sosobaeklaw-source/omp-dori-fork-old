@@ -44,7 +44,7 @@ describe("OMP harness launches", () => {
     const d = { ...s.d, agentCmd: "omp --model provider/model" };
     const lane = await startLane(d, "omp-task", s.brief, { group: "w1" });
     expect(s.w.panes.get(lane.paneId)!.ran[0]).toStartWith(
-      "omp --model provider/model --dori-role lane 'Read your brief at ",
+      "omp --model provider/model --dori-role lane '/ulw Read your brief at ",
     );
   });
 

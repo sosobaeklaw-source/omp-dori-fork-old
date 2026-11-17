@@ -53,7 +53,8 @@ export async function startLane(
     opts.group ??
     (self?.runtime === rt.kind ? self.group : undefined) ??
     (rt.kind === "herdr" ? await rt.createGroup("dori", cwd) : groupId(d.store.root));
-  const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
+  // An OMP lane opens with `/ulw` so the omp-ulw extension turns on a native goal for the brief.
+  const kickoff = `${isOmpAgentCommand(agentCommand(d, "lane")) ? "/ulw " : ""}Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
   // An OMP lane runs on the caller's model ("<model>|<thinking>", the hourly loop's), else, for `pin` (a lead's `start`),
   // the lane pin that lead wrote by hand, removed once the lane opened. A command that names --model takes neither.
   const command = agentCommand(d, "lane");

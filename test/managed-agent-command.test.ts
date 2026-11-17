@@ -125,7 +125,7 @@ test("harness lead, duty and lane consumers execute the complete managed argv wi
     ...f.argv,
     "--dori-role",
     "lane",
-    `Read your brief at ${deps.store.briefPath("managed-command")} and execute it. Your lane key is managed-command.`,
+    `/ulw Read your brief at ${deps.store.briefPath("managed-command")} and execute it. Your lane key is managed-command.`,
   ]);
   for (const name of ["substitution-ran", "suffix-ran", "override-ran"])
     expect(existsSync(join(f.root, name))).toBe(false);
