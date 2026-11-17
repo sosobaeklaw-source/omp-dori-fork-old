@@ -46,6 +46,22 @@ describe("review + merge gate", () => {
     expect(w.usage.filter((e) => e.name === "dori.review_completed")).toHaveLength(2);
   });
 
+  test("the receipt keeps the whole summary, and a PR view behind the pushed branch follows the branch head", async () => {
+    const { w, d } = setup();
+    const pushed = "b".repeat(40);
+    w.gh = (argv) =>
+      argv[1] === "view"
+        ? { code: 0, stdout: JSON.stringify({ headRefOid: head, headRefName: "feat/x" }) }
+        : { code: 1, stdout: "" };
+    const long = `${"x".repeat(5000)}\nVERDICT: CLEAR`;
+    w.reviewer = (argv) =>
+      argv[0] === "ls-remote" ? { code: 0, stdout: `${pushed}\trefs/heads/feat/x\n` } : { code: 0, stdout: long };
+    expect(await review(d, "o/r#10")).toEqual({ verdict: "CLEAR", sha: pushed });
+    expect(d.store.receipt("o/r#10", head)).toBeUndefined();
+    expect(d.store.receipt("o/r#10", pushed)!.summary).toBe(long);
+    expect(w.calls.some((c) => c.argv.includes(`https://github.com/o/r.git`))).toBe(true);
+  });
+
   test("exit 0 without a VERDICT line: bounded stdout tail kept privately, no receipt", async () => {
     const { w, d } = setup();
     gh(w, []);

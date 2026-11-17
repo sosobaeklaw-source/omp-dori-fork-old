@@ -20,9 +20,23 @@ async function gh(d: Deps, argv: readonly string[]): Promise<string> {
   return r.stdout;
 }
 
+/**
+ * The PR head. Right after a push GitHub's PR view can still name the previous commit, so the branch's real head from
+ * `git ls-remote` wins when the two differ; an ls-remote that fails or names no commit leaves the PR view's head.
+ */
 export async function headSha(d: Deps, pr: PrRef): Promise<string> {
-  const out = JSON.parse(await gh(d, ["pr", "view", String(pr.number), "--repo", pr.repo, "--json", "headRefOid"]));
-  return String(out.headRefOid);
+  const out = JSON.parse(
+    await gh(d, ["pr", "view", String(pr.number), "--repo", pr.repo, "--json", "headRefOid,headRefName"]),
+  );
+  const viewed = String(out.headRefOid);
+  if (!out.headRefName) return viewed;
+  const remote = await d.exec("git", [
+    "ls-remote",
+    `https://github.com/${pr.repo}.git`,
+    `refs/heads/${out.headRefName}`,
+  ]);
+  const live = remote.code === 0 ? /^([0-9a-f]{40})\s/m.exec(remote.stdout)?.[1] : undefined;
+  return live ?? viewed;
 }
 
 /** Runs a fresh, non-interactive reviewer session pinned to the PR head and records its verdict as a receipt. */
@@ -72,7 +86,7 @@ export async function review(
     verdict,
     model: hook ? "hook" : (model ?? "default"),
     at: d.now(),
-    summary: res.stdout.trim().slice(-4000),
+    summary: res.stdout.trim(),
   });
   d.usage.record({ name: "dori.review_completed", verdict });
   return { verdict, sha };
