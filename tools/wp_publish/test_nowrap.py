@@ -48,6 +48,17 @@ class NowrapTest(unittest.TestCase):
         long = "근로복지공단서울지역본부산재보상2부(2024년)"  # 27 characters, about 450px of Hangul at 16px
         self.assertEqual(runs(nowrap(f"<p>{long} 담당, 공단(2024년) 담당</p>")), ["2024년)"])
 
+    def test_a_gt_inside_an_attribute_or_comment_does_not_end_the_tag(self) -> None:
+        body = '<a title="40dB > 25dB 90일" href=\'x>1\'>링크</a><!-- c > 1+2 90일 -->'
+        self.assertEqual(nowrap(body), body)
+
+    def test_headings_are_left_alone(self) -> None:
+        body = '<h1>제103조 제3항</h1><h2 class="t">근로복지공단서울지역본부(2024년) 90일</h2><h3>500·1,000헤르츠</h3>'
+        self.assertEqual(nowrap(body), body)
+
+    def test_a_date_stuck_to_an_entity_is_one_run(self) -> None:
+        self.assertEqual(runs(nowrap("<p>1심&#8211;2018. 9. 19. 선고</p>")), ["1심&#8211;2018. 9. 19."])
+
 
 if __name__ == "__main__":
     unittest.main()
