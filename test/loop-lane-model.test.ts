@@ -15,7 +15,7 @@ afterEach(() => {
   for (const [k, v] of saved) if (v !== undefined) process.env[k] = v;
 });
 
-const KICKOFF = "'Read your brief at ";
+const KICKOFF = "'/ulw Read your brief at ";
 
 function omp(agentCmd = "omp", exec?: (inner: Exec) => Exec) {
   const s = setup(exec ? { exec } : {});
