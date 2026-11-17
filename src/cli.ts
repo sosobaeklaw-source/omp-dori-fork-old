@@ -9,6 +9,7 @@ import { need, one, parse, textOf, USAGE } from "./cli-args.ts";
 import { defaultDeps, ROLES, type Deps } from "./harness.ts";
 import { ConfigError, hooksSettled } from "./hooks.ts";
 import { send, type SendResult } from "./inbox.ts";
+import { leadPulse } from "./lead-pulse.ts";
 import { inboxList, releaseHeld, sendToShell } from "./inbox-held.ts";
 import { Refusal } from "./refusal.ts";
 import { runMigrate } from "./migrate.ts";
@@ -134,6 +135,13 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
       return runDuty(d, a, x);
     case "loop":
       return runLoop(d, a, x);
+    case "lead-pulse": {
+      const p = await leadPulse(d);
+      console.log(
+        `PULSE alive=${p.alive} open=${p.openOrders} oldest=${p.oldestMinutes}m reviveFailed=${p.reviveFailed}`,
+      );
+      return 0;
+    }
     case "backlog":
       return runBacklog(d, a, x);
     case "review": {

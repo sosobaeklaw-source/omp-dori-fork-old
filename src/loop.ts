@@ -8,6 +8,7 @@ import { loopLaneModel } from "./lane-model.ts";
 import { startLane } from "./lanes.ts";
 import { audit, HOUR } from "./loop-audit.ts";
 import { acquire, holds, release } from "./loop-lock.ts";
+import { auditOrders } from "./loop-orders.ts";
 import { refText } from "./refs.ts";
 import type { LoopRun } from "./store-types.ts";
 
@@ -189,6 +190,7 @@ export async function loopTick(d: Deps, opts: LoopOpts = {}): Promise<LoopRun> {
     const run: LoopRun = { at: d.now(), told, synced: [], findings: [], started: [], held: [], asked: [] };
     await sync(d, run);
     await audit(d, run);
+    auditOrders(d, run);
     await pull(d, run, maxLanes, maxStarts, opts.maxLoad, lock.nonce);
     ask(d, run);
     const items = d.store.items();

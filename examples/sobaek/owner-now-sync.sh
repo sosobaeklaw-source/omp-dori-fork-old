@@ -13,14 +13,33 @@
 #    (never overwritten). Two sources: the MacBook's own ~/sobaegi-lead/results/ and each omp lane's
 #    DORI_HOME/results/<lane>/독후감*.md (top level of the lane folder only; copies kept deeper as references stay). The ontology
 #    refresh (macmini 04:30) reads only the macmini's results folder, so a note written here reached it only after going up. sync-up-1117.
-# 5) ~/.omp-dori/독후감/소화본/ (the digests) → macmini ~/.omp-dori/독후감/소화본/. The MacBook copy is the only one anyone edits; copies go one way,
+# 6) ~/.omp-dori/독후감/소화본/ (the digests) → macmini ~/.omp-dori/독후감/소화본/. The MacBook copy is the only one anyone edits; copies go one way,
 #    so an edit made on the macmini is overwritten. There is no --delete: a digest retired on the MacBook must also be removed on the macmini by hand.
+# 7) Records between the Macs, one way each, record files only (no case folder, no lane report text). macmini → MacBook,
+#    from ~/sobaegi-lead/state/ to $H/state/macmini/: open-orders.json, reply.log, lead-alive.json (a file the macmini does not have yet is skipped).
+# 8) `dori lead-pulse` (src/lead-pulse.ts): is the lead's pane there, start it after two dead checks in a row, tell the room once
+#    when the macmini's lead-alive.json above was not renewed for 15 minutes before this run's fetch of it (DORI_MINI_FETCHED_AT is
+#    set only when that fetch succeeded: after a failed fetch the pulse judges nothing and sends nothing). The local copy of that
+#    file is removed before the fetch, so what the pulse judges is a file this fetch brought: one the macmini no longer has is
+#    missing, never an old copy judged against a fresh fetch time. It runs after 7 so it reads the macmini's newest file,
+#    under PULSE_TIMEOUT seconds (default 90), and a failed or hung pulse never stops the copies that follow. launchd's PATH has no
+#    ~/.local/bin, where herdr lives, so it is added here. A pulse killed by that limit between creating the lead's workspace and
+#    registering the lead leaves a lead-starting.json mark in the state dir: the pulses of the next 10 minutes wait for it and start
+#    no second lead (src/lead-pulse.ts).
+# 9) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
+#    files inbound.log, discord-sent.log, ready-reply.log, to-macmini.log, orders-closed.log, lead-alive.json (the pulse of 8), and
+#    lanes/<file>.json made here from the lane records: the key, the status, lastActivityAt and the order ids the lane marks on
+#    purpose (`orders` in its record, or the `회장님 원문(<id>[, <id>])` line among the first five non-empty lines of its brief; see tools/open_orders.ts), never
+#    any text. It is built in lanes-summary.new and swapped in only when that succeeds; a lane file that cannot be read is skipped
+#    and named in the log; when the whole step fails the lanes rsync is skipped and the macmini keeps its old summary. The
+#    lanes folder there is replaced as a whole when it does run; nothing else is deleted. sync-records-1117.
 # The log gets a line only when something was copied, the kept-as-newer list changed, or a step failed.
 set -uo pipefail
 SSH='ssh -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 -o BatchMode=yes'
 CANON=/Users/son-won-il/.omo/memory/agents/sanjai-agent-1e565cbf/repo/system/owner-now.md
 H=$HOME/.omp-dori
-RSYNC=/opt/homebrew/bin/rsync
+RSYNC=${RSYNC:-/opt/homebrew/bin/rsync}
+REPO=${DORI_REPO:-$HOME/src/omp-dori}
 say() { [ -n "$2" ] && printf '%s %s %s\n' "$(date '+%F %T')" "$1" "$2"; return 0; }
 
 out=$("$RSYNC" -ti --chmod=F444 -e "$SSH" "macmini:$CANON" "$H/owner-now.md" 2>&1) || out="FAILED $out"
@@ -56,4 +75,64 @@ if [ -d "$H/results" ]; then
   out=$("$RSYNC" "${UP[@]}" --include='/*/' --include='/*/독후감*.md' --exclude='*' --prune-empty-dirs \
     "$H/results/" macmini:sobaegi-lead/results/ 2>&1) || out="FAILED $out"
   say 독후감올림 "$(printf '%s\n' "$out" | grep -E '^<f|^FAILED|rsync' | head -40)"
+fi
+
+mkdir -p "$H/state/macmini"
+rm -f "$H/state/macmini/lead-alive.json"
+fetched=""
+if out=$("$RSYNC" -dti -e "$SSH" --include=open-orders.json --include=reply.log --include=lead-alive.json --exclude='*' \
+  macmini:sobaegi-lead/state/ "$H/state/macmini/" 2>&1); then fetched=$(( $(date +%s) * 1000 )); else out="FAILED $out"; fi
+say 기록받음 "$(printf '%s\n' "$out" | grep -E '^[<>]f|^FAILED|rsync' | head -40)"
+
+out=$(DORI_MINI_FETCHED_AT="$fetched" PATH="$HOME/.local/bin:$PATH" /usr/bin/perl -e 'alarm shift; exec @ARGV' "${PULSE_TIMEOUT:-90}" "$H/bin/dori" lead-pulse 2>&1) || out="FAILED $out"
+say lead-pulse "$(printf '%s\n' "$out" | grep -v -E '^PULSE alive=true .* reviveFailed=false$' | head -20)"
+
+lanes="$H/state/lanes-summary"
+rm -rf "$lanes.new"; mkdir -p "$lanes.new"
+if out=$("${PYTHON:-/usr/bin/python3}" - "$H" "$lanes.new" <<'PY' 2>&1
+import glob, json, os, re, sys
+ID = re.compile(r"[1-9][0-9]{15,21}\Z")
+MARK = re.compile(r"회장님\s*원문\s*\(([^)]*)\)")
+home, dst = sys.argv[1:3]
+for path in sorted(glob.glob(os.path.join(home, "lanes", "*.json"))):
+    try:
+        lane = json.load(open(path))
+        key, status = lane["key"], lane["status"]
+        listed = lane["orders"] if isinstance(lane.get("orders"), list) else []
+        ids = [x for x in listed if isinstance(x, str)]
+        if len(ids) < len(listed):
+            print("%s orders: %d non-string entries ignored (ids must be strings)" % (os.path.basename(path), len(listed) - len(ids)))
+        try:
+            head = [l.strip() for l in open(os.path.join(home, "briefs", key + ".md"), encoding="utf-8", errors="replace") if l.strip()][:5]
+        except OSError:
+            head = []
+        for line in head:
+            mark = MARK.match(line)
+            ids += re.findall(r"\d+", mark.group(1)) if mark else []
+        summary = {"key": key, "status": status, "lastActivityAt": lane.get("lastActivityAt") or lane.get("createdAt") or 0,
+                   "orders": sorted({i.strip() for i in ids if ID.match(i.strip())})}
+        with open(os.path.join(dst, os.path.basename(path)), "w") as f:
+            json.dump(summary, f, ensure_ascii=False)
+    except Exception as e:
+        print("skipped %s: %s" % (os.path.basename(path), e))
+PY
+); then
+  rm -rf "$lanes"; mv "$lanes.new" "$lanes"; summary=ok
+else
+  out="FAILED $out"; rm -rf "$lanes.new"; summary=failed
+fi
+say 일감요약 "$out"
+send=()
+for f in "$REPO/tools/open_orders.ts" "$H"/state/{inbound.log,discord-sent.log,ready-reply.log,to-macmini.log,orders-closed.log,lead-alive.json}; do
+  [ -f "$f" ] && send+=("$f")
+done
+if [ "${#send[@]}" -gt 0 ]; then
+  out=$("$RSYNC" -ti -e "$SSH" --rsync-path='mkdir -p ~/sobaegi-lead/state/macbook && rsync' "${send[@]}" macmini:sobaegi-lead/state/macbook/ 2>&1) || out="FAILED $out"
+  say 기록보냄 "$(printf '%s\n' "$out" | grep -E '^<f|^FAILED|rsync' | head -40)"
+fi
+if [ "$summary" = ok ]; then
+  out=$("$RSYNC" -rti --delete -e "$SSH" --rsync-path='mkdir -p ~/sobaegi-lead/state/macbook/lanes && rsync' "$lanes/" macmini:sobaegi-lead/state/macbook/lanes/ 2>&1) || out="FAILED $out"
+  say 일감보냄 "$(printf '%s\n' "$out" | grep -E '^<f|^\*deleting|^FAILED|rsync' | head -40)"
+else
+  say 일감보냄 "건너뜀: 요약이 실패해 맥미니의 옛 요약을 그대로 둔다"
 fi

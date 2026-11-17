@@ -54,7 +54,11 @@ const USAGE = `dori <command> [options]
   guard [--loop MIN]                   host load, memory, disk and pane-count alerts
   heavy <label> -- <command ...>       run a heavy command when a slot is free and load is low
   can-launch                           exit 0 if the host has room for a new lane, else print why and exit 4
+  orders [--since 3d] [--mine] [--json]   owner orders still open, from both Macs' records (tools/open_orders.ts)
+  orders close <id>... --why LINE      close orders that need no result
+  lead-pulse                           is the lead's pane there? writes state/lead-alive.json; the second dead check in a row starts the lead
   send <slack|telegram|discord> --to TARGET --text TEXT [--thread ID] [--edit ID]
+                                       Discord also [--reply ID] (as a reply) [--closes ID] (result for that message)
                                        Discord accepts channel names with DORI_DISCORD_GUILD_ID; --thread needs no --to and also targets edits
   thread discord create --to CHANNEL --title T [--text T] [--tag NAME]...
   thread discord set <thread> [--title T] [--tag NAME]... [--archive|--unarchive]
@@ -114,6 +118,8 @@ const flags = parseArgs({
     emoji: { type: "string" },
     remove: { type: "boolean" },
     kind: { type: "string" },
+    reply: { type: "string" },
+    closes: { type: "string" },
     step: { type: "string" },
     result: { type: "string" },
     "remote-effect": { type: "string", multiple: true },
@@ -129,6 +135,10 @@ const flags = parseArgs({
     source: { type: "string" },
     open: { type: "boolean" },
     limit: { type: "string" },
+    since: { type: "string" },
+    mine: { type: "boolean" },
+    json: { type: "boolean" },
+    why: { type: "string" },
   },
 });
 
