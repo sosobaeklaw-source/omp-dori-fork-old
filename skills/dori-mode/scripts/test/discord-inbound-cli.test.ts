@@ -159,3 +159,23 @@ test("a ledger that cannot be read only warns, and intake still commits its curs
     expect.stringMatching(/^WARN ledger 1571500000000000006: /),
   ]);
 });
+
+test("an owner voice message reaches the log as its transcript, and a failed transcription leaves it as it was", async () => {
+  const { withVoiceText, VOICE_PREFIX } = await import("../src/cli-discord.ts");
+  const voice = {
+    channel: "1",
+    message: "2",
+    reference: null,
+    text: "",
+    replyTo: null,
+    attachments: [{ filename: "voice-message.ogg", size: 9, url: "https://cdn.example/v.ogg", voice: true as const }],
+  };
+  const warned: string[] = [];
+  const heard = await withVoiceText(voice, async (url) => `들은 말 ${url}`, (l) => warned.push(l));
+  expect(heard.text).toBe(`${VOICE_PREFIX}들은 말 https://cdn.example/v.ogg`);
+  const typed = { ...voice, text: "글로 쓴 지시", attachments: [{ ...voice.attachments[0] }] };
+  expect((await withVoiceText(typed, async () => "x", () => {})).text).toBe("글로 쓴 지시");
+  const failed = await withVoiceText(voice, async () => { throw new Error("empty transcript"); }, (l) => warned.push(l));
+  expect(failed).toBe(voice);
+  expect(warned).toEqual(["WARN transcribe 2: empty transcript"]);
+});

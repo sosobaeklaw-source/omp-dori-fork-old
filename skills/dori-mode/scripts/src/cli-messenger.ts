@@ -146,6 +146,9 @@ const inbound: Command = async ({ key, loopMinutes, config, values }) => {
       config.stateDir,
       values["gateway"] === true,
       values["loop"] === undefined ? 3 / 60 : minutes,
+      config.hooks.transcribe?.length
+        ? (url) => withLocalAudio(url, (file) => transcribe(run, config.hooks.transcribe, file))
+        : undefined,
     );
   if (key !== "slack") die("inbound supports slack, telegram or discord");
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));

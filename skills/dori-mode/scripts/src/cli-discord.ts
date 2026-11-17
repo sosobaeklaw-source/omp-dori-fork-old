@@ -48,8 +48,33 @@ const idList = (value: string | undefined): string[] =>
     .map((id) => id.trim())
     .filter((id) => id !== "");
 
+/** A voice message's text: the hook's local transcript, prefixed so a reader knows it is machine-heard. */
+export type VoiceText = (url: string) => Promise<string>;
+export const VOICE_PREFIX = "(음성 받아쓰기, 실행 전 회장님께 되물을 것) ";
+
+/** Fills an empty-text voice message with its transcript; a failure leaves the message as it was and says why. */
+export const withVoiceText = async (
+  message: Parameters<typeof formatDiscordInbound>[0],
+  voiceText: VoiceText | undefined,
+  warn: (line: string) => void,
+): Promise<Parameters<typeof formatDiscordInbound>[0]> => {
+  const voice = message.attachments.find((a) => a.voice);
+  if (!voiceText || !voice || message.text.trim() !== "") return message;
+  try {
+    return { ...message, text: VOICE_PREFIX + (await voiceText(voice.url)) };
+  } catch (e) {
+    warn(`WARN transcribe ${message.message}: ${(e as Error).message}`.slice(0, 300));
+    return message;
+  }
+};
+
 /** Channels come from DORI_DISCORD_CHANNEL_ID, DORI_DISCORD_CHANNEL_IDS (comma separated) and DORI_DISCORD_SCOPE=all. */
-export const discordInboundCommand = async (stateDir: string, gateway: boolean, pollMinutes: number) => {
+export const discordInboundCommand = async (
+  stateDir: string,
+  gateway: boolean,
+  pollMinutes: number,
+  voiceText?: VoiceText,
+) => {
   const env = process.env;
   const ownerId = discordInboundEnv("DORI_DISCORD_OWNER_ID", env["DORI_DISCORD_OWNER_ID"]);
   const scope = env["DORI_DISCORD_SCOPE"]?.trim();
@@ -68,7 +93,7 @@ export const discordInboundCommand = async (stateDir: string, gateway: boolean, 
   const watching = all ? "all" : intake.channels().join(",");
   const home = defaultHome();
   // The owner's reply to a post lands in the ledger verbatim; a ledger fault is reported and never holds intake.
-  const emit = (message: Parameters<typeof formatDiscordInbound>[0]) => {
+  const print = (message: Parameters<typeof formatDiscordInbound>[0]) => {
     console.log(formatDiscordInbound(message));
     try {
       const head = ledgerReply(home, stateDir, ownerId, message);
@@ -76,6 +101,18 @@ export const discordInboundCommand = async (stateDir: string, gateway: boolean, 
     } catch (e) {
       console.log(`WARN ledger ${message.message}: ${(e as Error).message}`);
     }
+  };
+  // A voice message waits for its transcript; while one waits, later lines queue behind it to keep arrival order.
+  // Everything else prints at once, as before.
+  let pending = 0;
+  let queue: Promise<void> = Promise.resolve();
+  const emit = (message: Parameters<typeof formatDiscordInbound>[0]) => {
+    const heard = voiceText !== undefined && message.text.trim() === "" && message.attachments.some((a) => a.voice);
+    if (!heard && pending === 0) return print(message);
+    pending++;
+    queue = queue
+      .then(async () => print(await withVoiceText(message, voiceText, (l) => console.log(l))))
+      .finally(() => pending--);
   };
   console.log(
     `INBOUND_READY discord owner=${ownerId} channel=${watching} bot=${intake.botId}${gateway ? " mode=gateway" : ""}`,
