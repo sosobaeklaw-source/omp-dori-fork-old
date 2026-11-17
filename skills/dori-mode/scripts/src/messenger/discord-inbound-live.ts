@@ -5,9 +5,11 @@ const GUILD_MESSAGES = 1 << 9;
 const DIRECT_MESSAGES = 1 << 12;
 const MESSAGE_CONTENT = 1 << 15; // Privileged: enable it for the bot in the Developer Portal.
 
+/** A returned promise holds the queue (and that message's cursor) until the message is printed. */
+type Emit = (message: DiscordInbound) => unknown;
 type Intake = {
-  sync(emit: (message: DiscordInbound) => void): Promise<void>;
-  accept(message: Message, emit: (message: DiscordInbound) => void): void;
+  sync(emit: Emit): Promise<void>;
+  accept(message: Message, emit: Emit): void | Promise<void>;
 };
 
 /**
@@ -20,7 +22,7 @@ export const discordInboundLive = (
   open: (url: string) => GatewaySocket,
   token: string,
   clock: GatewayClock,
-  emit: (message: DiscordInbound) => void,
+  emit: Emit,
   report: (line: string) => void,
 ) => {
   let queue = Promise.resolve();

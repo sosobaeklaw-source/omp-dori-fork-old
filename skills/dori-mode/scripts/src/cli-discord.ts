@@ -102,17 +102,12 @@ export const discordInboundCommand = async (
       console.log(`WARN ledger ${message.message}: ${(e as Error).message}`);
     }
   };
-  // A voice message waits for its transcript; while one waits, later lines queue behind it to keep arrival order.
-  // Everything else prints at once, as before.
-  let pending = 0;
-  let queue: Promise<void> = Promise.resolve();
-  const emit = (message: Parameters<typeof formatDiscordInbound>[0]) => {
+  // A voice message returns a promise: the intake waits for its transcript before the next message and before
+  // saving its cursor, so arrival order holds and a crash mid-transcription replays it. Everything else prints at once.
+  const emit = (message: Parameters<typeof formatDiscordInbound>[0]): void | Promise<void> => {
     const heard = voiceText !== undefined && message.text.trim() === "" && message.attachments.some((a) => a.voice);
-    if (!heard && pending === 0) return print(message);
-    pending++;
-    queue = queue
-      .then(async () => print(await withVoiceText(message, voiceText, (l) => console.log(l))))
-      .finally(() => pending--);
+    if (!heard) return print(message);
+    return withVoiceText(message, voiceText, (l) => console.log(l)).then(print);
   };
   console.log(
     `INBOUND_READY discord owner=${ownerId} channel=${watching} bot=${intake.botId}${gateway ? " mode=gateway" : ""}`,

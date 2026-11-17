@@ -158,3 +158,26 @@ test("a later-page failure emits nothing and retains the cursor for a complete r
   expect(received).toEqual(Array.from({ length: 150 }, (_, index) => String(index + 1)));
   expect(cursor.store.load()).toBe("150");
 });
+
+test("a slow emit holds the next message and its own cursor until it finishes, so a crash mid-way replays it", async () => {
+  const world = discordRestWorld();
+  const cursor = memoryDiscordCursor("0");
+  const intake = await discordInbound(world.discord, () => cursor.store, options);
+  world.state.messages.push(ownerMessage("1"), ownerMessage("2"));
+  let finish: () => void = () => {};
+  const printed: string[] = [];
+  const polling = intake.poll((message) => {
+    if (message.message !== "1") return void printed.push(message.message);
+    return new Promise<void>((resolve) => {
+      finish = () => {
+        printed.push("1");
+        resolve();
+      };
+    });
+  });
+  await Bun.sleep(10);
+  expect({ printed, cursor: cursor.store.load() }).toEqual({ printed: [], cursor: "0" });
+  finish();
+  await polling;
+  expect({ printed, cursor: cursor.store.load() }).toEqual({ printed: ["1", "2"], cursor: "2" });
+});
