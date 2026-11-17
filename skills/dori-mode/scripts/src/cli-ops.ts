@@ -10,6 +10,8 @@ import { guardTick, sampleHost } from "./host-guard.ts";
 import { fetchHttp } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
 import { Reports } from "./reports.ts";
+import { runOrders } from "../../../../tools/open_orders.ts";
+import { configPath } from "./config.ts";
 import { canLaunch } from "./routing.ts";
 import { realClock, run } from "./run.ts";
 import { syncRegistry } from "./sync.ts";
@@ -120,5 +122,28 @@ export const opsCommands: Readonly<Record<string, Command>> = {
     const v = canLaunch(await sampleHost(run), config.guard);
     console.log(v.ok ? "CAN_LAUNCH" : `HOLD ${v.reasons.join(" | ")}`);
     process.exit(v.ok ? 0 : 4);
+  },
+  /** This Mac's records plus the macmini's synced under `<stateDir>/macmini/`; `close` writes `orders-closed.log`. */
+  orders: async ({ positionals, opt, values, config }) => {
+    const home = dirname(configPath());
+    const s = config.stateDir;
+    const closed = ["--closed", join(s, "orders-closed.log")];
+    const argv =
+      positionals[0] === "close"
+        ? ["close", ...positionals.slice(1), ...closed, "--why", opt("why") ?? ""]
+        : [
+            ...["--inbound", `macbook=${join(s, "inbound.log")}`, "--lanes", `macbook=${join(home, "lanes")}`],
+            ...["--sent-log", join(s, "discord-sent.log"), "--ready-log", join(s, "ready-reply.log"), ...closed],
+            ...["--reply-log", join(s, "macmini", "reply.log")],
+            ...["--orders-json", `macmini=${join(s, "macmini", "open-orders.json")}`],
+            ...["--since", opt("since") ?? "3d"],
+            ...(values["mine"] ? ["--mine", "macbook"] : []),
+            ...(values["json"] ? ["--json"] : []),
+          ];
+    try {
+      process.exit(runOrders(argv));
+    } catch (e) {
+      die((e as Error).message);
+    }
   },
 };
