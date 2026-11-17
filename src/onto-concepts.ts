@@ -44,6 +44,15 @@ export function allowedSource(
   return allow.includes(rel.split(sep)[0]!);
 }
 
+/** Load files whose records come from the office's guideline documents (공단 지침·업무처리기준), not client cases. */
+export const GUIDELINE_ORIGINS = ["noise_guideline_records.jsonl", "burden_records.jsonl"] as const;
+
+/** Whether a source is a guideline document: an absolute path under sanjai-agent's corpus/jichim or corpus/knowledge. */
+export function guidelineSource(source: string): boolean {
+  if (!isAbsolute(source)) return false;
+  return /\/sanjai-agent\/corpus\/(jichim|knowledge)\//.test(resolve(source));
+}
+
 /** The exported concepts, or undefined when the file is missing or not the shape above. */
 export function loadConcepts(home: string): { made: string; concepts: Concept[] } | undefined {
   const path = conceptsPath(home);

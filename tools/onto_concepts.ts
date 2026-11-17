@@ -10,7 +10,15 @@
  */
 import { renameSync, writeFileSync } from "node:fs";
 import { one, parse } from "../src/cli-args.ts";
-import { allowedSource, CONCEPT_TYPES, type Concept, conceptsPath, guidelineWords } from "../src/onto-concepts.ts";
+import {
+  allowedSource,
+  CONCEPT_TYPES,
+  type Concept,
+  conceptsPath,
+  GUIDELINE_ORIGINS,
+  guidelineSource,
+  guidelineWords,
+} from "../src/onto-concepts.ts";
 import { Refusal } from "../src/refusal.ts";
 import { readStudyDirs } from "../src/study-dirs.ts";
 import { defaultHome } from "../src/test-home.ts";
@@ -41,6 +49,11 @@ const QUERIES = {
   publicFacts: `select distinct f.object_id as id, f.source as source from facts f
                   left join review_flags r on r.fact_id = f.id
                   where f.origin = 'public_reading.jsonl' and r.fact_id is null`,
+  // Guideline documents are not client material: a concept cited in them is exportable too (names and terms only).
+  guideFacts: `select distinct f.object_id as id, f.source as source from facts f
+                 left join review_flags r on r.fact_id = f.id
+                 where f.origin in (${GUIDELINE_ORIGINS.map((o) => `'${o}'`).join(",")}) and r.fact_id is null`,
+  factless: `select o.id as id from objects o where o.type = '상병' and not exists (select 1 from facts f where f.object_id = o.id)`,
 };
 
 const quote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -93,6 +106,9 @@ try {
   const publicIds = new Set<number>();
   for (const r of query(host, dbPath, QUERIES.publicFacts))
     if (allowedSource(String(r["source"]), allow)) publicIds.add(Number(r["id"]));
+  for (const r of query(host, dbPath, QUERIES.guideFacts))
+    if (guidelineSource(String(r["source"]))) publicIds.add(Number(r["id"]));
+  const factless = new Set(query(host, dbPath, QUERIES.factless).map((r) => Number(r["id"])));
   const name = new Map(objects.map((o) => [Number(o["id"]), String(o["name"])]));
   const terms = new Map<number, Set<string>>([...name.keys()].map((id) => [id, new Set<string>()]));
   for (const r of query(host, dbPath, QUERIES.aliases)) terms.get(Number(r["id"]))?.add(String(r["alias"]));
@@ -117,7 +133,10 @@ try {
     const id = Number(o["id"]);
     const own = squeeze(String(o["name"]));
     if (own.length < 3) continue;
-    for (const words of guideNames.filter((w) => squeeze(w).includes(own))) {
+    const titled = guideNames.filter((w) => squeeze(w).includes(own));
+    // A disease with no fact of its own that a guideline is named after (소음성난청) is that guideline's public title.
+    if (titled.length > 0 && factless.has(id)) publicIds.add(id);
+    for (const words of titled) {
       terms.get(id)?.add(words);
       for (const f of citedUnder.get(words) ?? []) if (factor.has(f)) terms.get(id)?.add(name.get(f)!);
     }

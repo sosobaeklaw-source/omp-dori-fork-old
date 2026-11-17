@@ -49,6 +49,9 @@ test("onto_concepts exports only concepts with an allowed, unflagged public fact
     [3, "검수제외상병", `${results}/book-reading/a.md`, "public_reading.jsonl", true],
     [4, "허용밖상병", `${results}/case-9999/a.md`, "public_reading.jsonl", false],
     [5, "결과밖상병", "/tmp/a.md", "public_reading.jsonl", false],
+    [6, "지침상병", "/Users/x/sanjai-agent/corpus/jichim/난청지침.pdf", "noise_guideline_records.jsonl", false],
+    [7, "지침꼴사건상병", "/Users/x/sanjai-agent/cases/A/난청지침.pdf", "noise_guideline_records.jsonl", false],
+    [8, "지침제외상병", "/Users/x/sanjai-agent/corpus/jichim/난청지침.pdf", "noise_guideline_records.jsonl", true],
   ];
   for (const [id, name, source, origin, flagged] of rows) {
     db.run("insert into objects values (?, '상병', ?)", [id, name]);
@@ -60,7 +63,7 @@ test("onto_concepts exports only concepts with an allowed, unflagged public fact
   const r = run(home, dbPath, "book-reading");
   expect(r.exitCode).toBe(0);
   const out = JSON.parse(readFileSync(conceptsPath(home), "utf8")) as { concepts: { name: string }[] };
-  expect(out.concepts.map((c) => c.name)).toEqual(["공개상병"]);
+  expect(out.concepts.map((c) => c.name)).toEqual(["공개상병", "지침상병"]);
 });
 
 test("onto_concepts --help prints the usage and writes nothing", () => {
