@@ -8,10 +8,13 @@
 #    --info=skip1 reports each such skipped file ("… is newer"); the sorted list goes to $H/state/owner-sync.newer and the log gets one count line
 #    only when that list changes. Backups, evidence/ and json are left out.
 #    The writer case lists (~/.omp-dori/writer-cases/*.txt) point at these paths, so a passage opens the same sentence on both Macs. rootfix-pr4-1116.
-# 5) 독후감·독서메모 written on the MacBook → the macmini's ~/sobaegi-lead/results/, new files only (--ignore-existing: a file the
-#    macmini already has is never overwritten). Two sources: the MacBook's own ~/sobaegi-lead/results/ and each omp lane's
+# 5) 독후감·독서메모 written on the MacBook → the macmini's ~/sobaegi-lead/results/, -u instead of --ignore-existing: a note
+#    rewritten after its last upload goes up again, while a file the macmini already holds newer than the MacBook copy is kept
+#    (never overwritten). Two sources: the MacBook's own ~/sobaegi-lead/results/ and each omp lane's
 #    DORI_HOME/results/<lane>/독후감*.md (top level of the lane folder only; copies kept deeper as references stay). The ontology
 #    refresh (macmini 04:30) reads only the macmini's results folder, so a note written here reached it only after going up. sync-up-1117.
+# 5) ~/.omp-dori/독후감/소화본/ (the digests) → macmini ~/.omp-dori/독후감/소화본/. The MacBook copy is the only one anyone edits; copies go one way,
+#    so an edit made on the macmini is overwritten. There is no --delete: a digest retired on the MacBook must also be removed on the macmini by hand.
 # 6) Records between the Macs, one way each, record files only (no case folder, no lane report text). macmini → MacBook,
 #    from ~/sobaegi-lead/state/ to $H/state/macmini/: open-orders.json, reply.log, lead-alive.json (a file the macmini does not have yet is skipped).
 # 7) `dori lead-pulse` (src/lead-pulse.ts): is the lead's pane there, start it after two dead checks in a row, tell the room once
@@ -43,6 +46,7 @@ if [ -f "$H/반복지적.md" ]; then
   out=$("$RSYNC" -ti -e "$SSH" --rsync-path='mkdir -p ~/.omp-dori && rsync' "$H/반복지적.md" macmini:.omp-dori/ 2>&1) || out="FAILED $out"
   say 반복지적 "$out"
 fi
+[ -d "$H/독후감/소화본" ] && { out=$("$RSYNC" -rti -e "$SSH" --rsync-path='mkdir -p ~/.omp-dori/독후감/소화본 && rsync' "$H/독후감/소화본/" macmini:.omp-dori/독후감/소화본/ 2>&1) || out="FAILED $out"; say 소화본 "$out"; }
 out=$(/usr/bin/python3 "$H/bin/owner-direct-forward.py" 2>&1) || out="FAILED $out"
 say owner-direct "$out"
 out=$("$RSYNC" -rtpiu --info=skip1 --chmod=F444 -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' \
@@ -61,7 +65,7 @@ else
     say 독후감 "맥북이 더 새 것 $(printf '%s' "$newer" | grep -c .)개, 목록 $NEWER"
   fi
 fi
-UP=(-rti --ignore-existing -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' --exclude='_tools/')
+UP=(-rtiu -e "$SSH" --exclude='_bak*' --exclude='*.bak*' --exclude='evidence/' --exclude='_failed_run*/' --exclude='_tools/')
 out=$("$RSYNC" "${UP[@]}" --include='*/' --include='*독후감*.md' --include='독서메모.md' --exclude='*' --prune-empty-dirs \
   "$HOME/sobaegi-lead/results/" macmini:sobaegi-lead/results/ 2>&1) || out="FAILED $out"
 say 독후감올림 "$(printf '%s\n' "$out" | grep -E '^<f|^FAILED|rsync' | head -40)"
