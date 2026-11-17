@@ -6,3 +6,13 @@
 ~/.omp-dori/results/insta-jaehae-1116/ref/instagram-cardnews-principles-20261103.md:1-45
 ~/sobaegi-lead/results/channels-8-1110/독후감_인스타.md:1-11
 ~/sobaegi-lead/results/insta-ref2-1109/독후감.md:1-64
+~/sobaegi-lead/results/writing-cases/글카드영상_반려사례.md:1-152
+# 판결 카드(card-52h-1116 반영): 판결의 결론과 그 한계(확정 아님·이 사건의 판단)는 같은 장에, 법률가 말로. 아래 두 독후감을 카드 의뢰서에 기본으로 붙인다.
+~/sobaegi-lead/results/voice-rootcause/독후감_자연스러운_법률문장.md:1-105
+~/sobaegi-lead/results/cardnews-2024du40400-1112/v2/독후감_카드뉴스.md:1-27
+# 법률용어 단어장(card-52h-lex-1117, 회장님 1572038351224184874 "다시 재판하게 했으나 -> 파기환송"): 일상어→판결 말 대조표, 대법원 판결이 원심을 옮기고 깨는 말, 과로·뇌혈관 판결 독후감. 카드에서도 판결 말 그대로 쓴다.
+~/sobaegi-lead/results/legal-lexicon/어휘표.md:263-358
+~/sobaegi-lead/results/legal-lexicon/독후감.md:3422-3432
+~/sobaegi-lead/results/legal-lexicon/독후감.md:19228-19245
+# 가스켓러브 독후감 3절(여는 사람 자리·폰 3초 안에 판단): 화면·카드는 받는 사람이 어떤 기기로 몇 초 안에 고르는지부터 (parukuri-learn-1117 R61)
+~/sobaegi-lead/results/gasket-study-1114/독후감.md:25-31
