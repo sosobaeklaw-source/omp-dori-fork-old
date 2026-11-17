@@ -58,7 +58,7 @@ test("a lost lane is not busy: its order falls back to 약속만 or 답없음, a
   w.done();
 });
 
-test("a lane attaches only through orders in its record or the first line of its brief; quoted ids attach nothing", () => {
+test("a lane attaches only through orders in its record or the header line of its brief; quoted ids attach nothing", () => {
   const w = world(7);
   const [byRecord, byHeader, several, colon, quoted, lineTwo, inLog] = w.ids as string[] as [
     string,
@@ -70,16 +70,22 @@ test("a lane attaches only through orders in its record or the first line of its
     string,
   ];
   w.lane("by-record", "working", 5, { orders: [byRecord, "not-an-id", 12] });
-  w.lane("by-header", "working", 5, {}, `\n  [보호] 원문(${byHeader})\n`);
-  w.lane("by-several", "working", 5, {}, `[보호] 원문(${several}, ${colon}):\n본문`);
+  w.lane("by-header", "working", 5, {}, `\n  회장님 원문(${byHeader})\n`);
+  w.lane("by-several", "working", 5, {}, `회장님 원문 (${several}, ${colon}, 그대로):\n본문`);
   w.lane(
     "quotes",
     "working",
     5,
     { log: [{ text: `see ${quoted}` }], note: quoted },
-    `# 제목\n[보호] 원문(${lineTwo})\n배경: ${quoted}\n${inLog}`,
+    `# 제목\n회장님 원문(${lineTwo})\n배경: ${quoted}\n${inLog}`,
   );
-  w.lane("other-form", "working", 5, {}, `회장님 원문(${quoted}): 일`);
+  w.lane(
+    "other-form",
+    "working",
+    5,
+    {},
+    `# 제목\n배경: 회장님 원문(${quoted}) 을 참고\n하나\n둘\n셋\n회장님 원문(${quoted}): 여섯째 줄`,
+  );
   w.lane("no-brief", "working", 5, { sessionRef: { id: quoted } });
   expect(w.view()).toEqual([
     ["일하는중", ["by-record"]],
@@ -87,7 +93,7 @@ test("a lane attaches only through orders in its record or the first line of its
     ["일하는중", ["by-several"]],
     ["일하는중", ["by-several"]],
     ["답없음", []],
-    ["답없음", []],
+    ["일하는중", ["quotes"]],
     ["답없음", []],
   ]);
   w.done();

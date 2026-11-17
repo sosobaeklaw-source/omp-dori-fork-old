@@ -22,7 +22,7 @@
 # 8) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
 #    files inbound.log, discord-sent.log, ready-reply.log, to-macmini.log, orders-closed.log, lead-alive.json (the pulse of 7), and
 #    lanes/<file>.json made here from the lane records: the key, the status, lastActivityAt and the order ids the lane marks on
-#    purpose (`orders` in its record, or the `[보호] 원문(<id>[, <id>])` first line of its brief; see tools/open_orders.ts), never
+#    purpose (`orders` in its record, or the `회장님 원문(<id>[, <id>])` line among the first five non-empty lines of its brief; see tools/open_orders.ts), never
 #    any text. It is built in lanes-summary.new and swapped in only when that succeeds; a lane file that cannot be read is skipped
 #    and named in the log; when the whole step fails the lanes rsync is skipped and the macmini keeps its old summary. The
 #    lanes folder there is replaced as a whole when it does run; nothing else is deleted. sync-records-1117.
@@ -83,7 +83,7 @@ rm -rf "$lanes.new"; mkdir -p "$lanes.new"
 if out=$("${PYTHON:-/usr/bin/python3}" - "$H" "$lanes.new" <<'PY' 2>&1
 import glob, json, os, re, sys
 ID = re.compile(r"[1-9][0-9]{15,21}\Z")
-MARK = re.compile(r"\[보호\]\s*원문\(([^)]*)\)")
+MARK = re.compile(r"회장님\s*원문\s*\(([^)]*)\)")
 home, dst = sys.argv[1:3]
 for path in sorted(glob.glob(os.path.join(home, "lanes", "*.json"))):
     try:
@@ -91,11 +91,12 @@ for path in sorted(glob.glob(os.path.join(home, "lanes", "*.json"))):
         key, status = lane["key"], lane["status"]
         ids = [str(x) for x in lane["orders"]] if isinstance(lane.get("orders"), list) else []
         try:
-            first = next((l.strip() for l in open(os.path.join(home, "briefs", key + ".md"), encoding="utf-8", errors="replace") if l.strip()), "")
+            head = [l.strip() for l in open(os.path.join(home, "briefs", key + ".md"), encoding="utf-8", errors="replace") if l.strip()][:5]
         except OSError:
-            first = ""
-        mark = MARK.match(first)
-        ids += mark.group(1).split(",") if mark else []
+            head = []
+        for line in head:
+            mark = MARK.match(line)
+            ids += re.findall(r"\d+", mark.group(1)) if mark else []
         summary = {"key": key, "status": status, "lastActivityAt": lane.get("lastActivityAt") or lane.get("createdAt") or 0,
                    "orders": sorted({i.strip() for i in ids if ID.match(i.strip())})}
         with open(os.path.join(dst, os.path.basename(path)), "w") as f:

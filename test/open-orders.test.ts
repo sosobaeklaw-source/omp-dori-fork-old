@@ -42,9 +42,9 @@ function world() {
     );
     writeFileSync(join(mb, "briefs", `${key}.md`), briefText);
   };
-  lane("work-lane", "working", 75, `[보호] 원문(${o.working}):\n일`);
-  lane("ready-lane", "ready", 30, `\n[보호] 원문(${o.undelivered})\n`);
-  lane("done-lane", "done", 20, `[보호] 원문(${o.plainReplyDone})`);
+  lane("work-lane", "working", 75, `회장님 원문(${o.working}):\n일`);
+  lane("ready-lane", "ready", 30, `\n회장님 원문(${o.undelivered})\n`);
+  lane("done-lane", "done", 20, `회장님 원문(${o.plainReplyDone})`);
   writeFileSync(
     join(mb, "state", "discord-sent.log"),
     `11\t-\t-\treply=${o.promise}\n12\tx\tall\treply=${o.sentClose}\tcloses=${o.sentClose}\n13\t-\t-\treply=${o.plainReplyDone}\n`,

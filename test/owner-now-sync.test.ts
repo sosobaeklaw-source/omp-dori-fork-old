@@ -44,12 +44,15 @@ function rig(dori: string) {
     }),
   );
   put(join(h, "lanes", "broken.json"), "{");
-  put(join(h, "briefs", "lane-a.md"), `\n[보호] 원문(${ORDER}, ${OTHER}):\nSECRET-BRIEF-TEXT ${ORDER}\n`);
+  put(join(h, "briefs", "lane-a.md"), `\n회장님 원문(${ORDER}, ${OTHER}):\nSECRET-BRIEF-TEXT ${ORDER}\n`);
   put(
     join(h, "lanes", "quoter.json"),
     JSON.stringify({ key: "quoter", status: "ready", orders: [ORDER, "x"], note: OTHER }),
   );
-  put(join(h, "briefs", "quoter.md"), `# 제목\n[보호] 원문(${OTHER})\n회장님 원문(${ORDER})\n`);
+  put(
+    join(h, "briefs", "quoter.md"),
+    `# 제목\n배경: 회장님 원문(${OTHER}) 참고\n하나\n둘\n셋\n회장님 원문(${OTHER}): 여섯째 줄\n`,
+  );
   put(join(h, "lanes", "array.json"), "[1, 2]");
   put(join(h, "lanes", "null.json"), "null");
   put(join(h, "lanes", "number-key.json"), JSON.stringify({ key: 5, status: "working" }));

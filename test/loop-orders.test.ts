@@ -23,7 +23,7 @@ function orders(opts: Parameters<typeof setup>[0] = {}, told: number | null = T0
     );
   const lane = async (key: string, minutesAgo: number, startedAgo: number, finishedAgo?: number) => {
     const brief = join(s.d.store.root, `${key}-brief.md`);
-    writeFileSync(brief, `[보호] 원문(${idAt(minutesAgo)}): 합성`);
+    writeFileSync(brief, `회장님 원문(${idAt(minutesAgo)}): 합성`);
     s.w.clock = T0 - startedAgo * MIN;
     await startLane(s.d, key, brief, { group: "w1" });
     if (finishedAgo !== undefined) {

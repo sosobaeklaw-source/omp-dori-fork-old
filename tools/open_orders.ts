@@ -8,8 +8,9 @@
  * An order is an `INBOUND discord <channel> <id> from=owner` line, or a non-bot row of a read-only discord-inbox.sqlite
  * `incoming` table (by the logs' `INBOUND_READY owner=` ids and `--owner`, when any); one id on both Macs is one order.
  * A lane belongs to an order only through a mark made on purpose: an `orders: ["<id>", …]` array in its record, or a
- * header, the first non-empty line of `briefs/<key>.md` beside its lanes folder, `[보호] 원문(<id>)` (several ids
- * separated by commas; a `:` and text may follow). An id quoted anywhere else, in the record or the brief, attaches
+ * header line of `briefs/<key>.md` beside its lanes folder: one of its first five non-empty lines that starts with
+ * `회장님 원문(<id>…)` (the ids inside the brackets count; words beside them and text after the bracket do not). An id
+ * quoted anywhere else, in the record or the brief, attaches
  * nothing, and a `lost` lane (superseded or not) attaches nothing either. States, from records only, never from a
  * reply's words: 닫힘 (a `closes=<id>` in a sent or reply log, a `REPLIED <lane> <id>
  * <reply>` READY reply, the closed log, or 닫힘 in the other Mac's --orders-json), 일하는중 (a lane not ready or done;
@@ -23,7 +24,8 @@ import { parseArgs } from "node:util";
 
 type State = "답없음" | "약속만" | "일하는중" | "결과미전달" | "닫힘";
 type Lane = { key: string; mac: string; status: string; lastActivityAt: number };
-const BRIEF_MARK = /^\[보호\]\s*원문\(([^)]*)\)/;
+const BRIEF_MARK = /^회장님\s*원문\s*\(([^)]*)\)/;
+const HEADER_LINES = 5;
 export type Order = {
   id: string;
   at: number;
@@ -67,8 +69,12 @@ const sinceMs = (raw: string): number => {
 /** The order ids a lane names on purpose: `orders` in its record, and the header of its brief. */
 function marked(record: Record<string, unknown>, brief: string): string[] {
   const listed = Array.isArray(record["orders"]) ? record["orders"].map(String) : [];
-  const header = brief.split("\n").find((line) => line.trim() !== "");
-  const inHeader = BRIEF_MARK.exec(header?.trim() ?? "")?.[1]?.split(",") ?? [];
+  const head = brief
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .slice(0, HEADER_LINES);
+  const inHeader = head.flatMap((line) => BRIEF_MARK.exec(line)?.[1]?.match(/\d+/g) ?? []);
   return [...new Set([...listed, ...inHeader].map((id) => id.trim()).filter((id) => ID.test(id)))];
 }
 
