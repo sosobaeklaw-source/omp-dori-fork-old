@@ -10,9 +10,9 @@
  */
 import { renameSync, writeFileSync } from "node:fs";
 import { one, parse } from "../src/cli-args.ts";
-import { readStudyDirs } from "../src/dok-recall.ts";
 import { allowedSource, CONCEPT_TYPES, type Concept, conceptsPath, guidelineWords } from "../src/onto-concepts.ts";
 import { Refusal } from "../src/refusal.ts";
+import { readStudyDirs } from "../src/study-dirs.ts";
 import { defaultHome } from "../src/test-home.ts";
 
 const USAGE = `usage:
@@ -53,11 +53,7 @@ function query(host: string, db: string, sql: string): Record<string, string | n
     host === "local"
       ? ["sqlite3", "-json", uri]
       : ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", "-S", "none", host, `sqlite3 -json file:${remote}`];
-  const r = Bun.spawnSync(cmd, {
-    stdin: Buffer.from(sql),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const r = Bun.spawnSync(cmd, { stdin: Buffer.from(sql), stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0) throw new Refusal(`sqlite3 on ${host} failed: ${r.stderr.toString().trim()}`);
   const out = r.stdout.toString().trim();
   return out ? JSON.parse(out) : [];

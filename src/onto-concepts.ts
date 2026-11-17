@@ -101,8 +101,5 @@ export function expandQuery(query: string, concepts: readonly Concept[]): Expand
     extra.push(...others);
     used.push(`${hit}→${others.join(", ")}`);
   }
-  return {
-    query: extra.length ? `${query}\n${extra.join("\n")}` : query,
-    used,
-  };
+  return { query: extra.length ? `${query}\n${extra.join("\n")}` : query, used };
 }

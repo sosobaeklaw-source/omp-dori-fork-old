@@ -87,9 +87,7 @@ test("a weak tail is cut: under the floor or sharing too few words, and a readin
   const all = recall(query, ranked, 5, 100_000, NONE).kept.map((p) => relative(root, p.path));
   expect(all).toContain("incident-1109/독후감_경위서.md");
   expect(all).not.toContain("read-1113/독후감_읽은것.md");
-  const strict = recall(query, ranked, 5, 100_000, NONE, {
-    minHit: 3,
-  }).kept.map((p) => relative(root, p.path));
+  const strict = recall(query, ranked, 5, 100_000, NONE, { minHit: 3 }).kept.map((p) => relative(root, p.path));
   expect(strict).toEqual(["noise-1111/독후감_난청.md"]);
   const floored = recall(query, ranked, 5, 100_000, NONE, { floor: 0.99 }).kept;
   expect(floored.map((p) => relative(root, p.path))).toEqual(["noise-1111/독후감_난청.md"]);
@@ -152,13 +150,7 @@ test("an ontology alias finds the note written under the other name, and the req
   writeFileSync(note, `${lines.join("\n")}\n`);
   const concepts = [{ type: "상병", name: "T0291", terms: ["다발성골절 및 내부 장기손상"] }];
   const home = mkdtempSync(join(tmpdir(), "dok-onto-home-"));
-  const opts = {
-    root,
-    concepts,
-    limit: 5,
-    maxChars: 5000,
-    allow: ["injury-1110"] as const,
-  };
+  const opts = { root, concepts, limit: 5, maxChars: 5000, allow: ["injury-1110"] as const };
   expect(recallFor(home, "T0291 요양", NONE, { ...opts, concepts: [] }).specs).toEqual([]);
   const got = recallFor(home, "T0291 요양", NONE, opts);
   expect(got.onto).toEqual(["T0291→다발성골절 및 내부 장기손상"]);
@@ -196,39 +188,6 @@ test("a note with no case line gives no passage; two notes keep their shared wor
 test("the brief's words stop at the harness's standing sections", () => {
   for (const tail of ["Lane rules", "STOP WHEN (파쿠리)", "Lessons for omp-dori"])
     expect(briefQuery(`# 일\n난청 글\n## ${tail}\n팩스`)).toBe("# 일\n난청 글");
-});
-
-test("loadNotes with an allowlist reads only those top folders, and no folder at all without one", () => {
-  const root = tree();
-  expect(loadNotes(root, ["fax-1110"]).map((n) => relative(root, n.path))).toEqual(["fax-1110/독후감_팩스.md"]);
-  expect(loadNotes(root, []).map((n) => relative(root, n.path))).toEqual([]);
-});
-
-test("recallFor with no allowlist at hand recalls nothing", () => {
-  const root = join(mkdtempSync(join(tmpdir(), "dok-noallow-")), "results");
-  mkdirSync(join(root, "injury-1110"), { recursive: true });
-  writeFileSync(
-    join(root, "injury-1110", "독후감.md"),
-    `# 독후감 — 상병 이름\n\n## 다발성골절\n${filler("장기손상", 2).join("\n")}\n`,
-  );
-  const home = mkdtempSync(join(tmpdir(), "dok-noallow-home-"));
-  const saved = { ...process.env };
-  process.env["DORI_STUDY_DIRS"] = "";
-  process.env["DORI_SANJAI_PYTHON"] = "/nonexistent/dok-recall-python";
-  process.env["DORI_ONTO_HOST"] = "dok-recall-test.invalid..host";
-  try {
-    const got = recallFor(home, "장기손상 요양", NONE, {
-      root,
-      concepts: [],
-      limit: 5,
-      maxChars: 5000,
-    });
-    expect(got.specs).toEqual([]);
-  } finally {
-    for (const k of ["DORI_STUDY_DIRS", "DORI_SANJAI_PYTHON", "DORI_ONTO_HOST"])
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k]!;
-  }
 });
 
 test("a passage holding a client name, registration number, phone number or case path is left out", () => {

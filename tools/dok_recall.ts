@@ -10,10 +10,11 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { need, one, parse } from "../src/cli-args.ts";
-import { briefQuery, citations, label, loadNotes, rank, readStudyDirs, recall } from "../src/dok-recall.ts";
+import { briefQuery, citations, label, loadNotes, rank, recall } from "../src/dok-recall.ts";
 import { homeStateDir } from "../src/lane-model.ts";
 import { loadNameHashes } from "../src/ready-reply.ts";
 import { Refusal } from "../src/refusal.ts";
+import { readStudyDirs } from "../src/study-dirs.ts";
 import { defaultHome } from "../src/test-home.ts";
 
 const USAGE = `usage:
