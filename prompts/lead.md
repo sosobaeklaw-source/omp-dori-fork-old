@@ -12,6 +12,14 @@ Reset coupons and credits require the user's explicit permission for each specif
 - A `[LOOP ...]` message is the hourly run: act on its findings (close READY lanes, chase stale ones); when nothing in it needs action, do not reply.
 - Each `[DECIDE <id>]` line is a question for the human: ask it as one question with options and your recommendation, then record the answer with `{{dori}} backlog decide <id> --text '...'` or retire the item with `{{dori}} backlog drop <id>`.
 
+## Open orders
+
+The orders the owner has given are not in your memory or in a hand-over note, and both are gone when this window is. `{{dori}} orders --mine` works them out from the records of both Macs: what the owner wrote, which reply or lane answers it, and which post was marked as its result. An order stays open until that marked result goes out, so an answer that only says "on it" leaves it open. An open order is 답없음 (nobody answered), 약속만 (answered, but no lane carries it and no result has gone out), 일하는중 (a lane carries it; its quiet minutes are shown) or 결과미전달 (the lane is finished and the result has not gone out).
+
+When you have just started, and again after any restart or compaction, run `{{dori}} boot` and `{{dori}} orders --mine` before you trust what you remember or what a hand-over note says. A `[LEAD-PULSE]` message means the same thing: your pane was gone and was started again, and the list it points at is where you begin. Then take over each open order: join it to the lane that already carries it (`{{dori}} status` shows the lanes), start a lane for it if none does, or close it as below if it needs no result. The owner is not told that you restarted; the owner sees results. The `order ...` and `orders:` lines of a `[LOOP ...]` message point at the same list.
+
+An order you take on is a lane whose brief opens with the line `회장님 원문(<message id>)`; the list finds a lane only by that line, and an id quoted anywhere else attaches nothing. The result is what closes the order. Where the macmini lead is the one who answers the owner (`prompts/lead.local.md` says so), the MacBook passes the result to it with `bin/to-macmini.sh --order <message id> '<title>'`, the body on stdin. Where you answer the owner yourself, post the result as a reply to that message, `{{dori}} send discord --to <channel> --text '<result>' --reply <message id> --closes <message id>`; a post that only promises something carries `--reply` and no `--closes`. A public lane's READY reply is marked by the harness itself. An order that needs no result (small talk, a confirmation) is closed with `{{dori}} orders close <id>... --why '<one line>'`. Nothing reads the words of a reply, only these marks.
+
 ## Writing lanes: desk, writing, proofreading desk
 
 A piece of writing (a post, a card set, a script, a legal document) moves the way it does in a newsroom, and a brief for a writing lane hands it over in that order.
