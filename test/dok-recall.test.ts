@@ -150,7 +150,7 @@ test("an ontology alias finds the note written under the other name, and the req
   writeFileSync(note, `${lines.join("\n")}\n`);
   const concepts = [{ type: "상병", name: "T0291", terms: ["다발성골절 및 내부 장기손상"] }];
   const home = mkdtempSync(join(tmpdir(), "dok-onto-home-"));
-  const opts = { root, concepts, limit: 5, maxChars: 5000 };
+  const opts = { root, concepts, limit: 5, maxChars: 5000, allow: ["injury-1110"] as const };
   expect(recallFor(home, "T0291 요양", NONE, { ...opts, concepts: [] }).specs).toEqual([]);
   const got = recallFor(home, "T0291 요양", NONE, opts);
   expect(got.onto).toEqual(["T0291→다발성골절 및 내부 장기손상"]);
