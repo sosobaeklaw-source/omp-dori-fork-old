@@ -64,7 +64,7 @@ const sourceOmpArgv = (argv: readonly string[]): boolean => {
   const entry = argv[timing ? 5 : 3];
   return entry === `${root}src/cli.ts` || entry === `${root}scripts/../src/cli.ts`;
 };
-const ompProcess = (p: ForegroundProcess): boolean =>
+export const ompProcess = (p: ForegroundProcess): boolean =>
   p.name.split("/").at(-1) === "omp" ||
   p.argv.slice(0, 2).some((arg) => /(?:^|\/)omp$|@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/.test(arg)) ||
   sourceOmpArgv(p.argv);

@@ -23,7 +23,9 @@
 #    file is removed before the fetch, so what the pulse judges is a file this fetch brought: one the macmini no longer has is
 #    missing, never an old copy judged against a fresh fetch time. It runs after 7 so it reads the macmini's newest file,
 #    under PULSE_TIMEOUT seconds (default 90), and a failed or hung pulse never stops the copies that follow. launchd's PATH has no
-#    ~/.local/bin, where herdr lives, so it is added here.
+#    ~/.local/bin, where herdr lives, so it is added here. A pulse killed by that limit between creating the lead's workspace and
+#    registering the lead leaves a lead-starting.json mark in the state dir: the pulses of the next 10 minutes wait for it and start
+#    no second lead (src/lead-pulse.ts).
 # 9) MacBook → macmini, into ~/sobaegi-lead/state/macbook/: tools/open_orders.ts of $DORI_REPO (default ~/src/omp-dori), the state
 #    files inbound.log, discord-sent.log, ready-reply.log, to-macmini.log, orders-closed.log, lead-alive.json (the pulse of 8), and
 #    lanes/<file>.json made here from the lane records: the key, the status, lastActivityAt and the order ids the lane marks on

@@ -66,10 +66,9 @@ test("fresh reviewer receives the selected context and drops parent pane and man
   const deps = {
     ...f.deps,
     exec: async (cmd: string, argv: readonly string[]) => {
-      if (cmd === "gh") return f.world.exec(cmd, argv);
-      if (cmd === "git") {
-        asked.push([...argv]);
-        return { code: 0, stdout: "", stderr: "" };
+      if (cmd === "gh") {
+        if (argv[0] === "api") asked.push([...argv]);
+        return f.world.exec(cmd, argv);
       }
       expect(cmd).toBe("env");
       expect(argv.some((part) => part.startsWith("UNRELATED_SECRET="))).toBe(false);
@@ -86,7 +85,7 @@ test("fresh reviewer receives the selected context and drops parent pane and man
   };
   try {
     expect((await review(deps, "fixture/repo#7", "fixture/model")).verdict).toBe("CLEAR");
-    expect(asked).toEqual([["ls-remote", "https://github.com/fixture/repo.git", "refs/pull/7/head"]]);
+    expect(asked).toEqual([["api", "repos/fixture/repo/git/ref/pull/7/head", "--jq", ".object.sha"]]);
     for (const [key, value] of Object.entries(f.expected)) {
       if (key !== "DORI_MANAGED_STARTUP") expect(child!.env[key]).toBe(value);
     }

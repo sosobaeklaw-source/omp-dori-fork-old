@@ -23,17 +23,37 @@ async function gh(d: Deps, argv: readonly string[]): Promise<string> {
   return r.stdout;
 }
 
+/** How long the head lookup may take before the PR view's head is used. */
+export const HEAD_LOOKUP_MS = 20_000;
+
 /**
- * The PR head. Right after a push GitHub's PR view can still name the previous commit, so the head from `git ls-remote` of
- * the base repository's `refs/pull/<n>/head` wins when the two differ (a branch name could also be a fork's, or the base's
- * own); an ls-remote that fails or names no commit leaves the PR view's head.
+ * The PR head. Right after a push GitHub's PR view can still name the previous commit, so the head of the base
+ * repository's `refs/pull/<n>/head`, read through `gh api` (already signed in, never asks at a terminal; a branch name
+ * could also be a fork's or the base's own), wins when the two differ. A lookup that fails, names no commit or takes
+ * longer than `ms` (the process is killed) leaves the PR view's head.
  */
-export async function headSha(d: Deps, pr: PrRef): Promise<string> {
+export async function headSha(d: Deps, pr: PrRef, ms: number = HEAD_LOOKUP_MS): Promise<string> {
   const out = JSON.parse(await gh(d, ["pr", "view", String(pr.number), "--repo", pr.repo, "--json", "headRefOid"]));
   const viewed = String(out.headRefOid);
-  const remote = await d.exec("git", ["ls-remote", `https://github.com/${pr.repo}.git`, `refs/pull/${pr.number}/head`]);
-  const live = remote.code === 0 ? /^([0-9a-f]{40})\s/m.exec(remote.stdout)?.[1] : undefined;
-  return live ?? viewed;
+  let kill: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      kill?.();
+      resolve(undefined);
+    }, ms);
+  });
+  const ask = d
+    .exec("gh", ["api", `repos/${pr.repo}/git/ref/pull/${pr.number}/head`, "--jq", ".object.sha"], {
+      onSpawn: (proc) => {
+        kill = () => proc.kill();
+      },
+    })
+    .catch(() => undefined);
+  const remote = await Promise.race([ask, late]);
+  clearTimeout(timer);
+  const answer = remote?.code === 0 ? remote.stdout.trim() : "";
+  return /^[0-9a-f]{40}$/.test(answer) ? answer : viewed;
 }
 
 /** Runs a fresh, non-interactive reviewer session pinned to the PR head and records its verdict as a receipt. */

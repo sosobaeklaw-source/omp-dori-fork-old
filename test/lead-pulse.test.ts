@@ -1,48 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homeStateDir } from "../src/lane-model.ts";
-import { leadPulse, type Pulse } from "../src/lead-pulse.ts";
-import { href, World } from "./fake.ts";
-
-const T0 = Date.UTC(2026, 10, 17, 12, 0, 0);
-const MACMINI = "/fake/to-macmini.sh";
-const idAt = (minutesAgo: number): string => String(BigInt(T0 - minutesAgo * 60_000 - 1420070400000) << 22n);
-
-function setup(opts: { lead?: boolean } = {}) {
-  const w = new World();
-  w.clock = T0;
-  w.addPane("w1:p1", "idle");
-  const failCreate = { left: 0 };
-  const down = { on: false };
-  const inner = w.exec;
-  w.exec = async (cmd, argv, o) => {
-    if (down.on && cmd === "herdr") throw new Error("spawn herdr ENOENT");
-    if (failCreate.left > 0 && cmd === "herdr" && argv[0] === "workspace" && argv[1] === "create") {
-      failCreate.left--;
-      w.calls.push({ cmd, argv });
-      return { code: 1, stdout: "", stderr: "herdr server is down" };
-    }
-    return inner(cmd, argv, o);
-  };
-  const d = w.deps();
-  if (opts.lead !== false) d.store.setRole("lead", href("w1:p1"));
-  const state = homeStateDir(d.store.root);
-  mkdirSync(state, { recursive: true });
-  const env = { DORI_TO_MACMINI: MACMINI };
-  const pulse = () => leadPulse(d, env);
-  const file = () => JSON.parse(readFileSync(join(state, "lead-alive.json"), "utf8")) as Pulse;
-  const log = () => readFileSync(join(state, "lead-pulse.log"), "utf8");
-  const creates = () => w.calls.filter((c) => c.cmd === "herdr" && c.argv[0] === "workspace" && c.argv[1] === "create");
-  const toMacmini = () => w.calls.filter((c) => c.cmd === MACMINI);
-  const order = (minutesAgo: number, body = "일") =>
-    writeFileSync(
-      join(state, "inbound.log"),
-      `INBOUND discord 1 ${idAt(minutesAgo)} from=owner ref=- ${JSON.stringify(body)}\n`,
-      { flag: "a" },
-    );
-  return { w, d, state, failCreate, down, pulse, file, log, creates, toMacmini, order };
-}
+import { leadPulse } from "../src/lead-pulse.ts";
+import { idAt, MACMINI, setup, T0 } from "./lead-pulse-setup.ts";
 
 describe("lead pulse", () => {
   test("a lead whose pane is there is alive: the file counts the open orders and starts nothing", async () => {
@@ -84,6 +44,7 @@ describe("lead pulse", () => {
     expect(command).not.toContain("재해경위서");
     expect(command).not.toContain("\n");
     expect(s.w.calls.filter((c) => c.cmd !== "herdr")).toEqual([]);
+    s.w.panes.get("w1:p2")!.status = "idle";
     await s.pulse();
     expect(s.creates()).toHaveLength(1);
     expect(s.file().alive).toBe(true);

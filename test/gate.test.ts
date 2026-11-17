@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { mergeGate, review } from "../src/gate.ts";
+import { HEAD_LOOKUP_MS, headSha, mergeGate, review } from "../src/gate.ts";
 import type { World } from "./fake.ts";
 import { setup } from "./harness-setup.ts";
 
@@ -46,34 +46,31 @@ describe("review + merge gate", () => {
     expect(w.usage.filter((e) => e.name === "dori.review_completed")).toHaveLength(2);
   });
 
-  test("the receipt keeps the whole summary, and a PR view behind the pushed head follows refs/pull/<n>/head, never a branch name", async () => {
+  test("the receipt keeps the whole summary, and a PR view behind the pushed head follows refs/pull/<n>/head through gh api, never a branch name or git", async () => {
     const { w, d } = setup();
     const pushed = "b".repeat(40);
-    const decoy = "c".repeat(40);
-    w.gh = (argv) =>
-      argv[1] === "view"
-        ? { code: 0, stdout: JSON.stringify({ headRefOid: head, headRefName: "main" }) }
-        : { code: 1, stdout: "" };
-    const long = `${"x".repeat(5000)}\nVERDICT: CLEAR`;
-    w.reviewer = (argv) => {
-      if (argv[0] !== "ls-remote") return { code: 0, stdout: long };
-      const ref = argv.at(-1);
-      if (ref === "refs/pull/10/head") return { code: 0, stdout: `${pushed}\trefs/pull/10/head\n` };
-      return { code: 0, stdout: `${decoy}\t${ref}\n` };
+    w.gh = (argv) => {
+      if (argv[1] === "view") return { code: 0, stdout: JSON.stringify({ headRefOid: head, headRefName: "main" }) };
+      if (argv[0] === "api")
+        return { code: 0, stdout: `${argv[1] === "repos/o/r/git/ref/pull/10/head" ? pushed : "c".repeat(40)}\n` };
+      return { code: 1, stdout: "" };
     };
+    const long = `${"x".repeat(5000)}\nVERDICT: CLEAR`;
+    w.reviewer = () => ({ code: 0, stdout: long });
     expect(await review(d, "o/r#10")).toEqual({ verdict: "CLEAR", sha: pushed });
     expect(d.store.receipt("o/r#10", head)).toBeUndefined();
     expect(d.store.receipt("o/r#10", pushed)!.summary).toBe(long);
     expect(readdirSync(join(d.store.root, "receipts")).filter((n) => n.endsWith(".full.txt"))).toEqual([]);
-    const asked = w.calls.filter((c) => c.argv[0] === "ls-remote").map((c) => c.argv);
-    expect(asked).toEqual([["ls-remote", "https://github.com/o/r.git", "refs/pull/10/head"]]);
+    const asked = w.calls.filter((c) => c.cmd === "gh" && c.argv[0] === "api").map((c) => c.argv);
+    expect(asked).toEqual([["api", "repos/o/r/git/ref/pull/10/head", "--jq", ".object.sha"]]);
+    expect(w.calls.some((c) => c.cmd === "git")).toBe(false);
   });
 
   test("a summary over 64 KB keeps its tail and the verdict in the receipt, says so, and the whole output sits beside it", async () => {
     const { w, d } = setup();
     gh(w, []);
     const huge = `HEAD-MARK\n${"y".repeat(70_000)}\nVERDICT: BLOCK`;
-    w.reviewer = (argv) => (argv[0] === "ls-remote" ? { code: 1, stdout: "" } : { code: 0, stdout: huge });
+    w.reviewer = () => ({ code: 0, stdout: huge });
     expect(await review(d, "o/r#12")).toEqual({ verdict: "BLOCK", sha: head });
     const summary = d.store.receipt("o/r#12", head)!.summary;
     const whole = join(d.store.root, "receipts", `o__r_12@${head}.full.txt`);
@@ -87,12 +84,41 @@ describe("review + merge gate", () => {
     expect(statSync(whole).mode & 0o777).toBe(0o600);
   });
 
-  test("an ls-remote that fails leaves the PR view's head", async () => {
+  test("a head lookup that fails or names no commit leaves the PR view's head", async () => {
+    for (const [n, answer] of [
+      [11, { code: 1, stdout: "" }],
+      [14, { code: 0, stdout: "not a sha\n" }],
+      [15, { code: 0, stdout: `${"b".repeat(40)}\nextra\n` }],
+    ] as const) {
+      const { w, d } = setup();
+      w.gh = (argv) =>
+        argv[1] === "view"
+          ? { code: 0, stdout: JSON.stringify({ headRefOid: head }) }
+          : argv[0] === "api"
+            ? answer
+            : { code: 1, stdout: "" };
+      w.reviewer = () => ({ code: 0, stdout: "VERDICT: CLEAR" });
+      expect(await review(d, `o/r#${n}`)).toEqual({ verdict: "CLEAR", sha: head });
+    }
+  });
+
+  test("a head lookup that never answers is killed after the time given and leaves the PR view's head", async () => {
     const { w, d } = setup();
     gh(w, []);
-    w.reviewer = (argv) =>
-      argv[0] === "ls-remote" ? { code: 128, stdout: "" } : { code: 0, stdout: "VERDICT: CLEAR" };
-    expect(await review(d, "o/r#11")).toEqual({ verdict: "CLEAR", sha: head });
+    let killed = 0;
+    const hung = {
+      ...d,
+      exec: async (cmd: string, argv: readonly string[], o?: Parameters<typeof d.exec>[2]) => {
+        if (cmd !== "gh" || argv[0] !== "api") return d.exec(cmd, argv, o);
+        o?.onSpawn?.({ kill: () => killed++ });
+        return new Promise<never>(() => {});
+      },
+    };
+    const started = Date.now();
+    expect(await headSha(hung, { repo: "o/r", number: 13, id: "o/r#13" }, 50)).toBe(head);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(killed).toBe(1);
+    expect(HEAD_LOOKUP_MS).toBe(20_000);
   });
 
   test("exit 0 without a VERDICT line: bounded stdout tail kept privately, no receipt", async () => {

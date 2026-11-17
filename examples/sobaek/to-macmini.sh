@@ -9,7 +9,7 @@
 set -euo pipefail
 order=-
 if [ "${1:-}" = "--order" ]; then
-  [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || { echo "--order must be a positive decimal Discord ID" >&2; exit 64; }
+  [[ "${2:-}" =~ ^[1-9][0-9]{15,21}$ ]] || { echo "--order must be a Discord message id (16 to 22 digits)" >&2; exit 64; }
   order="$2"; shift 2
 fi
 TS=$(date +%Y%m%d-%H%M%S); T="$1"; BODY="$(cat 2>/dev/null || true)"

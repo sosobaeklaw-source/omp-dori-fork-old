@@ -24,9 +24,12 @@ export function renderPrompt(d: Deps, name: string): string {
 const agent = (d: Deps, name: string): string =>
   `${agentCommand(d, "dori")} --append-system-prompt ${shq(renderPrompt(d, name))}`;
 
+/** The command line that starts the lead; `first` is its first message, given on the command line as a lane's kickoff is. */
+export const leadCommand = (d: Deps, first?: string): string =>
+  `${agent(d, "lead.md")}${first === undefined ? "" : ` ${shq(first)}`}`;
+
 /**
  * Opens the lead as a new workspace's root pane and registers it: `dori up` and the lead pulse start it the same way.
- * `first` is the lead's first message, given on the command line as a lane's kickoff is.
  */
 export async function openLead(d: Deps, cwd: string, first?: string): Promise<SessionRef> {
   // herdr ignores the group of a workspace-root session and reports the new workspace as the lead ref's group.
@@ -40,7 +43,7 @@ export async function openLead(d: Deps, cwd: string, first?: string): Promise<Se
       env: harnessLaunchEnv(d),
       group: groupId(d.store.root),
     },
-    `${agent(d, "lead.md")}${first === undefined ? "" : ` ${shq(first)}`}`,
+    leadCommand(d, first),
   );
   d.store.setRole("lead", lead);
   return lead;

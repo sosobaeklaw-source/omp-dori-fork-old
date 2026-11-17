@@ -66,6 +66,11 @@ test("a reply that went up is a success even when the lead cannot be told, and a
   const log = () => readFileSync(join(home, "state", "ready-reply.log"), "utf8");
   expect(log()).toContain(`REPLIED k1 ${OWNER_MSG} 42`);
   expect(log()).not.toContain("FAIL");
+  const sentLines = readFileSync(join(home, "state", "discord-sent.log"), "utf8")
+    .trim()
+    .split("\n");
+  expect(sentLines).toHaveLength(1);
+  expect(sentLines[0]).toBe(`42\tk1\tall\treply=${OWNER_MSG}\tcloses=${OWNER_MSG}`);
   expect(run().exitCode).toBe(0);
   expect(readFileSync(join(dir, "posts"), "utf8")).toBe("x\n");
   expect(log()).toContain(`SKIP k1: already replied to ${OWNER_MSG}`);
