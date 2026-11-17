@@ -80,7 +80,7 @@ try {
   } else if (cmd === "send") {
     const out = need(one(a, "out"), "--out");
     const runner = one(a, "runner") ?? join(homedir(), "sanjai-agent", "scripts", "gemini_web_runner.mjs");
-    const { code, seat } = await sendOnSeat(
+    const { code, seat, answered } = await sendOnSeat(
       {
         root: home,
         pid: process.pid,
@@ -113,7 +113,9 @@ try {
         timeout: Number(one(a, "timeout") ?? 1800),
       },
     );
-    console.log(`SENT_ON ${seat.account} ${seat.expect} exit=${code}`);
+    // answered= is the label the screen showed after the answer; mismatch=true means it was not the requested one.
+    const said = answered ? ` answered=${answered.label} mismatch=${answered.mismatch}` : "";
+    console.log(`SENT_ON ${seat.account} ${seat.expect} exit=${code}${said}`);
     process.exit(code);
   } else throw new Refusal(USAGE);
 } catch (e) {
