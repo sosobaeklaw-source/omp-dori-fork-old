@@ -62,7 +62,13 @@ const close: Command = async ({ key, opt, lane, deps }) => {
     rule === undefined ? undefined : { rule, evidence: opt("evidence") ?? target.done },
   );
   for (const line of r.lines) console.log(line);
-  process.exit(r.closed ? 0 : 2);
+  process.exit(r.closed ? 0 : r.lines.at(-1)?.startsWith("LANE_CHANGED") ? 3 : 2);
+};
+
+/** Prints a done-flow result; `LANE_CHANGED` (another writer moved the lane on, nothing recorded) exits 3. */
+const recorded = (line: string): void => {
+  console.log(line);
+  if (line.startsWith("LANE_CHANGED")) process.exit(3);
 };
 
 const pauseOrResume: Command = async ({ command, key, opt, lane, deps }) => {
@@ -80,12 +86,12 @@ export const laneCommands: Readonly<Record<string, Command>> = {
   launch,
   adopt,
   "claim-done": async ({ key, need, lane, deps }) => {
-    console.log(await claimDone(deps, await lane(key), need("evidence")));
+    recorded(await claimDone(deps, await lane(key), need("evidence")));
   },
   "object-done": async ({ key, values, lane, deps }) => {
     const reasons = (values["reason"] as string[] | undefined)?.map((r) => r.trim()).filter(Boolean) ?? [];
     if (!reasons.length) die("--reason is required");
-    console.log(await objectDone(deps, await lane(key ?? die("object-done needs a lane key")), reasons));
+    recorded(await objectDone(deps, await lane(key ?? die("object-done needs a lane key")), reasons));
   },
   close,
   pause: pauseOrResume,

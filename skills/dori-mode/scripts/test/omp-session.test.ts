@@ -212,3 +212,28 @@ test("sync reads legacy registry records without mutation and persists trusted e
     sessionVia: "extension",
   });
 });
+
+test("sync --write records the session on the lane as stored now, keeping a claim written during its process read", async () => {
+  const { deps } = setup();
+  const lane = {
+    key: "omp-lane",
+    title: "omp",
+    thread: "none",
+    pane: P1.id,
+    brief: "/b.md",
+    done: "closed acme/app#1",
+  };
+  await deps.registry.write({ ...lane, openedAt: new Date(T0).toISOString() });
+  const at = new Date(T0).toISOString();
+  let pending = true;
+  const run: typeof deps.run = async (argv, opts) => {
+    if (pending && argv[0] === "ps" && argv[1] === "-A") {
+      pending = false;
+      const current = await deps.registry.read(lane.key);
+      if (current) await deps.registry.write({ ...current, status: "done-claimed", claim: { at, evidence: "done" } });
+    }
+    return deps.run(argv, opts);
+  };
+  await syncRegistry({ ...deps, run }, true);
+  expect(await deps.registry.read(lane.key)).toMatchObject({ status: "done-claimed", sessionVia: "extension" });
+});

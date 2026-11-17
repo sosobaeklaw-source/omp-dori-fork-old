@@ -8,8 +8,6 @@ import { recoverInstalled, releasePath } from "../src/release/state.ts";
 import { processIdentity } from "../src/update/deployment-process.ts";
 import { fixture } from "./release-consumer-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
-
 test("local release installation preserves config/auth/work and updates every stable reference through one source pointer", async () => {
   const f = fixture();
   const config = '{"stateDir":"~/.dori/state","ompUlwPath":"/owner/custom.ts","defaultModel":"owner/model"}\n';
@@ -49,7 +47,7 @@ test("rollback verifies and restores the exact previous release while retaining 
   expect(existsSync(releasePath(f.paths, two.current))).toBe(true);
 });
 
-linux("a live identity-bound Dori receipt holds both install and rollback without signalling the process", async () => {
+test("a live identity-bound Dori receipt holds both install and rollback without signalling the process", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
   const two = await installBundle(f.paths, f.release("second\n").bundle, one);

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { herdrDeploymentCli } from "../src/update/deployment-cli.ts";
@@ -9,6 +9,9 @@ import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
+// Each case starts real shells, OMP fixtures and herdr probes and waits on their real exits and signals, never on a
+// clock; under a loaded macOS runner that exceeds bun's 5s default, so the budget only bounds a genuine hang.
+setDefaultTimeout(60_000);
 
 posix.each([2, 3])("startup stop recaptures after a real foreground child exits during probe %s", async (cut) => {
   const f = await managedBashFixture({ transient: true });
@@ -28,10 +31,8 @@ posix.each([2, 3])("startup stop recaptures after a real foreground child exits 
       if (observations === cut) {
         expect(sameProcess(pulse)).toBe(true);
         process.kill(pulse.pid, "SIGTERM");
-        // Real kernel reaping cannot be advanced with a fake JS clock.
-        const until = Date.now() + 1_000;
-        while (processIdentity(pulse.pid) && Date.now() < until)
-          await f.cli.exec("ps", ["-o", "stat=", "-p", String(pulse.pid)]);
+        // Real kernel reaping cannot be advanced with a fake JS clock: probe until the kernel has reaped it.
+        while (processIdentity(pulse.pid)) await f.cli.exec("ps", ["-o", "stat=", "-p", String(pulse.pid)]);
         expect(processIdentity(pulse.pid)).toBeUndefined();
         f.front.foreground_processes = f.front.foreground_processes.filter(({ pid }) => pid !== pulse.pid);
         expired = true;
@@ -89,8 +90,7 @@ if (operation === "process-info") {
     const pulse = ${JSON.stringify(pulse)};
     if (!sameProcess(owner) || !sameProcess(pulse) || !underProcess(pulse.pid, owner.pid)) throw new Error("fixture owner changed");
     process.kill(pulse.pid, "SIGTERM");
-    const until = Date.now() + 1_000;
-    while (processIdentity(pulse.pid) && Date.now() < until) {
+    while (processIdentity(pulse.pid)) {
       const ps = Bun.spawn(["ps", "-o", "stat=", "-p", String(pulse.pid)], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
       await ps.exited;
     }

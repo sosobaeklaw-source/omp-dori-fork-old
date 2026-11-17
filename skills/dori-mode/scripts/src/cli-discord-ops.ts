@@ -60,11 +60,12 @@ const tagIds = (forum: DcChannel, names: readonly string[]): string[] =>
     );
   });
 
-export const sendDiscord: Command = async ({ need, opt, config }) => {
+export const sendDiscord: Command = async ({ need, opt, values, config }) => {
   const thread = opt("thread");
   const to = thread === undefined ? need("to") : undefined;
   const text = need("text");
-  const edit = opt("edit");
+  // An --edit given empty ("$UNSET") or not a message id is refused before any request: it must never post anew.
+  const edit = values["edit"] === undefined ? undefined : discordInboundEnv("--edit", opt("edit"));
   const kind = postKind(opt("kind"));
   const rawReply = opt("reply");
   const rawCloses = opt("closes");
@@ -79,7 +80,7 @@ export const sendDiscord: Command = async ({ need, opt, config }) => {
       die(`${channel.id} is a forum: post with dori thread discord create, or pass --thread`);
     target = channel.id;
   }
-  if (edit) return await dc.edit(target, edit, text);
+  if (edit !== undefined) return await dc.edit(target, edit, text);
   const id = await dc.send(target, text, reply);
   // The post is out: print its id before the log line so a log fault never hides it and invites a duplicate send.
   console.log(`SENT ${id}`);

@@ -88,6 +88,20 @@ function darwin(): Darwin {
 const gone = (pid: number, what: string): Error =>
   Object.assign(new Error(`process ${pid} ${what} is unavailable`), { code: "ENOENT" });
 
+/** Query process existence without sending a signal; permission denial still proves a process exists. */
+export function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error) {
+      if (error.code === "ESRCH") return false;
+      if (error.code === "EPERM") return true;
+    }
+    throw error;
+  }
+}
+
 function linuxStatFields(pid: number): string[] {
   const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
   return stat.slice(stat.lastIndexOf(")") + 2).split(" ");

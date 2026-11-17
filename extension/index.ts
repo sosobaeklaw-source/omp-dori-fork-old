@@ -13,6 +13,7 @@
  * - The Dori session gets the `monitor` tool (monitor.ts).
  * - A lane's main agent on GPT-6.1 Sol is told to carry lane bookkeeping along with real work (lane-bookkeeping.ts).
  */
+import { spawnSync } from "node:child_process";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../skills/dori-mode/scripts/src/config";
@@ -213,6 +214,8 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let requiredLoadError: SourceBundleError | undefined;
   let warned = false;
   let lifecycleRegistered = false;
+  /** The session whose monitor bootstrap was rejected: it stays role-less until a session_start bootstraps it again. */
+  let rejectedBootstrap: string | undefined;
   let session: { id: string; startedAt: string } | undefined;
   let goal: PaneState["goal"] = { status: "none" };
   let agentStatus: "idle" | "working" = "idle";
@@ -245,7 +248,8 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
    * Only the process that owns the pane reports it. `HERDR_PANE_ID` and `HC_TERMINAL_ID` are inherited by every
    * child, so a nested `omp` run (a `-p` check, a subagent's own session) would otherwise take the pane record of
    * the live session above it and delete that record on its own shutdown — which reads to the watchdog as a dead
-   * lead, so it restarts the lead every tick. An incumbent that is still alive keeps its record.
+   * lead, so it restarts the lead every tick. An incumbent that is still alive, and not a newer process reusing its
+   * pid, keeps its record.
    */
   const paneHeldByAnother = (paneId: string): boolean => {
     if (stateDir === undefined) return false;
@@ -254,11 +258,20 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       return false;
     try {
       process.kill(existing.pid, 0);
-      return true;
     } catch (error) {
       // EPERM still identifies a live owner. Dead processes and invalid pid arguments do not own this pane.
-      return (error as NodeJS.ErrnoException).code === "EPERM";
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
     }
+    // A start observed later than the session cannot own it. lstart resolves seconds, not same-second PID reuse.
+    // An unreadable start time keeps the incumbent's protection.
+    const ps = spawnSync("ps", ["-o", "lstart=", "-p", String(existing.pid)], {
+      encoding: "utf8",
+      // lstart has no offset; its ps producer and Date.parse observer must use the same zone.
+      env: { ...process.env, LC_ALL: "C", TZ: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      timeout: 1_000,
+    });
+    const started = Date.parse(ps.stdout?.trim() ?? "");
+    return !(ps.status === 0 && Number.isFinite(started) && started > Date.parse(existing.startedAt));
   };
 
   const savePane = (ctx: DoriContext): void => {
@@ -373,10 +386,23 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       approvals.clear();
       agentStatus = "idle";
     }
-    if (bootstrap && role === "dori" && bootstrapMonitors(pi, branch, sessionId, recordedMonitors(branch)))
-      branch = ctx.sessionManager.getBranch();
-    goal = recordedGoal(branch);
     if (role && !lifecycleRegistered) registerLifecycle();
+    if (bootstrap && role === "dori") {
+      try {
+        if (bootstrapMonitors(pi, branch, sessionId, recordedMonitors(branch))) branch = ctx.sessionManager.getBranch();
+        rejectedBootstrap = undefined;
+      } catch (error) {
+        // A rejected bootstrap leaves no role session behind: no handler may publish ready or approval-free state, and
+        // a later branch or tree move in this session does not restore the role from its record.
+        rejectedBootstrap = sessionId;
+        role = undefined;
+        agentRoles.delete(ctx.agent.id);
+        monitors.stopAll();
+        removePane();
+        throw error;
+      }
+    }
+    goal = recordedGoal(branch);
     if (role && loadError && !warned) {
       warned = true;
       ctx.ui.notify(
@@ -437,6 +463,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   for (const eventName of ["session_start", "session_switch", "session_branch", "session_tree"] as const) {
     pi.on(eventName, async (_event, ctx) => {
       const branch = ctx.sessionManager.getBranch();
+      let flaggedRole = false;
       if (ctx.agent.kind === "sub") {
         role = ctx.agent.parentId === undefined ? undefined : agentRoles.get(ctx.agent.parentId);
       } else {
@@ -444,13 +471,20 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
         const flagged = pi.getFlag(ROLE_FLAG);
         if (eventName === "session_start" && role === undefined && flagged !== undefined) {
           role = parseRole(flagged);
-          if (role) pi.appendEntry(ROLE_ENTRY, role);
+          if (role) flaggedRole = true;
           else ctx.ui.notify(`omp-dori: --${ROLE_FLAG} must be "dori" or "lane", got "${String(flagged)}"`, "error");
         }
+        if (eventName !== "session_start" && rejectedBootstrap === ctx.sessionManager.getSessionId()) role = undefined;
       }
       if (role) agentRoles.set(ctx.agent.id, role);
       else agentRoles.delete(ctx.agent.id);
-      if (ctx.agent.kind === "main") await syncMain(ctx, branch, eventName === "session_start");
+      try {
+        if (ctx.agent.kind === "main") await syncMain(ctx, branch, eventName === "session_start");
+      } finally {
+        // A rejected bootstrap has cleared the role, so it is not recorded; any other failure keeps the role this
+        // process runs with, and its record, as a later resume without the flag must restore it.
+        if (flaggedRole && role) pi.appendEntry(ROLE_ENTRY, role);
+      }
     });
   }
 

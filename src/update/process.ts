@@ -7,7 +7,7 @@ import { fill } from "../../skills/dori-mode/scripts/src/config.ts";
 import { recordCommandOutput } from "./command-output.ts";
 import { canonical, contains, UpdateError, UpdateInterrupted } from "./config.ts";
 import { type Capability, isolatedEnv } from "./environment.ts";
-import { nativeAgent } from "./load.ts";
+import { nativeAgent, ompPart } from "./load.ts";
 import { nativePromptOptions } from "./native-prompts.ts";
 import { readAgentResponse } from "./response.ts";
 import { REVIEW_TOOLS, readReviewScope } from "./reviewer-guard.ts";
@@ -49,7 +49,7 @@ function nativeLaunch(
   const guard: Guard = { kind, path: join(directory, `${kind}-scope.json`), nonce: randomUUID() };
   const runtime = dirname(env["DORI_CONFIG"]!);
   const options = [
-    ...nativePromptOptions(directory, job.candidate, kind, argv),
+    ...nativePromptOptions(directory, job.candidate, kind, ompPart(argv)),
     "--no-session",
     "--no-title",
     "--no-extensions",

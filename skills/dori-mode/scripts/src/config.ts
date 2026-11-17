@@ -180,7 +180,13 @@ const checkSupervision = (value: unknown): void => {
 };
 
 export const loadConfig = async (path = configPath(), home = homedir()): Promise<DoriConfig> => {
-  const base = defaultConfig(home);
+  const selectedHome = process.env["DORI_HOME"];
+  const base = {
+    ...defaultConfig(home),
+    ...(selectedHome && path === join(selectedHome, "config.json")
+      ? { stateDir: join(selectedHome, "state"), ompUlwPath: join(selectedHome, "omp-ulw/index.ts") }
+      : {}),
+  };
   const file = Bun.file(path);
   const raw = (await file.exists()) ? ((await file.json()) as Partial<DoriConfig>) : {};
   checkRuntime(raw.runtime);
@@ -223,7 +229,10 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
   const command = resolveProcessOmpCommand(merged.agentCommand, path);
   return {
     ...merged,
-    agentCommand: command === merged.agentCommand ? resolveConsumerOmpCommand(command, { home }) : command,
+    agentCommand:
+      command === merged.agentCommand || process.env["DORI_AGENT_ARGV"] === undefined
+        ? resolveConsumerOmpCommand(command, { home })
+        : command,
     stateDir: outsideRealHomeUnderTest(expandHome(process.env["DORI_STATE_DIR"] ?? merged.stateDir, home)),
     defaultCwd: expandHome(merged.defaultCwd, home),
     sessionsDir: expandHome(merged.sessionsDir, home),
@@ -237,7 +246,3 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
 
 export const fill = (template: ArgvTemplate, values: Readonly<Record<string, string>>): string[] =>
   template.map((part) => part.replace(/\{(\w+)\}/g, (whole, name: string) => values[name] ?? whole));
-
-/** Whether the configured argv starts OMP, including its installed package entry point. */
-export const isOmpCommand = (argv: ArgvTemplate): boolean =>
-  argv.some((part) => /(?:^|[/\\])omp(?:\s|$)|pi-coding-agent[/\\]dist[/\\]cli\.js/.test(part));

@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { expandHome, isOmpCommand } from "../../skills/dori-mode/scripts/src/config.ts";
+import { expandHome } from "../../skills/dori-mode/scripts/src/config.ts";
+import { classifyOmpArgv, isOmpArgv } from "../runtime/omp.ts";
 import { canonical, contains, object, UpdateError } from "./config.ts";
 import { checkNativeArgv } from "./native-argv.ts";
 import { parsePromotionConfig } from "./publish-config.ts";
@@ -58,7 +59,13 @@ const allow = (raw: Record<string, unknown>, names: readonly string[], label: st
 
 /** Direct OMP invocations get the native final-message parser, isolation flags and capability guards. */
 export const nativeAgent = (command: UpdateCommand): boolean =>
-  command.engine === "omp" || (command.engine === undefined && isOmpCommand(command.argv));
+  command.engine === "omp" || (command.engine === undefined && isOmpArgv(command.argv));
+
+/** The part of a native agent's argv that its CLI parses: after any assignments and readable `env` prefix. */
+export const ompPart = (argv: readonly string[]): readonly string[] => {
+  const classified = classifyOmpArgv(argv);
+  return classified.kind === "unparsed" ? argv : classified.command;
+};
 
 const command = (value: unknown, label: string, agent = false): UpdateCommand => {
   if (!object(value)) throw new UpdateError(`${label} must configure a real argv command`);
@@ -104,8 +111,15 @@ const checkAgent = (agent: UpdateCommand, label: string): void => {
     throw new UpdateError(`${label}.argv must consume {prompt} or {brief}`);
   }
   if (agent.cwd !== undefined) throw new UpdateError(`${label}.cwd is fixed to the candidate`);
+  // An unreadable command prefix hides which arguments OMP gets, so native checks cannot cover it:
+  // only an explicitly external wrapper, which owns its own contract, may use one.
+  if (agent.engine !== "external" && classifyOmpArgv(agent.argv).kind === "unparsed") {
+    throw new UpdateError(
+      `${label}.argv has a command prefix Dori cannot read; attach bun/node option values with = (such as --preload=FILE), drop -S and unknown env options, or set ${label}.engine to "external"`,
+    );
+  }
   if (!nativeAgent(agent)) return; // an explicit external wrapper owns its own fresh-context and capability contract
-  checkNativeArgv(agent.argv, label);
+  checkNativeArgv(ompPart(agent.argv), label);
 };
 
 const remoteOf = (value: unknown, base: string): string => {

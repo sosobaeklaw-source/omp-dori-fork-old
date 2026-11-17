@@ -15,7 +15,7 @@ export async function sendToShell(d: Deps, target: string, text: string, from: s
   const rt = d.runtimes.for(ref);
   if ((await rt.probe(ref)).status !== "shell") return send(d, target, text, from);
   if (await rt.typeIntoShell(ref, text)) return "DELIVERED";
-  await d.store.enqueue(ref, { at: d.now(), from, text }, resolveAgain(d, target, ref));
+  await d.store.enqueue(ref, { at: d.now(), from, text }, target === "lead", resolveAgain(d, target, ref));
   return "QUEUED";
 }
 
