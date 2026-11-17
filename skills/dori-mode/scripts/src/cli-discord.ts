@@ -127,7 +127,7 @@ export const discordInboundCommand = async (
   const heardBy = transcribeOn === "1" ? voiceText : undefined;
   // An empty marker would make a machine transcript read as the owner's own typed words.
   const prefix = env["DORI_DISCORD_VOICE_PREFIX"] ?? DEFAULT_VOICE_PREFIX;
-  if (prefix.trim() === "") die("DORI_DISCORD_VOICE_PREFIX must not be empty");
+  if (heardBy && prefix.trim() === "") die("DORI_DISCORD_VOICE_PREFIX must not be empty");
   const intake = await discordInbound(
     new Discord(fetchHttp, realClock, token),
     (channelId) => fileDiscordInboundStore(stateDir, channelId),

@@ -201,7 +201,7 @@ test("transcription is opt-in, needs a hook and a non-empty marker, and announce
   };
   const on = await inboundCli(["--loop", "0"], { DORI_DISCORD_TRANSCRIBE: "1" }, withHook);
   expect(on.out.split("\n")[0]).toBe("INBOUND_READY discord owner=10 channel=20 bot=99 transcribe=on");
-  const off = await inboundCli(["--loop", "0"], {}, withHook);
+  const off = await inboundCli(["--loop", "0"], { DORI_DISCORD_VOICE_PREFIX: " " }, withHook); // Unused while off.
   expect(off.out.split("\n")[0]).toBe("INBOUND_READY discord owner=10 channel=20 bot=99");
   for (const [environment, around, said] of [
     [{ DORI_DISCORD_TRANSCRIBE: "yes" }, withHook, "DORI_DISCORD_TRANSCRIBE must be 1, 0 or unset"],
