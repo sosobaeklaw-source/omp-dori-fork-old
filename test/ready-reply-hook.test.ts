@@ -91,3 +91,26 @@ test("without the salt file at its default place no lane is answered (fail close
   expect(Bun.spawnSync(["bun", tool, "k1"], { env: noSaltEnv }).stdout.toString()).toContain("SKIP k1:");
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).not.toContain("REPLIED");
 });
+
+test("a picture goes up through the explicit unreviewed path with the text beside it; without a picture the sender gets the text alone", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-picture-"));
+  const sender = join(dir, "send.sh");
+  writeFileSync(sender, `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/argv"\necho "SENT 9"\n`, { mode: 0o755 });
+  const tesseract = join(dir, "tesseract.sh");
+  writeFileSync(tesseract, "#!/bin/sh\necho 자막 전후 비교\n", { mode: 0o755 });
+  const { home, env, tool } = hookHome(sender);
+  const picture = join(home, "results", "k1", "비교.png");
+  writeFileSync(picture, "png");
+  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TESSERACT: tesseract } });
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual([
+    "--send-without-desk-review",
+    "바뀐 것.",
+    picture,
+    "",
+  ]);
+  rmSync(picture);
+  rmSync(join(home, "state", "ready-reply.log"));
+  expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
+  expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
+});
