@@ -102,9 +102,17 @@ jobs:
           env -i HOME="$runtime/home" PATH="$runtime/home/.local/bin:/usr/bin:/bin" \
             XDG_STATE_HOME="$runtime/s" XDG_RUNTIME_DIR="$runtime/r" XDG_CONFIG_HOME="$runtime/c" \
             HC_SESSION=consumer-installer hc update --version 0.1.20
+          # This fork brings upstream in by squash merge (PR #46), so the pinned
+          # upstream baseline commit is never an ancestor of HEAD here. Fetch the
+          # pinned commit itself from origin (reachable from merge/upstream-9341b77)
+          # and fail with a message when the object is missing instead of dying
+          # silently under set -e.
           baseline=74870017f361dad437ba5e4dd97c90698823a1f3
-          git merge-base --is-ancestor "$baseline" HEAD
+          echo "fetching consumer baseline $baseline from origin"
+          git fetch --no-tags origin "$baseline" || { echo "git fetch origin $baseline failed"; exit 1; }
+          git cat-file -e "$baseline^{commit}" || { echo "baseline commit $baseline is not in this clone"; exit 1; }
           git worktree add --detach "$RUNNER_TEMP/consumer-baseline" "$baseline"
+          test "$(git -C "$RUNNER_TEMP/consumer-baseline" rev-parse HEAD)" = "$baseline" || { echo "consumer-baseline worktree HEAD is not the pinned baseline $baseline"; exit 1; }
           git worktree add --detach "$RUNNER_TEMP/consumer-candidate" HEAD
           bun "$RUNNER_TEMP/consumer-candidate/scripts/verify-consumer-release.ts" \
             --source-a "$RUNNER_TEMP/consumer-baseline" --source-b "$RUNNER_TEMP/consumer-candidate" \
