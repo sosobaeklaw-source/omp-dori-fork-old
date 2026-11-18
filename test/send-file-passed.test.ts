@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-file.sh");
 const sha = (body: string) => createHash("sha256").update(body).digest("hex");
+/** What the script's `printf %q` leaves in the log for a path: asked of the same bash the script runs under. */
+const bashq = (path: string) => Bun.spawnSync(["bash", "-c", 'printf %q "$0"', path]).stdout.toString();
 
 /**
  * A DORI_HOME with a token and a fake curl that never reaches Discord: it counts the posts in `<dir>/posts`, keeps the
@@ -141,7 +143,66 @@ test("the explicit unreviewed path sends the file, says so in the posted text an
   });
   expect([r.code, r.out.trim(), r.upload(0)]).toEqual([0, "SENT 777", "화면"]);
   expect(r.payload.content).toBe("달라고 하신 화면입니다\n\n(첨부한 파일은 교열 데스크를 거치지 않았습니다)");
-  expect(r.log).toMatch(new RegExp(`^\\S+Z 777 channel=1571013138764140544 reply=1572100000000000002 ${shot}\\n$`));
+  expect(r.log?.endsWith(` channel=1571013138764140544 reply=1572100000000000002 ${bashq(shot)}\n`)).toBe(true);
+  expect(r.log?.split("\n")).toHaveLength(2);
+});
+
+test("a later round that blocked the same bytes refuses the earlier pass; the newest passing round still goes", () => {
+  const dir = rig();
+  const card = piece(dir, "01.png", "그림");
+  const r1 = round(dir, "r1", "나가도 됩니다", { [card]: "그림" });
+  const r2 = round(dir, "r2", "아직 안 됩니다: 6장 표가 겹칩니다", { [card]: "그림" });
+  const stale = run(dir, ["--passed", r1, "결과입니다", card]);
+  expect(stale.code).toBe(65);
+  expect(stale.err.trim().split("\n")).toEqual([
+    `REFUSED ${card} is not the passed copy: 더 최신 교열 라운드 r2 가 이 판을 나가지 못하게 했습니다(${r2}/verdict.txt)`,
+  ]);
+  expect([stale.out, stale.posts, stale.payload]).toEqual(["", 0, undefined]);
+  const r3 = round(dir, "r3", "나가도 됩니다", { [card]: "그림" });
+  const fresh = run(dir, ["--passed", r3, "결과입니다", card]);
+  expect([fresh.code, fresh.out.trim(), fresh.posts]).toEqual([0, "SENT 777", 1]);
+  const behind = run(dir, ["--passed", r1, "결과입니다", card]);
+  expect(behind.code).toBe(65);
+  expect(behind.err).toContain("더 최신 교열 라운드 r3 의 판정이 있으니 그 라운드를 --passed 로 지정해야 합니다");
+});
+
+test("a file the model did not read needs the explicit unreviewed path even though its hash is listed", () => {
+  const dir = rig();
+  const card = piece(dir, "01.png", "그림");
+  const shot = piece(dir, "캡처.png", "화면");
+  const folder = join(dir, "review", "r1");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "verdict.txt"),
+    `나가도 됩니다
+${card} ${sha("그림")}
+${shot} ${sha("화면")}
+읽지 않고 함께 나가는 파일(검수 모델이 내용을 읽지 못함): ${shot}
+사이트 자원(복사 안 함, 발행 사이트에서 불러옴): https://lawsobaek.com/a.css
+검수 모델: fake/model
+`,
+  );
+  const refused = run(dir, ["--passed", folder, "결과입니다", shot]);
+  expect(refused.code).toBe(65);
+  expect(refused.err.trim()).toBe(
+    `REFUSED ${shot} is not the passed copy: 검수 모델이 읽지 않은 파일이라 --send-without-desk-review 로만 보낼 수 있습니다`,
+  );
+  expect([refused.posts, refused.payload]).toEqual([0, undefined]);
+  // The read file beside it is the passed copy; the noise lines (site resources, model name) never count as hashes.
+  const ok = run(dir, ["--passed", folder, "결과입니다", card]);
+  expect([ok.code, ok.out.trim(), ok.posts]).toEqual([0, "SENT 777", 1]);
+  const unreviewed = run(dir, ["--send-without-desk-review", "화면입니다", shot]);
+  // posts counts every post this rig made: one for the passed card above, one here.
+  expect([unreviewed.code, unreviewed.posts, unreviewed.upload(0)]).toEqual([0, 2, "화면"]);
+});
+
+test("a file name with a newline cannot forge an extra line in the unreviewed log", () => {
+  const dir = rig();
+  const shot = piece(dir, "줄바꿈\n파일.png", "화면");
+  const r = run(dir, ["--send-without-desk-review", "화면입니다", shot]);
+  expect([r.code, r.out.trim()]).toEqual([0, "SENT 777"]);
+  expect(r.log?.split("\n")).toHaveLength(2);
+  expect(r.log?.endsWith(` channel=1571013138764140544 reply=- ${bashq(shot)}\n`)).toBe(true);
 });
 
 test("the two flags together, or --passed with no folder, stop before anything is posted", () => {

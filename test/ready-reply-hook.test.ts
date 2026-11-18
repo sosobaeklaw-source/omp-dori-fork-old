@@ -95,7 +95,15 @@ test("without the salt file at its default place no lane is answered (fail close
 test("a picture goes up through the explicit unreviewed path with the text beside it; without a picture the sender gets the text alone", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-picture-"));
   const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/argv"\necho "SENT 9"\n`, { mode: 0o755 });
+  writeFileSync(
+    sender,
+    `#!/bin/sh
+[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }
+printf '%s\\n' "$@" > "${dir}/argv"
+echo "SENT 9"
+`,
+    { mode: 0o755 },
+  );
   const tesseract = join(dir, "tesseract.sh");
   writeFileSync(tesseract, "#!/bin/sh\necho 자막 전후 비교\n", { mode: 0o755 });
   const { home, env, tool } = hookHome(sender);
@@ -113,4 +121,29 @@ test("a picture goes up through the explicit unreviewed path with the text besid
   rmSync(join(home, "state", "ready-reply.log"));
   expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
   expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
+});
+
+test("an old-style sender that does not know the flag is named for replacement, and never receives the flag as text", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-oldsender-"));
+  const calls = join(dir, "calls");
+  const sender = join(dir, "send.sh");
+  // The hand-installed copy this finding is about: no --supports, so like the old sender it reads the flag as the text.
+  writeFileSync(
+    sender,
+    `#!/bin/sh
+printf '%s\\n' "$*" >> "${calls}"
+echo "REFUSED no --passed review round folder was named" >&2
+exit 65
+`,
+    { mode: 0o755 },
+  );
+  const tesseract = join(dir, "tesseract.sh");
+  writeFileSync(tesseract, "#!/bin/sh\necho 자막 전후 비교\n", { mode: 0o755 });
+  const { home, env, tool } = hookHome(sender);
+  writeFileSync(join(home, "results", "k1", "비교.png"), "png");
+  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TESSERACT: tesseract } });
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toContain("examples/sobaek/dori-send-file.sh");
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain(`FAIL k1 ${OWNER_MSG}:`);
+  expect(readFileSync(calls, "utf8").split("\n")).toEqual(["--supports passed", ""]);
 });
