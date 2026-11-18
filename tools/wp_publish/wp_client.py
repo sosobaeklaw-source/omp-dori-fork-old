@@ -110,7 +110,7 @@ _BLOCK_KEYS = {"anchor", "align", "className", "level", "ordered", "reversed", "
 _STYLE_KEYS = {"color", "typography", "spacing", "border", "dimensions"}  # background* 는 그림이 되니 아예 없앤다
 _BLOCK_COMMENT = re.compile(r"<!-- /?wp:([a-z0-9-]+(?:/[a-z0-9-]+)?)(?: (\{(?:(?!-->)[^<>])*\}))? /?-->")
 _BLOCK_ATTR_MEDIA = re.compile(r"url|src|image|media|featured|\"ids?\"|//", re.I)
-_SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[A-Za-z][\w-]*")  # [dB(A)] 같은 소음 단위는 글자다(그런 단축코드는 없다)
+_SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[\w-]", re.A)  # WP get_shortcode_regex의 [\w-](PHP /u 없음 → ASCII): 이름은 _·숫자로도 시작한다. [dB(A)] 같은 소음 단위는 글자다
 _OEMBED_LINE = re.compile(r'^(\s*)(https?://[^\s<>"]+)(\s*)$', re.I | re.M | re.A)  # WP |^(\s*)(https?://[^\s<>"]+)(\s*)$|im — 글자 하나까지 같게
 _OEMBED_P = re.compile(r'(<p(?: [^>]*)?>\s*)(https?://[^\s<>"]+)(\s*</p>)', re.I | re.A)  # WP |(<p(?: [^>]*)?>\s*)(https?://[^\s<>"]+)(\s*<\/p>)|i — PHP \s는 /u 없이 ASCII(re.A)
 _STYLE_BAD = re.compile(r"\\|url|image|expression|@|/\*", re.I)
@@ -391,12 +391,17 @@ class WP:
         if method != "POST" or override or url.query or not (rankmath or _WP_PATH.fullmatch(target)):
             raise ReviewMissing(f"{where}: 보낼 수 있는 곳이 아니다(POST {API}/posts|pages|media[/번호], Rank Math updateMeta만,"
                                 " 방법 바꾸기 헤더 금지)")
-        body = req.data or b""
-        ctype = (req.get_header("Content-type") or "").split(";")[0].strip().lower()
+        if req.unredirected_hdrs:  # urllib은 이것을 headers 위에 덮어 보낸다 — 검사한 형식과 보내는 형식이 갈라지지 않게
+            raise ReviewMissing(f"{where}: add_unredirected_header로 붙인 헤더({', '.join(req.unredirected_hdrs)})가 있는 쓰기는"
+                                " 보내지 않는다")
+        if not isinstance(req.data, bytes):
+            raise ReviewMissing(f"{where}: 본문은 bytes만 보낸다(파일·반복자는 검사한 것과 다를 수 있다)")
+        body = req.data
+        ctype = (req.headers.get("Content-type") or "").split(";")[0].strip().lower()
         if ctype.startswith("image/"):
             if target != API + "/media":
                 raise ReviewMissing(f"{where}: 그림은 {API}/media로만 올린다")
-            check_bytes(doc, [(f"올리는 그림 {req.get_header('Content-disposition') or ''}".strip(), body)])
+            check_bytes(doc, [(f"올리는 그림 {req.headers.get('Content-disposition') or ''}".strip(), body)])
         elif ctype == "application/json":
             self._gate_json(doc, where, json.loads(body or b"null"), rankmath, _WP_PATH.fullmatch(target))
         else:
@@ -426,6 +431,11 @@ class WP:
         unknown = sorted(set(fields) - set(texts_keys) - set(image_keys) - set(plain) - set(media_keys) - {"content"})
         if unknown:
             raise ReviewMissing(f"{where}: 확인하지 않는 칸은 보내지 않는다: {', '.join(unknown)}")
+        if "post" in fields and (type(fields["post"]) is not int or fields["post"] <= 0):
+            raise ReviewMissing(f"{where}: post는 양의 정수만 보낸다: {fields['post']!r}")
+        for k in _RM_PLAIN:
+            if rankmath and k in fields and not (isinstance(fields[k], bool) or fields[k] in ("on", "off")):
+                raise ReviewMissing(f"{where}: {k}는 'on'·'off'·참거짓만 보낸다: {fields[k]!r}"[:200])
         if "status" in payload:
             if not (path and path.group(1) == "posts" and not path.group(2)):
                 raise ReviewMissing(f"{where}: status는 새 글 만들기({API}/posts)에서만 보낸다"

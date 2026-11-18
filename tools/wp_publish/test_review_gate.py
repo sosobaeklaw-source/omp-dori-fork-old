@@ -592,6 +592,48 @@ class ReviewGateTest(unittest.TestCase):
         self.assertBlocked(c, "caption에 태그 글자", {"caption": "<p>x</p>"}, url=w.API + "/media/843")
         self.assertEqual(c.op.got, [])
 
+    def test_split_headers_and_odd_bodies_are_refused(self):
+        """열두 번째 리뷰: urllib은 unredirected 헤더를 headers 위에 덮어 보낸다 — JSON으로 검사하고 form으로 가지 않게."""
+        self.record("본문.html", "flow.png", "cover.jpg", texts={"title": self.title})
+        c = self.client()
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        for url, payload in ((w.API + "/posts/299", {"title": self.title}),
+                             (rm, {"objectType": "post", "objectID": 299,
+                                   "meta": {"rank_math_title": self.title, "rank_math_twitter_use_facebook": "on"}})):
+            req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                         headers={"Content-Type": "application/json"})
+            req.add_unredirected_header("Content-type", "application/x-www-form-urlencoded")
+            with self.assertRaisesRegex(ReviewMissing, "add_unredirected_header"):
+                c._open(req)
+        for data in (io.BytesIO(json.dumps({"title": self.title}).encode()), [b"{}"], bytearray(b"{}"), None):
+            req = urllib.request.Request(w.API + "/posts/299", data=data, method="POST",
+                                         headers={"Content-Type": "application/json"})
+            with self.assertRaisesRegex(ReviewMissing, "bytes만"):
+                c._open(req)
+        self.assertEqual(c.op.sent, [])
+
+    def test_plain_fields_take_only_their_shape(self):
+        self.record("본문.html", "flow.png", "cover.jpg", texts={"title": self.title, "rank_math_title": self.title})
+        c = self.client()
+        for bad in ("299", 0, -1, True, 299.0, {"a": 1}, '<img src="x">'):
+            self.assertBlocked(c, "post는 양의 정수", {"alt_text": "", "post": bad}, url=w.API + "/media/843")
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        for bad in ("&objectType=post&objectID=1&meta[rank_math_title]=x&z=", {"a": 1}, "yes", 1, None):
+            self.assertBlocked(c, "'on'·'off'", {"objectType": "post", "objectID": 299,
+                                                "meta": {"rank_math_twitter_use_facebook": bad}}, url=rm)
+        for good in ("on", "off", True, False):
+            with redirect_stdout(io.StringIO()):
+                st, _ = self.post(c, {"objectType": "post", "objectID": 299,
+                                      "meta": {"rank_math_title": self.title, "rank_math_twitter_use_facebook": good}},
+                                  url=rm)
+            self.assertEqual(st, 200)
+
+    def test_shortcodes_starting_with_underscore_or_digit_are_refused(self):
+        for body in ("<p>[_x id=1]</p>", "<p>[3d model=1]</p>", "<p>[[_x]]</p>", "<p>[/_x]</p>"):
+            with self.assertRaisesRegex(ReviewMissing, "단축코드|\\["):
+                w._body_images(body, "x")
+        w._body_images("<p>소음 85[dB(A)] 이상</p>", "x")
+
     def test_login_forms_cannot_be_used_to_skip_the_gate(self):
         import inspect
         self.assertNotIn("_login_form", inspect.signature(w.WP._open).parameters)
