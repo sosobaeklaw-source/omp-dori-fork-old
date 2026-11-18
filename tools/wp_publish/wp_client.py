@@ -18,7 +18,8 @@ GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든
     그림(/media/<번호>)의 대체 글·캡션·제목은 그 번호의 source_url로 받은 바이트의 "media:<sha256>".
     방금 올린 그림의 칸은 source_url 말고 방금 올린 바이트로 맞춘다(-scaled 사본은 바이트가 달라진다).
   - status는 draft만 보낼 수 있다(발행 글 갱신은 status를 빼고 보낸다). brand_write_guard.assert_clean도 여기서.
-  - 검수 기록에 글 번호(review_gate --post)가 적혀 있으면 URL의 글 번호·Rank Math objectID와 같아야 한다.
+  - 검수 기록의 글 번호(review_gate --post, 필수)와 URL의 글 번호·Rank Math(objectType=post) objectID·그림을 붙이는
+    글 번호(post 칸)가 같아야 한다. 글 번호 없는 기록으로는 글·Rank Math 쓰기를 하지 못 한다.
   - 확인한 것이 하나도 없는 요청은 그림 붙이기(post 칸)만 보낸다. status만 보내 공개 글을 내리는 것은 막는다.
 하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다. 다 맞으면 findings.md 첫 문단과 읽은 모델을 보여 주고 보낸다.
 응답을 받은 뒤 상태 코드와 리드가 무엇을 열어 보았는지 적은 한 줄(ack, 비어 있으면 안 됨)을 reviewed.json 옆
@@ -96,8 +97,8 @@ _BLOCKS = {"paragraph", "heading", "list", "list-item", "table", "quote", "pullq
 _BLOCK_COMMENT = re.compile(r"<!-- /?wp:([a-z0-9-]+(?:/[a-z0-9-]+)?)(?: (\{(?:(?!-->)[^<>])*\}))? /?-->")
 _BLOCK_ATTR_MEDIA = re.compile(r"url|src|image|media|featured|\"ids?\"|//", re.I)
 _SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[A-Za-z][\w-]*")  # [dB(A)] 같은 소음 단위는 글자다(그런 단축코드는 없다)
-_OEMBED_LINE = re.compile(r"^\s*(?:<p>\s*)?https?://[^\s<>\"()]+\s*(?:</p>)?\s*$", re.I | re.M)
-_OEMBED_P = re.compile(r'(<p(?: [^>]*)?>\s*)(https?://[^\s<>"()]+)(\s*</p>)', re.I)  # WP autoembed: 속성 있는 <p>URL</p> 본문 어디든
+_OEMBED_LINE = re.compile(r'^(\s*)(https?://[^\s<>"]+)(\s*)$', re.I | re.M | re.A)  # WP |^(\s*)(https?://[^\s<>"]+)(\s*)$|im — 글자 하나까지 같게
+_OEMBED_P = re.compile(r'(<p(?: [^>]*)?>\s*)(https?://[^\s<>"]+)(\s*</p>)', re.I | re.A)  # WP |(<p(?: [^>]*)?>\s*)(https?://[^\s<>"]+)(\s*<\/p>)|i — PHP \s는 /u 없이 ASCII(re.A)
 _STYLE_BAD = re.compile(r"\\|url|image|expression|@|/\*", re.I)
 _HREF_OK = re.compile(r"(https?:|mailto:|tel:|#|/(?![/\\]))", re.I)  # /\ 처럼 역슬래시도 브라우저는 슬래시로 읽는다
 
@@ -286,11 +287,18 @@ class WP:
             raise ReviewMissing(f"{where}: status는 draft만 보낸다(발행 글 갱신은 status를 빼고 보낸다)")
         assert_clean(payload, context=where)
         post = doc.get("post")
+        if (rankmath or (path and path.group(1) in ("posts", "pages"))) and post is None:
+            raise ReviewMissing(f"{where}: 검수 기록에 글 번호(post)가 없다. review_gate record --post 로 남겨라")
         if post is not None:
             mid = path.group(2)[1:] if path and path.group(2) else None
             if mid and path.group(1) in ("posts", "pages") and mid != str(post):
                 raise ReviewMissing(f"{where}: 검수 기록은 글 {post}용이다. 글 {mid}에는 보내지 않는다")
-            if rankmath and str(payload.get("objectID")) != str(post):
+            if "post" in fields and str(fields["post"]) != str(post):
+                raise ReviewMissing(f"{where}: 검수 기록은 글 {post}용이다(그림을 글 {fields['post']!r}에 붙이지 않는다)")
+        if rankmath:
+            if payload.get("objectType") != "post":
+                raise ReviewMissing(f"{where}: Rank Math는 objectType=post만 보낸다(objectType={payload.get('objectType')!r})")
+            if str(payload.get("objectID")) != str(post):
                 raise ReviewMissing(f"{where}: 검수 기록은 글 {post}용이다(Rank Math objectID={payload.get('objectID')!r})")
         items, texts, target = [], [], "post"
         if path and path.group(1) == "media":

@@ -58,7 +58,7 @@ class ReviewGateTest(unittest.TestCase):
                                               encoding="utf-8")
         self.reviewed = self.dir / "reviewed.json"
 
-    def record(self, *names, texts=None, media_texts=None, post=None):
+    def record(self, *names, texts=None, media_texts=None, post=299):
         review_gate.record(self.reviewed, [self.dir / n for n in names], "opencodex/anthropic/claude-opus-5-5",
                            self.dir / "findings.md", texts, {self.dir / f: kv for f, kv in (media_texts or {}).items()}, post)
 
@@ -203,7 +203,7 @@ class ReviewGateTest(unittest.TestCase):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
         self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft"})
-        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft", "post": 299}, url=w.API + "/posts/300")
+        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft", "post": 299}, url=w.API + "/posts/299")
 
     def test_two_images_each_with_their_own_alt_and_caption(self):
         (self.dir / "second.png").write_bytes(b"PNG-second")
@@ -229,7 +229,7 @@ class ReviewGateTest(unittest.TestCase):
     def test_record_cli_keeps_media_texts_by_image_hash(self):
         out = self.dir / "r2.json"
         subprocess.run([sys.executable, str(Path(review_gate.__file__)), "record", str(out), "--model", "m",
-                        "--findings", str(self.dir / "findings.md"),
+                        "--findings", str(self.dir / "findings.md"), "--post", "299",
                         "--media-text", str(self.dir / "flow.png"), "alt_text=첫 그림",
                         "--media-text", str(self.dir / "flow.png"), "caption=첫 캡션",
                         str(self.dir / "본문.html"), str(self.dir / "flow.png")], check=True, capture_output=True)
@@ -268,6 +268,28 @@ class ReviewGateTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewMissing, "alt_text"):
             with redirect_stdout(io.StringIO()):
                 c2.upload(self.dir / "flow.png", "틀린 설명", "캡션", 299)
+
+
+    def test_rank_math_objecttype_must_be_post(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        self.assertBlocked(c, "objectType=post만", {"objectType": "term", "objectID": 299,
+                                                    "meta": {"rank_math_description": "x"}}, url=rm)
+
+    def test_media_cannot_attach_an_image_to_another_post(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        self.assertBlocked(c, r"검수 기록은 글 299용이다.*글 300", {"alt_text": "x", "post": 300},
+                           url=w.API + "/media/901")
+
+    def test_record_without_a_post_refuses_post_and_rank_math_writes(self):
+        self.record("본문.html", "flow.png", "cover.jpg", post=None)
+        c = self.client()
+        self.assertBlocked(c, "검수 기록에 글 번호", {"content": self.body})
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        self.assertBlocked(c, "검수 기록에 글 번호", {"objectType": "post", "objectID": 299,
+                                                    "meta": {"rank_math_description": "x"}}, url=rm)
 
     def test_rank_math_share_image_ids_are_checked_like_featured_media(self):
         self.record("본문.html", "flow.png", "cover.jpg")
@@ -328,6 +350,9 @@ class ReviewGateTest(unittest.TestCase):
                      "https://www.youtube.com/watch?v=abc", "<p>https://twitter.com/x/status/1</p>",
                      '<p class="embed">https://www.youtube.com/watch?v=abc</p>',
                      '<p>앞 문장</p><p>https://www.youtube.com/watch?v=a</p>',
+                     "<p>a</p>\nhttps://www.youtube.com/watch?v=dQw4W9WgXcQ&t=(1)\n",
+                     '<p class="x">https://www.youtube.com/watch?v=dQw4W9WgXcQ&t=(1)</p>',
+                     "<p>a</p>\nhttps://www.youtube.com/watch?v=dQw4W9WgXcQ&a=\u00a0b\n",
                      "<p>a <![CDATA[x]]> b</p>", "<?php echo 1 ?>"):
             self.assertBlocked(c, "확인할 수 없는", {"content": body})
 

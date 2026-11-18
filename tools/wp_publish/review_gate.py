@@ -4,9 +4,9 @@
     python3 review_gate.py record <reviewed.json> --model <읽은 모델> --findings <findings.md> \\
         [--text title=<읽은 제목>] [--text excerpt=<읽은 요약>] ... \\
         [--media-text <그림 파일> alt_text=<그 그림의 대체 글>] [--media-text <그림 파일> caption=<캡션>] ... \\
-        [--post <검수한 글 번호>] <본문.html> <그림>...
-  → {"files": [{"path", "sha256"}...], "texts": {"post": {칸: 값}, "media:<sha256>": {칸: 값}}, "model", "at", "findings"}
-    (+ 줬을 때 "post": 글 번호). 글 번호를 적으면 발행 쪽에서 URL 글 번호·Rank Math objectID와 같은지 맞춘다.
+        --post <검수한 글 번호> <본문.html> <그림>...
+  → {"files": [{"path", "sha256"}...], "texts": {"post": {칸: 값}, "media:<sha256>": {칸: 값}}, "model", "at", "findings",
+    "post": 글 번호(필수)}. 발행 쪽에서 URL 글 번호·Rank Math objectID·그림을 붙이는 글과 같은지 맞춘다.
 
 발행 쪽: wp_client.WP(reviewed=..., ack=...)가 올릴 본문과 그 본문이 부르는 그림(대표 그림 포함)의
 sha256을 check_bytes로, 글자 칸은 check_texts로 그 대상(글 또는 그 그림) 항목의 같은 칸 값과 똑같은지
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     ap.add_argument("out")
     ap.add_argument("--model", required=True)
     ap.add_argument("--findings", required=True)
-    ap.add_argument("--post", type=int)
+    ap.add_argument("--post", type=int, required=True)
     ap.add_argument("--text", action="append", default=[], metavar="칸=값")
     ap.add_argument("--media-text", action="append", default=[], nargs=2, metavar=("그림", "칸=값"))
     ap.add_argument("files", nargs="+")
