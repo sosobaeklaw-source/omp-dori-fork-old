@@ -30,7 +30,7 @@ export const FORBIDDEN: AgyRun = {
 export function setup(
   answers: AgyRun[],
   account = SEAT_MAIL,
-  others = { lastEndAt: 0, running: false, forbidden: false },
+  others = { lastEndAt: 0, forbidden: false },
 ) {
   const home = mkdtempSync("/tmp/dwa-");
   mkdirSync(join(home, "state"));
