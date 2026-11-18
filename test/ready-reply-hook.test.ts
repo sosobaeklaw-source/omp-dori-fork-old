@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashFiles, OWNER_MSG, ROOM } from "./name-hashes.ts";
@@ -121,6 +131,38 @@ echo "SENT 9"
   rmSync(join(home, "state", "ready-reply.log"));
   expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
   expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
+});
+
+test("the capability probe runs from an empty folder, so a file named passed in the working dir can never be posted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-probe-cwd-"));
+  const work = join(dir, "work");
+  mkdirSync(work, { recursive: true });
+  writeFileSync(join(work, "passed"), "절대 나가면 안 되는 파일");
+  const calls = join(dir, "calls");
+  const sender = join(dir, "send.sh");
+  // An old-style sender: it reads --supports as the text and the next argument as a file to attach, from its cwd.
+  writeFileSync(
+    sender,
+    `#!/bin/sh
+printf '%s\\n' "$(pwd)" "$*" >> "${calls}"
+echo "REFUSED no --passed review round folder was named" >&2
+exit 65
+`,
+    { mode: 0o755 },
+  );
+  const tesseract = join(dir, "tesseract.sh");
+  writeFileSync(tesseract, "#!/bin/sh\necho 자막 전후 비교\n", { mode: 0o755 });
+  const { home, env, tool } = hookHome(sender);
+  writeFileSync(join(home, "results", "k1", "비교.png"), "png");
+  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TESSERACT: tesseract }, cwd: work });
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toContain("examples/sobaek/dori-send-file.sh");
+  const [probePwd, probeArgs] = readFileSync(calls, "utf8").split("\n");
+  expect(probeArgs).toBe("--supports passed"); // the only call the old sender ever saw
+  expect(probePwd && probePwd !== realpathSync(work)).toBe(true); // a fresh folder, not the working dir
+  expect(probePwd ? readdirSync(probePwd) : ["not empty"]).toEqual([]); // empty: nothing an old sender could attach
+  expect(existsSync(join(work, "passed"))).toBe(true); // never read, never posted
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain(`FAIL k1 ${OWNER_MSG}:`);
 });
 
 test("an old-style sender that does not know the flag is named for replacement, and never receives the flag as text", () => {

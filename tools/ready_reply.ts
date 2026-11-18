@@ -11,8 +11,8 @@
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
  * `SENT <id>`. The picture is a comparison picture of a public lane, which the proofreading desk never reads, so it
  * goes with `--send-without-desk-review` and the posted text says so; a reply without a picture goes as before. Before
- * that call the sender is probed with `--supports passed`, and a sender that does not answer it (an older
- * hand-installed copy, which would read the flag as the post text) fails with one line saying which file to install. A lane
+ * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
+ * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
  * that gets no reply prints `SKIP <why>` and tells nobody: it stays inbox-only as before.
  * Only a lane whose brief carries the line `public: true` (written by the lead for public-material work) is answered;
  * the reply text and the picture's OCR text are checked against salted client-name hashes exported by the macmini:
@@ -22,7 +22,8 @@
  * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
  * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.
  */
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordSent } from "../skills/dori-mode/scripts/src/messenger/discord-sent.ts";
 import { need, parse } from "../src/cli-args.ts";
@@ -42,9 +43,13 @@ const SENDER_SRC = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-
 function post(sender: string, text: string, image: string | undefined, env: Record<string, string>) {
   try {
     // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
-    // for the flag first, so an outdated sender fails with the fix instead of mangling the reply.
+    // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
+    // fresh empty folder: an old copy reads the next argument as a file to attach, and no file can be found there.
     if (image) {
-      const probe = Bun.spawnSync([sender, "--supports", "passed"], { env: { ...process.env, ...env } });
+      const probe = Bun.spawnSync([sender, "--supports", "passed"], {
+        cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
+        env: { ...process.env, ...env },
+      });
       if (probe.exitCode !== 0 || !probe.stdout.toString().trim().startsWith("SUPPORTED"))
         return {
           why: `그림을 함께 보내려면 --send-without-desk-review 를 아는 센더가 필요한데 ${sender} 가 그걸 모릅니다. ${SENDER_SRC} 를 ${sender} 로 설치한 뒤 다시 시도하세요`,
