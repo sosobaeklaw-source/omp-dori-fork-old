@@ -14,14 +14,18 @@ const client = () =>
   new Discord(fetchHttp, realClock, process.env["DORI_DISCORD_TOKEN"] ?? die("DORI_DISCORD_TOKEN is not set"));
 
 /** Local paths pass through; downloaded audio belongs only to this invocation and is always removed. */
-export const withLocalAudio = async (source: string, use: (file: string) => Promise<string>): Promise<string> => {
+export const withLocalAudio = async (
+  source: string,
+  use: (file: string) => Promise<string>,
+  downloadMs?: number,
+): Promise<string> => {
   if (!/^https?:\/\//i.test(source)) return await use(source);
   const dir = mkdtempSync(join(tmpdir(), "dori-audio-"));
   try {
     let file: string;
     try {
       const url = new URL(source);
-      const response = await fetch(url);
+      const response = await fetch(url, downloadMs ? { signal: AbortSignal.timeout(downloadMs) } : {});
       if (!response.ok) throw new TranscriptionError(`transcribe: GET ${url.pathname} answered ${response.status}`);
       file = join(dir, basename(url.pathname) || "audio");
       writeFileSync(file, new Uint8Array(await response.arrayBuffer()), { mode: 0o600, flag: "wx" });
