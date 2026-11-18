@@ -18,6 +18,9 @@ import { defaultHome } from "../src/test-home.ts";
 import { addEntry, kindOf, pairEntry } from "../src/writer-ledger.ts";
 import { buildRequest, countCases, END, kindRanges, writerOf } from "../src/writer-request.ts";
 import { fillSheet, readSheet } from "../src/writer-sheet.ts";
+import { accountFromLog, machineUsage, runLogFor } from "../src/agy-logs.ts";
+import { readConfig } from "../src/hooks.ts";
+import { AgyStop, sendOnAgy } from "../src/writer-agy.ts";
 import { sendOnSeat } from "../src/writer-seat.ts";
 
 /**
@@ -59,7 +62,27 @@ const USAGE = `usage:
   writer_request send --model argon|hydrogen --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
                       [--runner gemini_web_runner.mjs]
       -> runs the runner on the first free seat of DORI_HOME/writer-seats.txt, waits only while all are busy or
-         resting after an on-screen limit; exits with the runner's code, the seat written into the meta`;
+         resting after an on-screen limit; exits with the runner's code, the seat written into the meta
+  writer_request agy --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
+      -> one Argon body request through the agy CLI, logged into the one mail set as agyAccount in DORI_HOME/config.json
+         (or DORI_AGY_ACCOUNT): one at a time, 60 s apart; Google's quota error (429) exits 26 and no lane calls until
+         the reset Google named (state/agy-s4.quota-until); an agy -p outside the seat past --timeout exits 27; a
+         file-linked answer is asked once more; a 403 stops the seat (state/agy-stopped.json). The call log is
+         GEMINI_CALLS_TSV or state/gemini-calls.tsv. Body writing only: never review, red team or tests.`;
+
+/** `agyAccount` in config.json: the one mail the agy seat calls as, kept out of this repo. */
+function agyAccountIn(config: object): string | undefined {
+  const v = (config as { agyAccount?: unknown }).agyAccount;
+  if (v === undefined || (typeof v === "string" && /^[^@\s]+@[^@\s]+$/.test(v))) return v;
+  throw new Refusal("config.json: agyAccount must be one mail address");
+}
+
+/** `--timeout` in seconds: a positive whole number, or 1800 when absent; anything else would reach agy as `NaNs`. */
+function secondsOf(v: string | undefined): number {
+  if (v === undefined) return 1800;
+  if (!/^[1-9]\d*$/.test(v)) throw new Refusal(`--timeout must be a positive whole number of seconds, not ${v}`);
+  return Number(v);
+}
 
 try {
   const a = parse(process.argv.slice(2));
@@ -157,10 +180,63 @@ try {
         prompt: need(one(a, "prompt"), "--prompt"),
         out,
         meta: one(a, "meta") ?? `${out.replace(/\.txt$/, "")}.meta.json`,
-        timeout: Number(one(a, "timeout") ?? 1800),
+        timeout: secondsOf(one(a, "timeout")),
       },
     );
     console.log(`SENT_ON ${seat.account} ${seat.expect} exit=${code}`);
+    process.exit(code);
+  } else if (cmd === "agy") {
+    const out = need(one(a, "out"), "--out");
+    const agyDir = join(homedir(), ".gemini", "antigravity-cli");
+    const agyLog = join(agyDir, "cli.log");
+    const seatAccount = process.env["DORI_AGY_ACCOUNT"] || agyAccountIn(readConfig(home));
+    let code: number;
+    try {
+      code = await sendOnAgy(
+        {
+          root: home,
+          pid: process.pid,
+          now: Date.now,
+          alive,
+          sleep: (ms) => Bun.sleep(ms),
+          log: (line) => console.error(line),
+          account: () => accountFromLog(agyLog),
+          seatAccount,
+          usage: () => machineUsage(join(agyDir, "log"), seatAccount ?? ""),
+          runLog: (workDir) => runLogFor(join(agyDir, "log"), workDir),
+          run: async (args, cwd, onSpawn) => {
+            const child = Bun.spawn(["agy", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+            onSpawn(child.pid);
+            const term = () => child.kill("SIGTERM");
+            process.on("SIGTERM", term).on("SIGINT", term);
+            try {
+              const [stdout, stderr, exit] = await Promise.all([
+                new Response(child.stdout).text(),
+                new Response(child.stderr).text(),
+                child.exited,
+              ]);
+              return { code: exit, stdout, stderr };
+            } finally {
+              process.off("SIGTERM", term).off("SIGINT", term);
+            }
+          },
+        },
+        {
+          home,
+          lane: need(one(a, "lane"), "--lane"),
+          prompt: need(one(a, "prompt"), "--prompt"),
+          out,
+          meta: one(a, "meta") ?? `${out.replace(/\.txt$/, "")}.meta.json`,
+          timeout: secondsOf(one(a, "timeout")),
+          calls: process.env["GEMINI_CALLS_TSV"] || join(home, "state", "gemini-calls.tsv"),
+        },
+      );
+    } catch (e) {
+      if (!(e instanceof AgyStop)) throw e;
+      console.error(e.message);
+      process.exit(e.code);
+    }
+    console.log(`SENT_ON agy-s4 exit=${code}`);
     process.exit(code);
   } else throw new Refusal(USAGE);
 } catch (e) {
