@@ -3,9 +3,26 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowedSource, conceptsPath } from "../src/onto-concepts.ts";
+import { allowedSource, conceptsPath, guidelineSource } from "../src/onto-concepts.ts";
 
 const ROOT = "/Users/x/sobaegi-lead/results";
+
+test("guidelineSource counts only the home sanjai-agent corpus, anchored", () => {
+  const home = "/Users/x";
+  const guide = (source: string) => guidelineSource(source, home);
+  // The two corpus folders under this home, however the path is spelled.
+  expect(guide(`${home}/sanjai-agent/corpus/jichim/x.md`)).toBe(true);
+  expect(guide(`${home}/sanjai-agent/corpus/knowledge/deep/x.md`)).toBe(true);
+  expect(guide(`${home}//sanjai-agent/./corpus/knowledge/x.md`)).toBe(true);
+  // Another tree that merely holds the same path, a sibling that only starts with the same word and a climb out.
+  expect(guide("/tmp/x/sanjai-agent/corpus/jichim/x.md")).toBe(false);
+  expect(guide(`${home}/sanjai-agent/corpus/knowledge-old/x.md`)).toBe(false);
+  expect(guide(`${home}/sanjai-agent/corpus/jichim/../../secret/x.md`)).toBe(false);
+  // The home's other folders, the corpus root itself and relative paths are not guideline sources.
+  expect(guide(`${home}/sanjai-agent/cases/A/난청지침.pdf`)).toBe(false);
+  expect(guide(`${home}/sanjai-agent/corpus/x.md`)).toBe(false);
+  expect(guide("sanjai-agent/corpus/jichim/x.md")).toBe(false);
+});
 
 test("allowedSource follows sanjai-agent's is_allowed_source rule", () => {
   const allow = ["book-reading", "seo-9-1111"];
@@ -43,15 +60,17 @@ test("onto_concepts exports only concepts with an allowed, unflagged public fact
   db.run("create table facts(id integer primary key, object_id integer, source text, origin text)");
   db.run("create table review_flags(fact_id integer)");
   const results = join(homedir(), "sobaegi-lead", "results");
+  const corpus = join(homedir(), "sanjai-agent", "corpus", "jichim", "난청지침.pdf");
+  const caseFile = join(homedir(), "sanjai-agent", "cases", "A", "난청지침.pdf");
   const rows: [number, string, string, string, boolean][] = [
     [1, "공개상병", `${results}/book-reading/a.md`, "public_reading.jsonl", false],
     [2, "사건상병", `${results}/book-reading/a.md`, "case_import.jsonl", false],
     [3, "검수제외상병", `${results}/book-reading/a.md`, "public_reading.jsonl", true],
     [4, "허용밖상병", `${results}/case-9999/a.md`, "public_reading.jsonl", false],
     [5, "결과밖상병", "/tmp/a.md", "public_reading.jsonl", false],
-    [6, "지침상병", "/Users/x/sanjai-agent/corpus/jichim/난청지침.pdf", "noise_guideline_records.jsonl", false],
-    [7, "지침꼴사건상병", "/Users/x/sanjai-agent/cases/A/난청지침.pdf", "noise_guideline_records.jsonl", false],
-    [8, "지침제외상병", "/Users/x/sanjai-agent/corpus/jichim/난청지침.pdf", "noise_guideline_records.jsonl", true],
+    [6, "지침상병", corpus, "noise_guideline_records.jsonl", false],
+    [7, "지침꼴사건상병", caseFile, "noise_guideline_records.jsonl", false],
+    [8, "지침제외상병", corpus, "noise_guideline_records.jsonl", true],
   ];
   for (const [id, name, source, origin, flagged] of rows) {
     db.run("insert into objects values (?, '상병', ?)", [id, name]);

@@ -47,10 +47,19 @@ export function allowedSource(
 /** Load files whose records come from the office's guideline documents (공단 지침·업무처리기준), not client cases. */
 export const GUIDELINE_ORIGINS = ["noise_guideline_records.jsonl", "burden_records.jsonl"] as const;
 
-/** Whether a source is a guideline document: an absolute path under sanjai-agent's corpus/jichim or corpus/knowledge. */
-export function guidelineSource(source: string): boolean {
+/** The corpus folders under `~/sanjai-agent` whose documents are public guidelines, not client material. */
+const GUIDELINE_DIRS = ["jichim", "knowledge"] as const;
+
+/**
+ * Whether a source is a guideline document: an absolute path under `<home>/sanjai-agent/corpus/jichim/` or
+ * `<home>/sanjai-agent/corpus/knowledge/`. The path is normalised first ("..", "." and doubled slashes), and the
+ * prefix is anchored at the home corpus with its trailing slash: a copy of that tree elsewhere, a sibling folder that
+ * only starts with the same letters (corpus/knowledge-old) and a path that climbs back out are all refused.
+ */
+export function guidelineSource(source: string, home: string = homedir()): boolean {
   if (!isAbsolute(source)) return false;
-  return /\/sanjai-agent\/corpus\/(jichim|knowledge)\//.test(resolve(source));
+  const path = resolve(source);
+  return GUIDELINE_DIRS.some((dir) => path.startsWith(`${resolve(home, "sanjai-agent", "corpus", dir)}${sep}`));
 }
 
 /** The exported concepts, or undefined when the file is missing or not the shape above. */
