@@ -1,1 +1,3 @@
 # 소화본이 맡는다: ~/.omp-dori/독후감/소화본/video.md
+# 가스켓러브 독후감 2절(원본을 프레임 단위로 실측해 똑같이 재현한 뒤에 우리 것)과 확인 기준 문단: 소화본 전환 때 빠진 원문 줄을 되살림 (parukuri-exec-1118 R61)
+~/sobaegi-lead/results/gasket-study-1114/독후감.md:15-23
