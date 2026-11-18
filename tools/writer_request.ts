@@ -65,9 +65,8 @@ const USAGE = `usage:
          resting after an on-screen limit; exits with the runner's code, the seat written into the meta
   writer_request agy --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
       -> one Argon body request through the agy CLI, logged into the one mail set as agyAccount in DORI_HOME/config.json
-         (or DORI_AGY_ACCOUNT): one at a time, 60 s apart; Google's quota error (429) exits 26 and no lane calls until
-         the reset Google named (state/agy-s4.quota-until); an agy -p outside the seat past --timeout exits 27; a
-         file-linked answer is asked once more; a 403 stops the seat (state/agy-stopped.json). The call log is
+         (or DORI_AGY_ACCOUNT). Lanes call at the same time. Google's quota error (429) exits 26 and no lane calls until
+         the reset Google named (state/agy-s4.quota-until); a file-linked answer is asked once more; a 403 stops the seat (state/agy-stopped.json). The call log is
          GEMINI_CALLS_TSV or state/gemini-calls.tsv. Body writing only: never review, red team or tests.`;
 
 /** `agyAccount` in config.json: the one mail the agy seat calls as, kept out of this repo. */

@@ -35,15 +35,9 @@ describe("agy seat after Google's quota error", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("a lane that was waiting out the gap when another lane got the 429 sends nothing", async () => {
-    const { env, opts, calls, home, advance } = setup([ok("본문")]);
-    const sleep = env.sleep;
-    env.sleep = async (ms) => {
-      writeFileSync(join(home, "state", "agy-s4.quota-until"), `${JSON.stringify({ until: env.now() + H })}\n`);
-      await sleep(ms);
-    };
-    advance(0);
-    writeFileSync(join(home, "state", "agy-s4.json"), JSON.stringify({ lastAt: env.now() }));
+  test("a lane sends nothing while another lane's 429 still holds the seat", async () => {
+    const { env, opts, calls, home } = setup([ok("본문")]);
+    writeFileSync(join(home, "state", "agy-s4.quota-until"), `${JSON.stringify({ until: env.now() + H })}\n`);
     await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.quota });
     expect(calls).toHaveLength(0);
   });

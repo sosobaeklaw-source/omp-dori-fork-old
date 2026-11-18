@@ -2,7 +2,6 @@
 import { expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { lockDir } from "../src/lock-owner.ts";
 import type { AgyEnv, AgyRun } from "../src/writer-agy.ts";
 
 /** Stand-ins for the seat's account and another one; real mails stay in local config, never in tests. */
@@ -54,7 +53,6 @@ export function setup(
     runLog: () => `I Print mode: starting\nI applyAuthResult: email=${account}, x\n`,
     run: async (args, cwd, onSpawn) => {
       onSpawn(process.pid);
-      expect(readFileSync(join(lockDir(home, "agy-s4"), "owner"), "utf8")).toContain(`cmd=${process.pid}`);
       calls.push({ at: t, args, request: readFileSync(join(cwd, "request.md"), "utf8") });
       t += 30_000;
       others.lastEndAt = t;
