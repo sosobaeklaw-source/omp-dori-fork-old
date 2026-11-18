@@ -47,6 +47,8 @@ jobs:
       - run: bun run ci
       - name: Red-team runner tests
         run: python3 -m unittest discover -s tools/redteam
+      - name: Publish body tests
+        run: python3 -m unittest discover -s tools/wp_publish
 
   test-macos:
     runs-on: macos-15
