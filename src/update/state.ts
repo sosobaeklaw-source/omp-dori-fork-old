@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -13,7 +14,7 @@ import {
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { alive } from "../../skills/dori-mode/scripts/src/checkpoint-lock.ts";
-import { object, UpdateError } from "./config.ts";
+import { object, UpdateError, UpdateLockBusy } from "./config.ts";
 import { claimPromotionRecovery } from "./publish-lock.ts";
 import type { UpdateContext, UpdateJob, UpdateLock, UpdatePhase, UpdateState } from "./types.ts";
 
@@ -151,7 +152,7 @@ function recoverPromotionLock(ctx: UpdateContext, owner: UpdateLock | undefined,
       (candidate) =>
         candidate.phase === "ready" && (state.active === candidate.id || candidate.promotion?.status !== "complete"),
     );
-  if (!job || job.review?.verdict !== "approve" || job.review.sourceHash !== job.sourceHash) return false;
+  if (job?.review?.verdict !== "approve" || job.review.sourceHash !== job.sourceHash) return false;
   if (
     job.commands.some(
       (command) =>
@@ -179,6 +180,19 @@ function recoverPromotionLock(ctx: UpdateContext, owner: UpdateLock | undefined,
   return true;
 }
 
+/** A same-host live owner whose second-resolution start is not later than its lock; same-second PID reuse is unresolved. */
+function liveOwner(owner: UpdateLock | undefined): boolean {
+  if (!owner || owner.host !== hostname() || !alive(owner.pid)) return false;
+  // lstart has no offset; its ps producer and Date.parse observer must use the same zone.
+  const ps = spawnSync("ps", ["-o", "lstart=", "-p", String(owner.pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C", TZ: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    timeout: 1_000,
+  });
+  const started = Date.parse(ps.stdout?.trim() ?? "");
+  return ps.status === 0 && Number.isFinite(started) && started <= Date.parse(owner.at);
+}
+
 /** Dead controllers resume only proven ready promotion work; ambiguous model/verification ownership stays held. */
 export function lockUpdate(ctx: UpdateContext): () => void {
   mkdirSync(ctx.config.root, { recursive: true, mode: 0o700 });
@@ -202,6 +216,8 @@ export function lockUpdate(ctx: UpdateContext): () => void {
       } catch {
         throw new UpdateError("another controller acquired the recovered promotion lock");
       }
+    } else if (liveOwner(owner)) {
+      throw new UpdateLockBusy("another live controller owns this updater root; retry after it finishes");
     } else {
       throw new UpdateError(
         owner && owner.host === hostname() && !alive(owner.pid)

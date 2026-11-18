@@ -40,7 +40,7 @@ test("bun test started outside a preloaded root refuses a home inside the real o
       join(dir, "probe.test.ts"),
       `import { expect, test } from "bun:test";
 import { Store } from ${JSON.stringify(join(src, "store.ts"))};
-import { ompStateDir } from ${JSON.stringify(join(src, "runtime", "omp.ts"))};
+import { ompStateDir } from ${JSON.stringify(join(src, "runtime", "omp-state-dir.ts"))};
 import { configPath } from ${JSON.stringify(join(src, "..", "skills", "dori-mode", "scripts", "src", "config.ts"))};
 import { outsideRealHomeUnderTest } from ${JSON.stringify(join(src, "test-home.ts"))};
 test("probe", () => {

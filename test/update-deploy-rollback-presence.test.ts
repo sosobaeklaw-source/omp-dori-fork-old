@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { procChildren, procCmdline } from "../src/update/proc.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
@@ -11,6 +11,9 @@ import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
+// Each case starts real shells, OMP fixtures and herdr probes and awaits their real outcomes, never a clock; under a
+// loaded macOS runner that exceeds bun's 5s default, so the budget only bounds a genuine hang.
+setDefaultTimeout(60_000);
 
 posix.each(["forward", "rollback"] as const)(
   "a present unattested %s launch holds instead of becoming an absent launch or a pane-run",

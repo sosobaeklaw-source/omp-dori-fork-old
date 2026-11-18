@@ -22,6 +22,7 @@ export const USAGE = `dori harness - a proactive multi-session harness on herdr 
   dori harness loop [--once] [--interval S] [--max-lanes N] [--max-starts N] [--max-load L] [--force]
                                                       hourly: sync backlog, audit missed work, start the next item, ask decisions
   dori harness loop stop [--text WHY] | resume | status   kill switch and last run
+  dori harness lead-pulse                             is the lead's pane there? writes lead-alive.json; the second dead check in a row starts the lead
   dori harness backlog add <id> --brief FILE [--title T] [--priority 1-9] [--cwd DIR] [--decision Q]
   dori harness backlog list | decide <id> --text ANSWER | drop <id> [--text WHY]
   dori harness backlog import <owner/repo> [--label dori] [--cwd DIR]   open labelled issues -> items
@@ -40,7 +41,12 @@ export const USAGE = `dori harness - a proactive multi-session harness on herdr 
 --text may be omitted to read the message from stdin.
 send, report and ready exit 3 and print HELD <target> when the delivery may or may not have reached the pane:
 it is held and never resent, so do not send it again: check the pane, then dori harness inbox ack or dori harness inbox resend it.
-QUEUED (exit 0) means it waits in the pane's inbox.`;
+QUEUED (exit 0) means it waits in the pane's inbox.
+  dori harness publish-approve --channel C --action <publish|delete> --owner-msg ID
+                          --artifact F [--artifact F]... [--note T]
+                                  the lead records the owner's go for exactly these artifacts (sha256)
+  dori harness publish-check --channel C --action <publish|delete> --artifact F [--artifact F]...
+                                  PASS only with an approval record matching every artifact hash`;
 
 /** `rest`: every argument after a bare `--` in flag position, verbatim (the command `lock` runs). */
 export type Args = { pos: string[]; flags: Map<string, string[]>; rest: string[] };
@@ -56,6 +62,7 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "resume",
   "help",
   "list",
+  "no-recall",
 ]);
 
 export function parse(argv: readonly string[]): Args {

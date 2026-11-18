@@ -14,14 +14,18 @@ const client = () =>
   new Discord(fetchHttp, realClock, process.env["DORI_DISCORD_TOKEN"] ?? die("DORI_DISCORD_TOKEN is not set"));
 
 /** Local paths pass through; downloaded audio belongs only to this invocation and is always removed. */
-export const withLocalAudio = async (source: string, use: (file: string) => Promise<string>): Promise<string> => {
+export const withLocalAudio = async (
+  source: string,
+  use: (file: string) => Promise<string>,
+  downloadMs?: number,
+): Promise<string> => {
   if (!/^https?:\/\//i.test(source)) return await use(source);
   const dir = mkdtempSync(join(tmpdir(), "dori-audio-"));
   try {
     let file: string;
     try {
       const url = new URL(source);
-      const response = await fetch(url);
+      const response = await fetch(url, downloadMs ? { signal: AbortSignal.timeout(downloadMs) } : {});
       if (!response.ok) throw new TranscriptionError(`transcribe: GET ${url.pathname} answered ${response.status}`);
       file = join(dir, basename(url.pathname) || "audio");
       writeFileSync(file, new Uint8Array(await response.arrayBuffer()), { mode: 0o600, flag: "wx" });
@@ -60,12 +64,17 @@ const tagIds = (forum: DcChannel, names: readonly string[]): string[] =>
     );
   });
 
-export const sendDiscord: Command = async ({ need, opt, config }) => {
+export const sendDiscord: Command = async ({ need, opt, values, config }) => {
   const thread = opt("thread");
   const to = thread === undefined ? need("to") : undefined;
   const text = need("text");
-  const edit = opt("edit");
+  // An --edit given empty ("$UNSET") or not a message id is refused before any request: it must never post anew.
+  const edit = values["edit"] === undefined ? undefined : discordInboundEnv("--edit", opt("edit"));
   const kind = postKind(opt("kind"));
+  const rawReply = opt("reply");
+  const rawCloses = opt("closes");
+  const reply = rawReply === undefined ? undefined : discordInboundEnv("--reply", rawReply);
+  const closes = rawCloses === undefined ? undefined : discordInboundEnv("--closes", rawCloses);
   const dc = client();
   let target: string;
   if (thread !== undefined) target = discordInboundEnv("--thread", thread);
@@ -75,12 +84,12 @@ export const sendDiscord: Command = async ({ need, opt, config }) => {
       die(`${channel.id} is a forum: post with dori thread discord create, or pass --thread`);
     target = channel.id;
   }
-  if (edit) return await dc.edit(target, edit, text);
-  const id = await dc.send(target, text);
+  if (edit !== undefined) return await dc.edit(target, edit, text);
+  const id = await dc.send(target, text, reply);
   // The post is out: print its id before the log line so a log fault never hides it and invites a duplicate send.
   console.log(`SENT ${id}`);
   try {
-    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind);
+    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind, { reply, closes });
   } catch (e) {
     console.log(`WARN sent-log ${id}: ${(e as Error).message}`);
   }

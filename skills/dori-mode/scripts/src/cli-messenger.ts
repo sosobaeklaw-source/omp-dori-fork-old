@@ -32,6 +32,9 @@ const send: Command = async (cli) => {
   const edit = opt("edit");
   const token = (name: string) => process.env[name] ?? die(`${name} is not set`);
   if (platform === "slack") {
+    // An --edit given empty ("$UNSET") or not a message ts is refused before any request: it must never post anew.
+    if (values["edit"] !== undefined && !/^\d+\.\d+$/.test(edit ?? ""))
+      die("--edit must be a Slack message ts, such as 1700000000.000100");
     const slack = new Slack(
       fetchHttp,
       realClock,
@@ -138,6 +141,9 @@ const telegramInbound = async (stateDir: string, minutes: number): Promise<void>
   );
 };
 
+const VOICE_DOWNLOAD_MS = 30_000;
+const VOICE_TRANSCRIBE_MS = 120_000;
+
 const inbound: Command = async ({ key, loopMinutes, config, values }) => {
   const minutes = loopMinutes();
   if (key === "telegram") return await telegramInbound(config.stateDir, minutes);
@@ -146,6 +152,17 @@ const inbound: Command = async ({ key, loopMinutes, config, values }) => {
       config.stateDir,
       values["gateway"] === true,
       values["loop"] === undefined ? 3 / 60 : minutes,
+      // Bounded: the receiver holds later messages behind a voice one, so a stuck download or model must give up
+      // (the voice message then prints as it arrived, with a WARN) instead of stalling the owner's inbox.
+      config.hooks.transcribe?.length
+        ? (url) =>
+            withLocalAudio(
+              url,
+              (file) =>
+                transcribe((argv) => run(argv, { timeoutMs: VOICE_TRANSCRIBE_MS }), config.hooks.transcribe, file),
+              VOICE_DOWNLOAD_MS,
+            )
+        : undefined,
     );
   if (key !== "slack") die("inbound supports slack, telegram or discord");
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));
@@ -154,10 +171,12 @@ const inbound: Command = async ({ key, loopMinutes, config, values }) => {
   const me = String((await slack.call("auth.test", {}))["user_id"] ?? die("auth.test returned no user_id"));
   console.log("INBOUND_READY slack");
   await every(minutes, async () => {
-    for (const i of await pollSlackInbound(slack, ledger, { selfUserId: me }))
+    // Full text, JSON-escaped on one line, as Telegram's: a monitor reads nothing but this line.
+    await pollSlackInbound(slack, ledger, { selfUserId: me }, (i) =>
       console.log(
-        `INBOUND ${i.source} ${i.channel} ${i.threadTs ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify((i.text ?? "").slice(0, 200))}`,
-      );
+        `INBOUND ${i.source} ${i.channel} ${i.threadTs ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify(i.text ?? "")}`,
+      ),
+    );
   });
 };
 

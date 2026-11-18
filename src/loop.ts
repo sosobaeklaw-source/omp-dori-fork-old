@@ -8,6 +8,7 @@ import { loopLaneModel } from "./lane-model.ts";
 import { startLane } from "./lanes.ts";
 import { audit, HOUR } from "./loop-audit.ts";
 import { acquire, holds, release } from "./loop-lock.ts";
+import { auditOrders } from "./loop-orders.ts";
 import { refText } from "./refs.ts";
 import type { LoopRun } from "./store-types.ts";
 
@@ -184,9 +185,12 @@ export async function loopTick(d: Deps, opts: LoopOpts = {}): Promise<LoopRun> {
     if (last && !opts.force && d.now() - last.at < interval) {
       return { at: d.now(), skipped: `ran ${Math.floor((d.now() - last.at) / 60_000)}m ago`, ...empty };
     }
-    const run: LoopRun = { at: d.now(), synced: [], findings: [], started: [], held: [], asked: [] };
+    // `told` carries the last report that reached the lead; a record from before the field existed counts as told when it ran.
+    const told = last ? (last.told ?? last.at) : 0;
+    const run: LoopRun = { at: d.now(), told, synced: [], findings: [], started: [], held: [], asked: [] };
     await sync(d, run);
     await audit(d, run);
+    auditOrders(d, run);
     await pull(d, run, maxLanes, maxStarts, opts.maxLoad, lock.nonce);
     ask(d, run);
     const items = d.store.items();
@@ -205,11 +209,12 @@ export async function loopTick(d: Deps, opts: LoopOpts = {}): Promise<LoopRun> {
     };
     const record = d.store.saveRun(run);
     try {
-      await tellLead(d, summary(run), "loop");
+      // QUEUED reaches the lead on its next flush; no lead (undefined) reaches nobody, so the reminder stays due.
+      if (await tellLead(d, summary(run), "loop")) run.told = run.at;
     } catch (e) {
       run.findings.push(`report to the lead failed: ${e instanceof Error ? e.message : String(e)}`);
-      d.store.saveRun(run, record);
     }
+    d.store.saveRun(run, record);
     return run;
   } finally {
     release(d, lock.nonce);

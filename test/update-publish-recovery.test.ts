@@ -143,7 +143,8 @@ process.exit(await runUpdate(["check", "--config", ${JSON.stringify(config)}]));
   );
   const codes = await Promise.all(children.map((child) => child.exited));
   expect(codes).toContain(0);
-  expect(codes.every((code) => code === 0 || code === 2)).toBe(true);
+  // The other controller either holds (2) or finds the winner's live lock and leaves it for a retry (5).
+  expect(codes.every((code) => code === 0 || code === 2 || code === 5)).toBe(true);
   expect(git(f.target, "rev-list", "--count", "main")).toBe("3");
   expect(readJob(f.config.root, f.job.id).commands).toEqual(commands);
   expect(readState(f.updater.context).baseline).toBe(f.job.upstream);

@@ -38,7 +38,7 @@ flowchart TD
 
 **`v0.1.2`는 Linux x64 + herdr + Discord용 GitHub prerelease입니다.** Bun **1.4.4**와 native OMP **18.18.8**은 테스트 기준이자 최소 버전입니다. 더 높은 버전과 다른 Linux 배포판이 자동으로 검증되는 것은 아닙니다.
 
-macOS와 hc는 CI 범위와 소스 `main`의 어댑터를 유지하며 실제 소비자 preview 지원 대상에서는 제외됩니다. Slack과 Telegram은 소스 기능으로 남아 있습니다. 이 지원 범위가 독립 외부 사용자 beta 완료나 모든 provider·기능의 검증을 뜻하지는 않습니다.
+소비자 구현은 manifest가 명시적으로 선언한 macOS arm64/hc 격리 릴리스도 지원합니다. 이전 manifest는 Linux x64/herdr만 지원하며 지원하지 않는 조합은 중단됩니다. 이는 macOS 릴리스가 게시되었거나 배포되었다는 뜻이 아닙니다. Slack과 Telegram은 소스 기능으로 남아 있습니다. 이 범위가 독립 외부 사용자 beta 완료나 모든 provider·기능의 검증을 뜻하지는 않습니다.
 
 **현재 소스 `main`:** 기본 설치는 검증된 소스로 수정 OMP 18.20.0과 고정된 b215 ULW overlay를 준비합니다. PATH의 stock OMP는 필수 조건도 대체품도 아닙니다. 같은 버전의 공식 native addon을 사용하며 Cargo는 필요하지 않습니다. 생성된 `omp` wrapper를 사용하고, 사용자 toolchain은 명시적 override로 취급합니다. [소스 bundle 계약](docs/releases.md#current-source-bundle). 아래의 변경 불가 `v0.1.2` 배포물과 과거 요구 조건은 그대로입니다.
 
@@ -79,6 +79,8 @@ export PATH="$HOME/.dori/bin:$PATH"
 모든 checksum이 통과한 뒤에만 설치기를 실행하세요. Checksum은 신뢰한 릴리스 파일의 일관성을 확인하며 독립 서명을 뜻하지 않습니다. 설치기는 manifest·archive와 고정된 공개 omp-ulw 의존성도 검증합니다. `--from`을 사용해도 첫 설치에서는 해당 의존성을 받는 익명 git 네트워크 접근이 필요할 수 있습니다. 명시적 실행 경로는 `~/.dori/bin/dori`이며 원하면 PATH 설정을 본인 shell 설정 파일에 보관하세요. GitHub CLI나 GitHub 쓰기 권한은 필요하지 않습니다.
 
 설치는 에이전트·수신기·watcher·presence 프로세스·service·harness·추론 요청을 **시작하지 않습니다**. 기존 Dori 세션을 재개하면 그 세션에 기록된 monitor가 복원될 수 있으며, 새 설치는 monitor를 만들지 않습니다.
+
+macOS arm64/hc에서는 위 Linux 예시가 아닌 해당 capability를 선언한 검증된 릴리스를 사용하세요. Bootstrap 기본값은 `~/.omp-dori`와 hc이며 `--home`과 `--runtime`으로 절대 경로와 runtime을 지정합니다. 전역 검색 대신 로컬 `~/.omp-dori/bin/omp-dori`와 `~/.omp-dori/bin/dori`를 사용하세요. 운영자가 업데이트를 직접 확인·설치하며 백그라운드 updater나 게시 정책은 활성화되지 않습니다. 업데이트와 rollback은 각 릴리스의 정확한 의존성 pin을 유지합니다. 옵션과 중단 조건, 소스 설치를 중지한 뒤 안전하게 이전하는 절차는 [격리 소비자 안내](docs/releases.md#isolated-macos-arm64hc-consumer)를 참조하세요.
 
 ### 3. 본인 환경 설정
 

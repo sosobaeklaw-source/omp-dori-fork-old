@@ -59,7 +59,7 @@ const argvElements = (line: string): string[] | null => {
 };
 const argvReport = (line: string): string | null => {
   const last = argvElements(line)?.at(-1);
-  return last !== undefined && last.startsWith("[REPORT]") ? last : null;
+  return last?.startsWith("[REPORT]") ? last : null;
 };
 const reportCandidate = (l: string): string | null => {
   if (!l.includes("[REPORT]")) return l;
@@ -80,6 +80,7 @@ export type SweepAct = {
     | "nudged"
     | "posted"
     | "no-report"
+    | "post-failed"
     | "pending-report"
     | "stale-report"
     | "working-while-paused"
@@ -94,6 +95,10 @@ export type SweepAct = {
 
 const lastHeard = (lane: Lane): number => lane.lastReplyAt ?? Date.parse(lane.openedAt);
 
+/** Records the sweep's own fields on the lane as stored now, so a claim, objection or pause written meanwhile stays. */
+const remember = (deps: FlowDeps, key: string, patch: Partial<Lane>) =>
+  deps.registry.update(key, (current) => current && { ...current, ...patch });
+
 export const freshnessTick = async (deps: FlowDeps, home: string): Promise<SweepAct[]> => {
   const acts: SweepAct[] = [];
   const now = deps.clock.now();
@@ -102,9 +107,15 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
   for (const lane of await deps.registry.open()) {
     if (statusOf(lane) === "paused") {
       const checked = await checkPausedLane(deps, lane);
-      if (checked && checked.lane.lastFreshnessNote !== "working-while-paused") {
-        // Reported once per working stretch (the note clears when the lane goes idle), so the lead can ask; it stays paused.
-        await deps.registry.write({ ...checked.lane, lastFreshnessNote: "working-while-paused" });
+      // Reported once per working stretch (the note clears when the lane goes idle), so the lead can ask; it stays paused.
+      if (
+        checked &&
+        checked.lane.lastFreshnessNote !== "working-while-paused" &&
+        (await deps.registry.transition(checked.lane, (current) => ({
+          ...current,
+          lastFreshnessNote: "working-while-paused",
+        })))
+      ) {
         acts.push({
           kind: "working-while-paused",
           lane: lane.key,
@@ -119,8 +130,6 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
     let previous: Progress | null = null;
     let progress: Progress | null = null;
     let supervisedHung = false;
-    // The lane as last written here, so a later write keeps the recorded supervision error.
-    let latest: Lane = lane;
     if (lane.reportProtocol === "jsonl-v1") {
       try {
         previous = reports.read(lane.key);
@@ -134,14 +143,11 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
           const detail = error instanceof Error ? error.message : String(error);
           if (detail !== lane.lastSupervisionError) {
             acts.push({ kind: "supervision-error", lane: lane.key, detail });
-            latest = { ...lane, lastSupervisionError: detail };
-            await deps.registry.write(latest);
+            await remember(deps, lane.key, { lastSupervisionError: detail });
           }
         }
-        if (supervised && lane.lastSupervisionError) {
-          latest = { ...lane, lastSupervisionError: undefined };
-          await deps.registry.write(latest);
-        }
+        if (supervised && lane.lastSupervisionError)
+          await remember(deps, lane.key, { lastSupervisionError: undefined });
         for (const detail of supervised?.alerts ?? []) {
           acts.push({
             kind: supervised?.state === "blocked" ? "blocked" : supervised?.state === "stalled" ? "stalled" : "warning",
@@ -158,7 +164,7 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
         const note = `journal-error|${error.message}`;
         if (note !== lane.lastFreshnessNote) {
           acts.push({ kind: "journal-error", lane: lane.key, detail: error.message });
-          await deps.registry.write({ ...lane, lastFreshnessNote: note });
+          await remember(deps, lane.key, { lastFreshnessNote: note });
         }
         continue;
       }
@@ -171,7 +177,7 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
     const running = !progress || progress.state === "running";
     const heard = Math.max(lastHeard(lane), progress?.lastReport ? Date.parse(progress.lastReport.at) : 0);
     const silentMin = Math.round((now - heard) / 60_000);
-    let current = latest;
+    let current = lane;
     if (running && silentMin >= deps.config.nudgeAfterMin && (current.lastNudgeAt ?? 0) < heard) {
       const delivery = await sendVerified(
         runtimesOf(deps),
@@ -180,7 +186,7 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
         `[LEAD] your work thread has had no update for ${silentMin} min. Post a 1-2 sentence progress line (done since last, next) and keep its status true.`,
       );
       current = { ...current, lastNudgeAt: now };
-      await deps.registry.write(current);
+      await remember(deps, lane.key, { lastNudgeAt: now });
       acts.push({ kind: "nudged", lane: lane.key, detail: `${silentMin} min silent, delivery ${delivery}` });
     }
     const hook = deps.config.hooks.threadReply;
@@ -217,13 +223,22 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
       if (hold) {
         const note = `${hold.kind}|${hold.detail}|${report ?? ""}`;
         if (note !== current.lastFreshnessNote) acts.push({ kind: hold.kind, lane: lane.key, detail: hold.detail });
-        await deps.registry.write({ ...current, lastFreshnessNote: note });
+        await remember(deps, lane.key, { lastSeenReport: current.lastSeenReport, lastFreshnessNote: note });
         continue;
       }
       const text = `Progress (from the lane's last report): ${scrubForThread(report ?? "", home)}`;
-      await deps.run(fill(hook, { thread: lane.thread, text, key: lane.key }));
-      await deps.registry.write({
-        ...current,
+      const sent = await deps.run(fill(hook, { thread: lane.thread, text, key: lane.key }));
+      // Only a delivered report counts as posted: a failed hook leaves it unposted, so the next tick sends it again. Like
+      // a held-back report, the same failure is printed once, not on every retry.
+      if (sent.code !== 0) {
+        const detail = `thread hook failed (exit ${sent.code})`;
+        const note = `post-failed|${detail}|${report}`;
+        if (note !== current.lastFreshnessNote) acts.push({ kind: "post-failed", lane: lane.key, detail });
+        await remember(deps, lane.key, { lastSeenReport: current.lastSeenReport, lastFreshnessNote: note });
+        continue;
+      }
+      await remember(deps, lane.key, {
+        lastSeenReport: current.lastSeenReport,
         lastAutoReplyAt: now,
         lastPostedReport: report ?? undefined,
         lastFreshnessNote: undefined,

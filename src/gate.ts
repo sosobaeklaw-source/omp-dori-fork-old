@@ -8,6 +8,9 @@ import type { MergeOutcome } from "./telemetry.ts";
 
 export type PrRef = { repo: string; number: number; id: string };
 
+/** The most a receipt's summary keeps of the reviewer's output; a longer one is cut to its tail and kept whole beside the receipt. */
+export const SUMMARY_MAX = 64 * 1024;
+
 export function parsePr(s: string): PrRef {
   const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(s);
   if (!m) throw new Refusal(`PR must look like owner/repo#123, got ${s}`);
@@ -20,9 +23,37 @@ async function gh(d: Deps, argv: readonly string[]): Promise<string> {
   return r.stdout;
 }
 
-export async function headSha(d: Deps, pr: PrRef): Promise<string> {
+/** How long the head lookup may take before the PR view's head is used. */
+export const HEAD_LOOKUP_MS = 20_000;
+
+/**
+ * The PR head. Right after a push GitHub's PR view can still name the previous commit, so the head of the base
+ * repository's `refs/pull/<n>/head`, read through `gh api` (already signed in, never asks at a terminal; a branch name
+ * could also be a fork's or the base's own), wins when the two differ. A lookup that fails, names no commit or takes
+ * longer than `ms` (the process is killed) leaves the PR view's head.
+ */
+export async function headSha(d: Deps, pr: PrRef, ms: number = HEAD_LOOKUP_MS): Promise<string> {
   const out = JSON.parse(await gh(d, ["pr", "view", String(pr.number), "--repo", pr.repo, "--json", "headRefOid"]));
-  return String(out.headRefOid);
+  const viewed = String(out.headRefOid);
+  let kill: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      kill?.();
+      resolve(undefined);
+    }, ms);
+  });
+  const ask = d
+    .exec("gh", ["api", `repos/${pr.repo}/git/ref/pull/${pr.number}/head`, "--jq", ".object.sha"], {
+      onSpawn: (proc) => {
+        kill = () => proc.kill();
+      },
+    })
+    .catch(() => undefined);
+  const remote = await Promise.race([ask, late]);
+  clearTimeout(timer);
+  const answer = remote?.code === 0 ? remote.stdout.trim() : "";
+  return /^[0-9a-f]{40}$/.test(answer) ? answer : viewed;
 }
 
 /** Runs a fresh, non-interactive reviewer session pinned to the PR head and records its verdict as a receipt. */
@@ -66,13 +97,20 @@ export async function review(
   }
   if (res.code !== 0) throw new Error(`reviewer exited ${res.code}: ${res.stderr.trim()}`);
   const verdict = last[1] as "CLEAR" | "BLOCK";
+  const output = res.stdout.trim();
+  let summary = output;
+  if (output.length > SUMMARY_MAX) {
+    const whole = join(d.store.root, "receipts", `${pr.id.replaceAll("/", "__").replace("#", "_")}@${sha}.full.txt`);
+    writeFileSync(whole, output, { mode: 0o600 });
+    summary = `[output cut to its last ${SUMMARY_MAX} of ${output.length} characters; the whole output is in ${whole}]\n${output.slice(-SUMMARY_MAX)}`;
+  }
   d.store.saveReceipt({
     pr: pr.id,
     sha,
     verdict,
     model: hook ? "hook" : (model ?? "default"),
     at: d.now(),
-    summary: res.stdout.trim().slice(-4000),
+    summary,
   });
   d.usage.record({ name: "dori.review_completed", verdict });
   return { verdict, sha };

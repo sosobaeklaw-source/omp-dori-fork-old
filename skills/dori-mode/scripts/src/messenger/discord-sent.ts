@@ -3,7 +3,9 @@
  *
  * `dori send discord` appends one line per post to `<stateDir>/discord-sent.log`: `<post id>\t<lane>\t<kind>`, the
  * lane from DORI_LANE and the kind from `--kind seo|card|video|legal|all`; a post sent without `--kind` (a status
- * line, an answer) is logged as `-`. Every owner reply to a post logged as `seo`, `card` or `video` goes into the
+ * line, an answer) is logged as `-`. `--reply <id>` (sent as a reply to that message) and `--closes <id>` (this post is
+ * the result or last answer for that owner message) add `\treply=<id>` and `\tcloses=<id>` at the end of the line, which
+ * `tools/open_orders.ts` reads. Every owner reply to a post logged as `seo`, `card` or `video` goes into the
  * harness home's owner ledger (`반복지적.md`), verbatim through `addEntry` under that kind — an approval like "ㄱ"
  * included, since nothing reads the words. `legal` and `all` posts are logged but their replies stay out: the ledger is
  * copied into outside writing-model requests, and a reply there can carry a client's name or case facts, which only a
@@ -12,7 +14,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { addEntry, KINDS, ledgerPath } from "../../../../../src/writer-request.ts";
+import { addEntry, KINDS, ledgerPath } from "../../../../../src/writer-ledger.ts";
 import type { DiscordInbound } from "./discord-inbound-api.ts";
 import { MessengerError } from "./http.ts";
 
@@ -26,9 +28,16 @@ export const postKind = (kind: string | undefined): string => {
   return kind;
 };
 
-export const recordSent = (stateDir: string, postId: string, lane: string | undefined, kind: string): void => {
+export const recordSent = (
+  stateDir: string,
+  postId: string,
+  lane: string | undefined,
+  kind: string,
+  marks: { reply?: string | undefined; closes?: string | undefined } = {},
+): void => {
   mkdirSync(stateDir, { recursive: true });
-  appendFileSync(sentLog(stateDir), `${postId}\t${lane?.trim() || "-"}\t${kind}\n`);
+  const tail = `${marks.reply ? `\treply=${marks.reply}` : ""}${marks.closes ? `\tcloses=${marks.closes}` : ""}`;
+  appendFileSync(sentLog(stateDir), `${postId}\t${lane?.trim() || "-"}\t${kind}${tail}\n`);
 };
 
 /** The kind a post was sent with (`-` for a non-result post), or undefined when it is not in the log. */

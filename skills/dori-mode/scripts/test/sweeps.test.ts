@@ -187,14 +187,18 @@ test("a [REPORT] template with an unfilled placeholder is source, not a report: 
   const screen = [
     emitted,
     'print(f"[REPORT] demo-lane | milestone | {message}")',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell placeholder, not a template
     'echo "[REPORT] demo-lane | milestone | ${message}"',
   ].join("\n");
   expect(lastReportLine(screen, "demo-lane")).toBe(emitted);
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell placeholder, not a template
   expect(lastReportLine('echo "[REPORT] demo-lane | done | ${message}"', "demo-lane")).toBeNull();
   expect(lastReportLine("[REPORT] demo-lane | done | PR #12 merged", "demo-lane")).toBe(
     "[REPORT] demo-lane | done | PR #12 merged",
   );
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell placeholder, not a template
   expect(lastReportLine("[REPORT] demo-lane | milestone | added getUser({id}) and ${HOME} docs", "demo-lane")).toBe(
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell placeholder, not a template
     "[REPORT] demo-lane | milestone | added getUser({id}) and ${HOME} docs",
   );
 });

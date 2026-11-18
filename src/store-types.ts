@@ -114,6 +114,8 @@ export type HostLoad = { load1: number; cores: number; memFreePct: number };
 
 export type LoopRun = {
   at: number;
+  /** When a run's report last reached the lead (0: never), carried over runs that failed to tell it: reminders count from it. */
+  told?: number;
   skipped?: string;
   status?: {
     lanes: number;

@@ -244,6 +244,7 @@ await stopChildren();
     writeHealth,
     observe,
     sendLine: (line: string) => child.stdin!.write(`${line}\n`),
+    stdout: child.stdout!,
     closeNativeInput: () => (child.stdio[3] as Writable).end(),
   };
 }

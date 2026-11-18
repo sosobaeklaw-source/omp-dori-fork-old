@@ -110,31 +110,59 @@ def pirate_ships() -> tuple[list[dict], list[str]]:
             top = max(efforts, key=lambda e: EFFORT_RANK.get(e, -1)) if efforts else None
             rank = EFFORT_RANK.get(top, -1) if top else (0.5 if r.get("supported") else -1)
             models.append({"ship": ship, "base": base, "key": key, "id": m["id"], "effort": top, "rank": rank,
+                           "efforts": efforts,
                            "google": bool(GOOGLE.search(m["id"] + " " + str(m.get("owned_by") or "")))})
     return sorted(models, key=lambda x: -x["rank"]), down
 
 
-def call_pirate(out: Path, prompt: str, m: dict) -> dict:
-    name = f"pirate__{m['ship']}__{m['id'].replace('/', '_')}"
-    head = {"branch": "pirate", "ship": m["ship"], "requested": m["id"], "effort": m["effort"] or "-"}
+def is_timeout(e: Exception) -> bool:
+    return isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+
+
+def lower_effort(m: dict, effort: str | None) -> str | None:
+    """The model's next listed effort below `effort` (high -> medium, ...); None when there is none."""
+    below = [e for e in m.get("efforts") or [] if EFFORT_RANK.get(e, -1) < EFFORT_RANK.get(effort, -1)]
+    return max(below, key=lambda e: EFFORT_RANK.get(e, -1)) if below else None
+
+
+def ask_pirate(prompt: str, m: dict, effort: str | None) -> tuple[dict, str, bool]:
+    """One call. Returns (attempt record, answer text, timed_out)."""
     body = {"model": m["id"], "messages": [{"role": "user", "content": prompt}]}
-    if m["effort"]:
-        body["reasoning_effort"] = m["effort"]
-    t0 = time.time()
+    if effort:
+        body["reasoning_effort"] = effort
+    att, t0, timed_out = {"effort": effort or "-"}, time.time(), False
     try:
         r = http_json(m["base"] + "/chat/completions", {"authorization": "Bearer " + m["key"],
                                                          "x-opencode-session": "redteam-" + uuid.uuid4().hex[:12]},
                       body, timeout=900)
         text = (r["choices"][0]["message"].get("content") or "").strip()
-        head.update({"status": "ok" if text else "empty", "model_shown": r.get("model", "-"), "chars": len(text),
-                     "finish_reason": r["choices"][0].get("finish_reason"), "usage": json.dumps(r.get("usage"))})
+        att.update({"status": "ok" if text else "empty", "model_shown": r.get("model", "-"), "chars": len(text),
+                    "finish_reason": r["choices"][0].get("finish_reason"), "usage": json.dumps(r.get("usage"))})
     except Exception as e:  # each model's failure is its own result
         detail = e.read().decode(errors="replace")[:1500] if hasattr(e, "read") else ""
-        text = ""
-        head.update({"status": "error", "model_shown": "-", "chars": 0, "error": f"{e} {detail}".strip()})
-    head["seconds"] = round(time.time() - t0)
-    write_model_file(out / f"{name}.md", head, text or head.get("error", ""))
-    return {"branch": name, "status": head["status"], "model": head["model_shown"], "chars": head["chars"], "text": text}
+        text, timed_out = "", is_timeout(e)
+        att.update({"status": "timeout" if timed_out else "error", "model_shown": "-", "chars": 0,
+                    "error": f"{e} {detail}".strip()})
+    att["seconds"] = round(time.time() - t0)
+    return att, text, timed_out
+
+
+def call_pirate(out: Path, prompt: str, m: dict) -> dict:
+    """Ask at the model's top effort; on a timeout, ask once more one effort level lower."""
+    name = f"pirate__{m['ship']}__{m['id'].replace('/', '_')}"
+    att, text, timed_out = ask_pirate(prompt, m, m["effort"])
+    attempts = [att]
+    retry = lower_effort(m, m["effort"]) if timed_out else None
+    if retry:
+        att, text, _ = ask_pirate(prompt, m, retry)
+        attempts.append(att)
+    head = {"branch": "pirate", "ship": m["ship"], "requested": m["id"], **att,
+            "seconds": sum(a["seconds"] for a in attempts)}
+    if len(attempts) > 1:
+        head["attempts"] = json.dumps(attempts, ensure_ascii=False)
+    write_model_file(out / f"{name}.md", head, text or att.get("error", ""))
+    return {"branch": name, "status": att["status"], "model": att["model_shown"], "chars": att["chars"],
+            "attempts": attempts, "text": text}
 
 
 def run_pirates(out: Path, prompt: str, material: str) -> list[dict]:

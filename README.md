@@ -38,7 +38,7 @@ flowchart TD
 
 **`v0.1.2` is a GitHub prerelease for Linux x64 + herdr + Discord.** Bun **1.4.4** and native OMP **18.18.8** are the tested baseline and minimum versions. Newer versions and other Linux distributions are not automatically verified.
 
-macOS and hc have CI coverage and adapters on source `main`; they are outside the supported live consumer preview. Slack and Telegram remain source features. This scope does not imply an independent external-user beta or that every provider and surface has been tested.
+The consumer implementation also supports isolated macOS arm64/hc releases when the manifest explicitly declares that profile. Legacy manifests support Linux x64/herdr only; unsupported profiles hold. This is not a claim that a macOS release has been published or rolled out. Slack and Telegram remain source features. This scope does not imply an independent external-user beta or that every provider and surface has been tested.
 
 **Current source `main`:** source installation and newly built releases provision patched OMP 18.20.0 plus the bound b215 ULW overlay by default. Stock OMP on PATH is not a prerequisite or a substitute. Both patches and their upstream/result identities are verified, with an official version-matched native addon and no Cargo requirement. Use the generated `omp` wrapper; explicit custom toolchains remain advanced overrides. See [the source-bundle contract](docs/releases.md#current-source-bundle). The published `v0.1.2` instructions below retain their older, immutable contract; this source change does not overwrite those assets or claim new installation QA.
 
@@ -79,6 +79,8 @@ export PATH="$HOME/.dori/bin:$PATH"
 Run the installer only after every checksum passes. Checksums establish consistency with the trusted release, not an independent signature; the installer also verifies the manifest, archive and pinned public omp-ulw dependency. `--from` can still need anonymous git access for that exact dependency on first install. The explicit launcher is `~/.dori/bin/dori`; retain the PATH export in your shell configuration if desired. GitHub CLI and GitHub write access are not required.
 
 Installation starts **nothing**: no agent, receiver, watcher, presence process, service, harness or inference request. Resuming an existing Dori session can restore its recorded monitors; a fresh installation creates none.
+
+For macOS arm64/hc, use a verified release that declares that capability, not the legacy Linux example above. The bootstrap defaults to `~/.omp-dori` and hc; `--home` and `--runtime` select an absolute home and runtime. Use local `~/.omp-dori/bin/omp-dori` and `~/.omp-dori/bin/dori`, not global discovery. The operator runs update checks and installs explicitly; no background updater or publication policy is enabled. Update and rollback retain the exact dependency pin for each release. For flags, holds and a safe stopped migration from source, see the [isolated consumer guide](docs/releases.md#isolated-macos-arm64hc-consumer).
 
 ### 3. Configure your own environment
 
