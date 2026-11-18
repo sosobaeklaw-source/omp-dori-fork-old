@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { formatRef } from "../../../../src/runtime/types.ts";
+import { laneWords } from "./monitor-command.ts";
 import { type Lane, sessionOf, statusOf } from "./registry.ts";
 import type { ProgressState } from "./reports.ts";
 
@@ -65,17 +66,19 @@ const tokens = (value: unknown): string[] =>
         .map((t) => t.replace(/^['"]+|['"]+$/g, ""))
         .filter(Boolean)
     : [];
+// A command's own words (monitor-command.ts) never name its lane: `dori inbound slack` is not lane "slack".
 const tiedBy = (monitor: Monitor, lane: Lane): string | null => {
   const ref = sessionOf(lane);
   const panes = [lane.pane, ref?.id, ref ? formatRef(ref) : undefined].filter((id): id is string => !!id);
   if (Array.isArray(monitor.argv)) {
     if (panes.some((id) => monitor.argv?.includes(id))) return `${lane.key}:argv:pane`;
-    if (monitor.argv.includes(lane.key)) return `${lane.key}:argv:key`;
+    if (laneWords(monitor.argv, monitor.cwd).includes(lane.key)) return `${lane.key}:argv:key`;
   }
   for (const field of TIED_FIELDS) {
     const words = tokens(monitor[field]);
     if (panes.some((id) => words.includes(id))) return `${lane.key}:${field}:pane`;
-    if (words.includes(lane.key)) return `${lane.key}:${field}:key`;
+    if ((field === "command" ? laneWords(monitor.command, monitor.cwd) : words).includes(lane.key))
+      return `${lane.key}:${field}:key`;
   }
   return null;
 };

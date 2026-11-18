@@ -15,6 +15,7 @@ import {
 import { assertNoLiveDori } from "./live.ts";
 import { validateReleaseManifest } from "./manifest.ts";
 import { assertLock } from "./provision.ts";
+import { preflightReferences } from "./references.ts";
 import type { ReleaseManifest } from "./types.ts";
 
 export type InstalledState = {
@@ -32,7 +33,7 @@ export const releasePath = (paths: ConsumerPaths, manifest: ReleaseManifest): st
 export const manifestPath = (paths: ConsumerPaths, manifest: ReleaseManifest): string =>
   join(paths.manifests, `${releaseId(manifest)}.json`);
 const nativeTarget = (paths: ConsumerPaths, state: InstalledState | undefined): string | undefined =>
-  state?.current.requirements.omp === "18.20.0"
+  paths.dori === join(paths.home, ".dori") && state?.current.requirements.omp === "18.20.0"
     ? join(releasePath(paths, state.current), "scripts/consumer/omp")
     : undefined;
 
@@ -60,8 +61,10 @@ export function assertInstalledPointer(paths: ConsumerPaths, state: InstalledSta
     throw new Error(
       `Unmanaged or changed source pointer: ${paths.live}; preserve it and resolve ownership before installing`,
     );
-  if (pointer(join(paths.dori, "bin/omp")) !== nativeTarget(paths, state))
-    throw new Error("Unmanaged or changed native OMP pointer; preserve it and resolve ownership before installing");
+  if (paths.dori === join(paths.home, ".dori")) {
+    if (pointer(join(paths.dori, "bin/omp")) !== nativeTarget(paths, state))
+      throw new Error("Unmanaged or changed native OMP pointer; preserve it and resolve ownership before installing");
+  } else preflightReferences(paths);
 }
 
 /** Full retained source and exec-bit verification is required for both activation and rollback. */
@@ -110,8 +113,9 @@ export function recoverInstalled(paths: ConsumerPaths): InstalledState | undefin
   const actual = pointer(paths.live);
   const before = journal.before ? releasePath(paths, journal.before.current) : undefined;
   const after = releasePath(paths, journal.after.current);
-  const omp = join(paths.dori, "bin/omp");
-  const native = pointer(omp);
+  const omp = paths.dori === join(paths.home, ".dori") ? join(paths.dori, "bin/omp") : undefined;
+  const native = omp ? pointer(omp) : undefined;
+  if (!omp) preflightReferences(paths);
   if (native !== nativeTarget(paths, journal.before) && native !== nativeTarget(paths, journal.after))
     throw new Error("Native OMP pointer conflicts with interrupted activation; preserve it for inspection");
   let recovered: InstalledState | undefined;
@@ -123,7 +127,7 @@ export function recoverInstalled(paths: ConsumerPaths): InstalledState | undefin
     recovered = journal.before;
   } else throw new Error("Source pointer conflicts with interrupted activation; preserve it for inspection");
   const expectedNative = nativeTarget(paths, recovered);
-  if (native !== expectedNative) {
+  if (omp && native !== expectedNative) {
     assertNoLiveDori(paths);
     replacePointer(omp, native, expectedNative);
   }
@@ -142,23 +146,23 @@ export function activateRelease(paths: ConsumerPaths, before: InstalledState | u
   const journal: Journal = { version: 1, ...(before ? { before } : {}), after };
   saveJson(paths.journal, journal);
   const old = before ? releasePath(paths, before.current) : undefined;
-  const omp = join(paths.dori, "bin/omp");
+  const omp = paths.dori === join(paths.home, ".dori") ? join(paths.dori, "bin/omp") : undefined;
   const nativeBefore = nativeTarget(paths, before);
   const nativeAfter = nativeTarget(paths, after);
   try {
-    if (nativeBefore !== nativeAfter) replacePointer(omp, nativeBefore, nativeAfter);
+    if (omp && nativeBefore !== nativeAfter) replacePointer(omp, nativeBefore, nativeAfter);
     replacePointer(paths.live, old, target);
     saveJson(paths.state, after);
   } catch (error) {
     // The source pointer selects recovery if either rollback operation is itself interrupted.
     const source = pointer(paths.live);
-    const native = pointer(omp);
+    const native = omp ? pointer(omp) : undefined;
     if (source !== old && source !== target)
       throw new Error("Source pointer conflicts with interrupted activation; preserve it for inspection");
     if (native !== nativeBefore && native !== nativeAfter)
       throw new Error("Native OMP pointer conflicts with interrupted activation; preserve it for inspection");
     if (source === target) replacePointer(paths.live, target, old);
-    if (native !== nativeBefore) replacePointer(omp, native, nativeBefore);
+    if (omp && native !== nativeBefore) replacePointer(omp, native, nativeBefore);
     if (before) saveJson(paths.state, before);
     else removeState(paths);
     throw error;

@@ -21,6 +21,9 @@ export type DiscordInboundOptions = {
   all?: boolean;
 };
 
+/** Prints one owner message; a returned promise must settle before that message's cursor is saved. */
+export type Emit = (message: DiscordInbound) => unknown;
+
 /** Formats one unchanged text line followed by reply and attachment records for the existing single emit. */
 export const formatDiscordInbound = (message: DiscordInbound): string => {
   const id = `discord ${message.channel} ${message.message}`;
@@ -49,7 +52,7 @@ export const discordInbound = async (
   const explicit = opts.channelIds.map((id) => discordInboundEnv("DORI_DISCORD_CHANNEL_IDS", id));
   const request = inboundRequest(discord);
   const me = await request<{ id?: string; bot?: boolean }>("/users/@me");
-  if (!me || me.bot !== true || !isDiscordSnowflake(me.id)) {
+  if (me?.bot !== true || !isDiscordSnowflake(me.id)) {
     throw new MessengerError("Discord inbound requires an authenticated bot identity; use a bot token", 401);
   }
   const botId = me.id;
@@ -93,15 +96,13 @@ export const discordInbound = async (
       await attach(id);
     }
   };
-  const deliver = (message: Message, store: DiscordInboundStore, emit: (message: DiscordInbound) => void) => {
-    if (isOwnerMessage(message, ownerId, botId)) emit(toInbound(message));
+  /** An emit may finish later (a voice transcript); the cursor moves only once it has, so a crash replays it. */
+  const deliver = (message: Message, store: DiscordInboundStore, emit: Emit): void | Promise<void> => {
+    const printed = isOwnerMessage(message, ownerId, botId) ? emit(toInbound(message)) : undefined;
+    if (printed instanceof Promise) return printed.then(() => store.save(message.id));
     store.save(message.id); // Checkpoint only after successful delivery; filtered messages still advance the cursor.
   };
-  const pollChannel = async (
-    channelId: string,
-    store: DiscordInboundStore,
-    emit: (message: DiscordInbound) => void,
-  ): Promise<void> => {
+  const pollChannel = async (channelId: string, store: DiscordInboundStore, emit: Emit): Promise<void> => {
     const after = store.load();
     if (after === undefined) {
       throw new MessengerError("Discord inbound cursor disappeared; restore its state before retrying", 0);
@@ -125,7 +126,7 @@ export const discordInbound = async (
       before = oldest;
     }
     const ordered = [...pending.values()].sort((a, b) => (newer(a.id, b.id) ? 1 : newer(b.id, a.id) ? -1 : 0));
-    for (const message of ordered) deliver(message, store, emit);
+    for (const message of ordered) await deliver(message, store, emit);
   };
   await refresh();
   let polls = 0;
@@ -133,17 +134,17 @@ export const discordInbound = async (
     botId,
     channels: (): string[] => [...watched.keys()],
     /** Reads every watched channel from its cursor; the REST path and the Gateway backfill. */
-    async poll(emit: (message: DiscordInbound) => void): Promise<void> {
+    async poll(emit: Emit): Promise<void> {
       if (opts.all && ++polls % 100 === 0) await refresh(); // Pick up channels and threads created since start.
       for (const [channelId, store] of [...watched]) await pollChannel(channelId, store, emit);
     },
     /** Reconciles the watched set, then reads each channel from its cursor; used after a Gateway (re)connect. */
-    async sync(emit: (message: DiscordInbound) => void): Promise<void> {
+    async sync(emit: Emit): Promise<void> {
       await refresh();
       await this.poll(emit);
     },
     /** A MESSAGE_CREATE dispatch: delivered only when newer than its channel's cursor. */
-    accept(message: Message, emit: (message: DiscordInbound) => void): void {
+    accept(message: Message, emit: Emit): void | Promise<void> {
       if (!message || !isDiscordSnowflake(message.id) || !isDiscordSnowflake(message.channel_id)) return;
       let store = watched.get(message.channel_id);
       if (!store) {
@@ -157,7 +158,7 @@ export const discordInbound = async (
         throw new MessengerError("Discord inbound cursor disappeared; restore its state before retrying", 0);
       }
       if (!newer(message.id, cursor)) return;
-      deliver(message, store, emit);
+      return deliver(message, store, emit);
     },
   };
 };

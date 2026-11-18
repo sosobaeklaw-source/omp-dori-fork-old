@@ -81,7 +81,7 @@ export async function publishRelease(directory: string, distribution: Distributi
     );
   }
   const prepare = async (operation: string): Promise<void> => {
-    if (!release || release["draft"] !== true) throw new Error("Release draft changed before publication intent");
+    if (release?.["draft"] !== true) throw new Error("Release draft changed before publication intent");
     if (release["body"] === marker(body, operation)) {
       if (prepared !== operation) throw new Error(`Remote ${operation} intent is ambiguous; retained without replay`);
       return;

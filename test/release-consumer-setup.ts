@@ -23,6 +23,7 @@ import { digest, sourceManifest } from "../src/update/source.ts";
 const roots: string[] = [];
 const environmentKeys = [
   "HOME",
+  "PATH",
   "DORI_HOME",
   "DORI_CONFIG",
   "DORI_STATE_DIR",
@@ -115,13 +116,20 @@ export type ConsumerFixture = {
   readonly release: (payload: string) => { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string };
 };
 
-export function fixture(): ConsumerFixture {
+export function fixture(side = false): ConsumerFixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-consumer-")));
   if (roots.length === 0) onTestFinished(restore);
   roots.push(root);
-  const paths = consumerPaths(join(root, "home"));
+  const home = join(root, "home");
+  const paths = consumerPaths(home, join(home, side ? ".omp-dori" : ".dori"));
   for (const key of environmentKeys) {
     if (!environment.has(key)) environment.set(key, process.env[key]);
+  }
+  if (side) {
+    const native = join(root, "native-bin");
+    mkdirSync(native, { mode: 0o700 });
+    writeFileSync(join(native, "omp"), "#!/bin/sh\nprintf '18.18.8\\n'\n", { mode: 0o755 });
+    process.env["PATH"] = `${native}:${process.env["PATH"] ?? ""}`;
   }
   process.env["HOME"] = paths.home;
   process.env["DORI_HOME"] = paths.dori;
@@ -154,9 +162,18 @@ export function fixture(): ConsumerFixture {
     const contents: Record<string, string> = {
       "omp-ulw.lock": `${pin}\n`,
       "payload.txt": payload,
+      "skills/dori-mode/SKILL.md": `---\nname: dori-mode\ndescription: Dori commands\n---\nRelease skill\n${payload}`,
       "bin-entry.sh": "#!/bin/sh\nprintf 'release fixture\\n'\n",
       "skills/dori-mode/references/config.example.json": '{"runtime":"herdr","stateDir":"~/.dori/state"}\n',
     };
+    if (side)
+      contents["release-capabilities.json"] = JSON.stringify({
+        version: 1,
+        profiles: [
+          { platform: "linux", arch: "x64", runtime: "herdr" },
+          { platform: "darwin", arch: "arm64", runtime: "hc" },
+        ],
+      });
     for (const [path, bytes] of Object.entries(contents)) {
       mkdirSync(dirname(join(source, path)), { recursive: true, mode: 0o700 });
       writeFileSync(join(source, path), bytes, { mode: 0o600 });

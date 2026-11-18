@@ -29,11 +29,21 @@ const signalIo = (deps: FlowDeps, lane: Lane): SignalIo => ({
 
 const windowMs = (deps: FlowDeps): number => deps.config.closeAfterMin * 60_000;
 
+/**
+ * The line for a change refused because another writer moved the lane on (a claim, objection, pause or close) since it
+ * was read. The CLI exits 3 on it: nothing was recorded, so the lane is read again before deciding anew.
+ */
+export const movedOn = async (deps: FlowDeps, lane: Lane, what: string): Promise<string> => {
+  const current = await deps.registry.read(lane.key);
+  return `LANE_CHANGED ${lane.key} moved on while this ran (now ${current ? statusOf(current) : "not registered"}, was ${statusOf(lane)}); ${what} not recorded`;
+};
+
 export const claimDone = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<string> => {
   const at = iso(deps.clock);
-  await deps.registry.write(
-    withStatus(lane, "done-claimed", evidence, at, { claim: { at, evidence, emitted: false } }),
+  const claimed = await deps.registry.transition(lane, (current) =>
+    withStatus(current, "done-claimed", evidence, at, { claim: { at, evidence, emitted: false } }),
   );
+  if (!claimed) return movedOn(deps, lane, "done claim");
   const ref = sessionOf(lane);
   if (ref) {
     const closesAt = new Date(deps.clock.now() + windowMs(deps)).toISOString().slice(11, 16);
@@ -49,7 +59,10 @@ export const claimDone = async (deps: FlowDeps, lane: Lane, evidence: string): P
 
 export const objectDone = async (deps: FlowDeps, lane: Lane, reasons: readonly string[]): Promise<string> => {
   const at = iso(deps.clock);
-  await deps.registry.write(withStatus(lane, "not-done", reasons.join("; "), at, { objection: { at, reasons } }));
+  const objected = await deps.registry.transition(lane, (current) =>
+    withStatus(current, "not-done", reasons.join("; "), at, { objection: { at, reasons } }),
+  );
+  if (!objected) return movedOn(deps, lane, "objection");
   const ref = sessionOf(lane);
   if (ref)
     await sendVerified(
@@ -122,6 +135,11 @@ export const closeLane = async (
   const lines = checks.map((c) => `SIGNAL ${c.ok ? "OK " : "NOT"} ${c.signal} -> ${c.detail}`);
   if (checks.some((c) => !c.ok))
     return { closed: false, lines: [...lines, `REFUSED ${lane.key}: a Done signal is not live`] };
+  // The close is committed before anything irreversible, and only if nothing moved the lane on since it was read: an
+  // objection or new claim written meanwhile keeps it open, and one written after this finds it closed.
+  const at = iso(deps.clock);
+  if (!(await deps.registry.transition(lane, (current) => withStatus(current, "closed", note, at, { closedAt: at }))))
+    return { closed: false, lines: [...lines, await movedOn(deps, lane, "close")] };
   // Cost is recorded on a best-effort basis: a failing hook is printed and never keeps a verified lane open.
   try {
     const cost = await new Supervision({ ...deps, stateDir: deps.config.stateDir }, deps.config.supervision).close(
@@ -144,9 +162,8 @@ export const closeLane = async (
     const r = await deps.run(["git", "-C", root, "worktree", "remove", wt]);
     cleanup.push(r.code === 0 ? `worktree ${wt} removed` : `worktree ${wt} kept: ${r.err.slice(0, 120)}`);
   }
-  const at = iso(deps.clock);
   const receipt = { checks, note, cleanup };
-  await deps.registry.write(withStatus(lane, "closed", note, at, { closedAt: at, receipt }));
+  await deps.registry.update(lane.key, (current) => current && { ...current, receipt });
   if (lesson) {
     try {
       const added = new Lessons(deps.config.stateDir).add({ ...lesson, lane: lane.key, cwd: root }, deps.clock.now());
@@ -179,14 +196,20 @@ const settle = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<str
     .filter((c) => !c.ok)
     .map((c) => `${c.signal} -> ${c.detail}`);
   if (failing.length) return objectDone(deps, lane, failing);
-  const verified = withStatus(lane, "verified-done", "Done signals read back live", iso(deps.clock));
-  await deps.registry.write(verified);
+  // The checks above took pane, git and network round trips: an objection or new claim written meanwhile wins.
+  const verified = await deps.registry.transition(lane, (current) =>
+    withStatus(current, "verified-done", "Done signals read back live", iso(deps.clock)),
+  );
+  if (!verified) return movedOn(deps, lane, "verification");
   const result = await closeLane(deps, verified, `Done: ${evidence}`);
   if (!result.closed)
-    return objectDone(
-      deps,
-      (await deps.registry.read(lane.key)) ?? verified,
-      result.lines.filter((l) => l.startsWith("SIGNAL NOT")),
+    return (
+      result.lines.find((l) => l.startsWith("LANE_CHANGED")) ??
+      objectDone(
+        deps,
+        verified,
+        result.lines.filter((l) => l.startsWith("SIGNAL NOT")),
+      )
     );
   return `LANE_CLOSED ${lane.key} ${result.lines.at(-1)?.split(" ").slice(2).join(" ") ?? ""}`;
 };
@@ -198,9 +221,13 @@ export const watchTick = async (deps: FlowDeps): Promise<string[]> => {
     let lane = listed;
     const claim = listed.claim;
     if (!claim.emitted) {
+      const emitted = await deps.registry.transition(lane, (current) => ({
+        ...current,
+        claim: { ...claim, emitted: true },
+      }));
+      if (!emitted) continue;
       out.push(`LANE_DONE_CLAIMED ${lane.key} ${lane.pane ?? "-"} ${claim.evidence}`);
-      lane = { ...lane, claim: { ...claim, emitted: true } };
-      await deps.registry.write(lane);
+      lane = emitted;
     }
     if (deps.clock.now() - Date.parse(claim.at) < windowMs(deps)) continue;
     out.push(await settle(deps, lane, claim.evidence));

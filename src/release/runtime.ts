@@ -5,6 +5,17 @@ import { consumerPaths, owned, realDirectory, regularFile } from "./files.ts";
 import { assertNativeSource } from "./native.ts";
 import { assertSourceBundle, readSourceBundle, SourceBundleError } from "./source-bundle.ts";
 
+/** A loaded physical release binds its home independently of the caller's inherited Dori environment. */
+export function consumerReleaseHome(source: string): string | undefined {
+  if (
+    !/^[a-f0-9]{40}-[a-f0-9]{16}$/.test(basename(source)) ||
+    basename(dirname(source)) !== "releases" ||
+    basename(dirname(dirname(source))) !== "releases"
+  )
+    return undefined;
+  return dirname(dirname(dirname(source)));
+}
+
 /** Managed cache paths follow this loaded release's lock without changing the user's config. */
 export function resolveConsumerOmpUlwPath(
   configuredPath: string,
@@ -18,7 +29,11 @@ export function resolveConsumerOmpUlwPath(
     readonly useDefault?: boolean;
   } = {},
 ): string {
-  const paths = consumerPaths(home);
+  // The physical release, not inherited DORI_HOME, owns its dependency namespace.
+  const source = realpathSync(sourceRoot);
+  const doriHome = consumerReleaseHome(source);
+  if (!doriHome) return configuredPath;
+  const paths = consumerPaths(home, doriHome);
   const entry = relative(paths.dependencies, configuredPath);
   if (
     !useDefault &&
@@ -27,10 +42,6 @@ export function resolveConsumerOmpUlwPath(
   )
     return configuredPath;
 
-  // Resolve the helper's physical location at call time, never the mutable ~/.dori/src pointer.
-  const source = realpathSync(sourceRoot);
-  if (dirname(source) !== paths.releases || !/^[a-f0-9]{40}-[a-f0-9]{16}$/.test(basename(source)))
-    return configuredPath;
   try {
     owned(source);
     const lock = join(source, "omp-ulw.lock");
@@ -47,7 +58,7 @@ export function resolveConsumerOmpUlwPath(
     owned(dependency);
     if (!regularFile(join(dependency, "index.ts"))) throw new Error(`Missing consumer dependency entry: ${dependency}`);
     if (bundle) assertSourceBundle(dependency, bundle, home);
-    return entry.endsWith("/index.ts") ? join(dependency, "index.ts") : dependency;
+    return useDefault || entry.endsWith("/index.ts") ? join(dependency, "index.ts") : dependency;
   } catch (error) {
     throw new SourceBundleError(error instanceof Error ? error.message : String(error));
   }
@@ -62,8 +73,9 @@ export function resolveConsumerOmpCommand(
   }: { readonly home?: string; readonly sourceRoot?: string } = {},
 ): readonly string[] {
   const source = realpathSync(sourceRoot);
-  const paths = consumerPaths(home);
-  if (dirname(source) !== paths.releases || !/^[a-f0-9]{40}-[a-f0-9]{16}$/.test(basename(source))) return configured;
+  const doriHome = consumerReleaseHome(source);
+  if (!doriHome) return configured;
+  const paths = consumerPaths(home, doriHome);
   const manifest = JSON.parse(readFileSync(join(paths.manifests, `${basename(source)}.json`), "utf8"));
   if (manifest.requirements.omp !== "18.20.0") return configured;
   const first = configured[0] ?? "omp";
@@ -77,6 +89,14 @@ export function resolveConsumerOmpCommand(
     "--no-extensions",
     "-e",
     join(source, "extension"),
+    ...(paths.dori === join(paths.home, ".dori")
+      ? []
+      : [
+          "--config",
+          join(paths.dori, "omp.yml"),
+          "--config",
+          join(paths.root, "consumer-discovery", basename(source), "omp.yml"),
+        ]),
     ...configured.slice(1),
   ];
 }

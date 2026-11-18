@@ -33,7 +33,10 @@ export const syncRegistry = async (deps: FlowDeps, write: boolean): Promise<Sync
       drift.push(`${lane.key}: pane now runs session ${hit.id} (registry has ${lane.session})`);
     if (!lane.done) drift.push(`${lane.key}: empty Done line, so a done claim can never close it`);
     if (write && hit.id && hit.id !== lane.session)
-      await deps.registry.write({ ...lane, session: hit.id, sessionVia: hit.via });
+      await deps.registry.update(
+        lane.key,
+        (current) => current && { ...current, session: hit.id, sessionVia: hit.via },
+      );
     rows.push({
       key: lane.key,
       thread: lane.thread,

@@ -2,11 +2,12 @@ import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { takeInboxLock } from "../src/inbox-lock.ts";
 
 const REAL_READ = fs.readFileSync;
 const REAL_LINK = fs.linkSync;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 afterEach(() => mock.restore());
 
@@ -46,7 +47,12 @@ test("a takeover paused after reading a stale lock never frees or removes the lo
 
   expect(q).toBeDefined();
   expect({ p, r }).toEqual({ p: undefined, r: undefined });
-  expect(JSON.parse(REAL_READ(path, "utf8") as string)).toMatchObject({ pid: process.pid });
+  expect(JSON.parse(REAL_READ(path, "utf8") as string)).toEqual({
+    pid: process.pid,
+    host: hostname(),
+    at: 1,
+    nonce: expect.stringMatching(UUID),
+  });
   q?.();
   expect(fs.existsSync(path)).toBe(false);
 });
@@ -58,8 +64,8 @@ test("a takeover whose claimer died is finished by the next taker, once, and lea
   // The claim of a process that died part way through taking over the stale lock: itself stale.
   const exited = Bun.spawn(["true"]);
   await exited.exited;
-  const digest = new Bun.CryptoHasher("sha256").update(stale).digest("hex");
-  writeFileSync(`${path}.claim-${digest}`, JSON.stringify({ pid: exited.pid, host: hostname(), at: 0 }));
+  const digest = new Bun.CryptoHasher("sha256").update(basename(path)).update("\0").update(stale).digest("hex");
+  writeFileSync(join(dir, `.inbox-claim-${digest}`), JSON.stringify({ pid: exited.pid, host: hostname(), at: 0 }));
 
   const next = takeInboxLock(path, 1);
 

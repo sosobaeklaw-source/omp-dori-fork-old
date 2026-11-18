@@ -40,13 +40,20 @@ export async function managedBashFixture(options: Parameters<typeof foregroundFi
   writeFileSync(
     config.herdr,
     `#!${process.execPath}
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const operation = process.argv[process.argv.indexOf("pane") + 1];
 if (operation === "run") {
   appendFileSync(${JSON.stringify(effect)}, JSON.stringify(process.argv) + "\\n");
   process.exit(91);
 }
 const { front, status } = JSON.parse(readFileSync(${JSON.stringify(observation)}, "utf8"));
+// The live runtime refreshes its health heartbeat continuously; observing its pane stands in for that writer so the
+// 5s freshness bound measures this observation, not however long a loaded host took to reach it.
+const healthPath = ${JSON.stringify(join(config.stateDir, "runtime", `${encodeURIComponent(config.pane)}.json`))};
+if (existsSync(healthPath)) {
+  const health = JSON.parse(readFileSync(healthPath, "utf8"));
+  try { process.kill(health.pid, 0); writeFileSync(healthPath, JSON.stringify({ ...health, updatedAt: new Date().toISOString() }), { mode: 0o600 }); } catch {}
+}
 if (operation !== "get" && operation !== "process-info") throw new Error("unexpected pane operation");
 const result = operation === "get" ? { pane: { agent: "omp", agent_status: status } } : { process_info: front };
 console.log(JSON.stringify({ result }));

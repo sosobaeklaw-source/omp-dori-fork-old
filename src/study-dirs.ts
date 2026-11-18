@@ -14,7 +14,7 @@ export const STUDY_LIST_PY =
  */
 export function readStudyDirs(from: { python?: string; host?: string } = {}): string[] | undefined {
   const env = process.env["DORI_STUDY_DIRS"];
-  if (env && env.trim())
+  if (env?.trim())
     return [
       ...new Set(
         env

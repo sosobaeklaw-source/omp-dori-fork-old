@@ -66,6 +66,10 @@ test("a side install lives in ~/.omp-dori and leaves ~/.dori, the dori-mode link
   expect(description).toBeDefined();
   expect(description).not.toBe(original.match(/^description: (.+)$/m)?.[1]);
   expect(readlinkSync(join(side, "skills/omp-dori-mode/references"))).toBe(join(src, "skills/dori-mode/references"));
+  // And omp-dori omp never self-updates: OMP would overwrite this wrapper, the first omp on the side PATH.
+  expect(readFileSync(join(side, "bin/omp"), "utf8")).toContain(`--config ${join(side, "omp.yml")}`);
+  expect(readFileSync(join(side, "env.sh"), "utf8")).toContain(`export PATH=${join(side, "bin")}:`);
+  expect(Bun.YAML.parse(readFileSync(join(side, "omp.yml"), "utf8"))).toMatchObject({ update: { auto: false } });
 });
 
 test("a side install from a linked git worktree installs that checkout instead of cloning over it", () => {
