@@ -96,6 +96,9 @@ _TAG_ATTRS = {
 }
 _BLOCKS = {"paragraph", "heading", "list", "list-item", "table", "quote", "pullquote", "separator", "spacer", "group",
            "columns", "column", "details", "html", "preformatted", "code"}
+_BLOCK_KEYS = {"anchor", "align", "className", "level", "ordered", "reversed", "start", "lock", "metadata",
+               "textColor", "backgroundColor", "fontSize", "gradient", "style"}
+_STYLE_KEYS = {"color", "typography", "spacing", "border", "dimensions"}  # background* 는 그림이 되니 아예 없앤다
 _BLOCK_COMMENT = re.compile(r"<!-- /?wp:([a-z0-9-]+(?:/[a-z0-9-]+)?)(?: (\{(?:(?!-->)[^<>])*\}))? /?-->")
 _BLOCK_ATTR_MEDIA = re.compile(r"url|src|image|media|featured|\"ids?\"|//", re.I)
 _SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[A-Za-z][\w-]*")  # [dB(A)] 같은 소음 단위는 글자다(그런 단축코드는 없다)
@@ -166,8 +169,8 @@ def _body_images(content, where):
         name, attrs = m.group(1), m.group(2) or ""
         if name.removeprefix("core/") not in _BLOCKS:
             bad.append(f"wp:{name} 블록")
-        elif _BLOCK_ATTR_MEDIA.search(attrs):
-            bad.append(f"wp:{name} 블록 속성 {attrs[:30]}")
+        elif attrs:
+            bad += _block_attr_bad(name, attrs)
         pos = m.end()
     if m := _SHORTCODE.search(content):
         bad.append(f"단축코드 {m.group(0)}")
@@ -187,6 +190,41 @@ def _body_images(content, where):
     if bad:
         raise ReviewMissing(f"{where}: 본문에 확인할 수 없는 그림·외부 자원이 있다: {', '.join(dict.fromkeys(bad))}")
     return list(dict.fromkeys(p.urls))
+
+
+def _walk_block_attrs(obj, path=""):
+    """풀린 블록 속성을 걸어 다니며 확인할 수 없는 키·값을 찾는다(\\uXXXX·\\/ 이스케이프로 숨겨도 풀린 값을 본다)."""
+    off = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            full = k if path == "" else f"{path}.{k}"
+            if _BLOCK_ATTR_MEDIA.search(k):
+                off.append(f"키 {full}")
+            elif path == "" and k not in _BLOCK_KEYS:
+                off.append(f"키 {full}")
+            elif path == "metadata" and k != "name":  # bindings 은 서버가 검수 밖 글자로 바꿔 넣는다
+                off.append(f"키 {full}")
+            elif path == "style" and k not in _STYLE_KEYS:  # style.background* 는 렌더할 때 그림이 된다
+                off.append(f"키 {full}")
+            elif isinstance(v, (dict, list)):
+                off += _walk_block_attrs(v, full)
+            elif isinstance(v, str) and _BLOCK_ATTR_MEDIA.search(v):
+                off.append(f"값 {full}")
+    elif isinstance(obj, list):
+        for v in obj:
+            off += _walk_block_attrs(v, path)
+    return off
+
+
+def _block_attr_bad(name, attrs):
+    """블록 주석의 속성: JSON으로 못 풀거나 걸어 다니며 걸리면 확인할 수 없다."""
+    try:
+        obj = json.loads(attrs)
+    except ValueError:
+        return [f"wp:{name} 속성이 JSON으로 풀리지 않는다"]
+    if not isinstance(obj, dict):
+        return [f"wp:{name} 속성이 객체(dict)가 아니다"]
+    return [f"wp:{name} 블록 속성 {o}" for o in _walk_block_attrs(obj)]
 
 
 def secret(name):
@@ -366,6 +404,10 @@ class WP:
             st, url, b = r.status, r.geturl(), r.read()
         except urllib.error.HTTPError as e:
             st, url, b = e.code, req.full_url, e.read()
+        except ReviewMissing as e:  # 예: 리다이렉트 거부 — 이미 서버에 닿았을 수 있는 쓰기도 로그에 남긴다
+            if write:
+                self._log(req, f"막힘 {e}")
+            raise
         except OSError as e:
             if write:
                 self._log(req, f"네트워크 오류 {e.__class__.__name__}")

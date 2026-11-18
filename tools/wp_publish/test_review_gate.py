@@ -470,5 +470,41 @@ class ReviewGateTest(unittest.TestCase):
         self.assertEqual(json.loads(out.read_text(encoding="utf-8")).get("post"), 299)
 
 
+    def test_block_comment_attributes_are_decoded_before_checking(self):
+        """블록 주석 속성은 풀린 JSON으로 검사한다 — \\uXXXX·\\/ 이스케이프로 단어를 숨겨도 소용없다."""
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        # 리뷰 표의 그대로: 이스케이프로 숨긴 backgroundIm\\u0061ge.\\u0075rl
+        for body in ('<!-- wp:group {"style":{"background":{"backgroundIm\\u0061ge":{"\\u0075rl":"https:\\/\\/evil.example\\/x.png",'
+                     '"source":"file"}}}} -->\n<div class="wp-block-group"><p>a</p></div>\n<!-- /wp:group -->',
+                     '<!-- wp:group {"style":{"background":{"backgroundImage":{"url":"https:\\/\\/evil.example\\/x.png"}}}} -->',
+                     '<!-- wp:group {"style":{"background":"#fff"}} -->',  # 풀어도 background 키 자체를 못 쓰게
+                     '<!-- wp:paragraph {"metadata":{"bindings":{"content":{"source":"core/post-meta"}}}} -->',
+                     '<!-- wp:paragraph {"metadata":{"n\\u0061me":"x","bindings":{"content":{}}}} -->',
+                     '<!-- wp:heading {"level":3,} -->',   # JSON 이 아니다
+                     '<!-- wp:heading [1,2] -->',           # 객체가 아니다
+                     '<!-- wp:paragraph {"customKey":"1"} -->',  # 허용 목록 밖 키
+                     '<!-- wp:block {"ref":123} /-->',      # 재사용 블록 참조 — 무엇이 들어올지 알 수 없다
+                     '<!-- wp:pattern /-->'):
+            self.assertBlocked(c, "확인할 수 없는", {"content": body})
+        # 무해한 속성은 이스케이프로 적혀도 그대로 지나간다
+        self.assertEqual(w._body_images('<!-- wp:heading {"l\\u0065vel":3} -->\n<h3>제목</h3>\n<!-- /wp:heading -->', "x"), [])
+        self.assertEqual(w._body_images('<!-- wp:paragraph {"metadata":{"name":"머리말"}} -->\n<p>a</p>\n<!-- /wp:paragraph -->', "x"), [])
+
+    def test_a_refused_redirect_still_lands_in_the_log(self):
+        self.record("본문.html", "flow.png", "cover.jpg", texts={"title": "읽은 제목"})
+        c = self.client()
+
+        class Boom:
+            def open(self, req, timeout=None):
+                raise w.ReviewMissing("다른 곳으로 가는 리다이렉트는 따라가지 않는다: x")
+
+        c.op = Boom()
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(ReviewMissing, "리다이렉트"):
+            self.post(c, {"title": "읽은 제목"})
+        log = json.loads((self.dir / "publish_log.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        self.assertIn("리다이렉트", log["status"])
+
+
 if __name__ == "__main__":
     unittest.main()
