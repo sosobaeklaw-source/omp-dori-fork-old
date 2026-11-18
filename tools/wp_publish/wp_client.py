@@ -6,8 +6,10 @@ GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든
 거기서 막힌 쪽으로 본다(fail closed): 허용한 모양이 아니면 보내지 않는다.
   - 방법은 POST만(X-HTTP-Method-Override 헤더 금지), 주소는 /wp-json/wp/v2/{posts,pages,media}[/<번호>]와
     /wp-json/rankmath/v1/updateMeta만.
-  - GET·HEAD라도 방법 바꾸기(?_method=·X-HTTP-Method-Override, 대소문자·_/- 무관)가 붙으면 보내지 않는다.
-    WP REST는 GET ?_method=DELETE를 삭제로 처리한다.
+  - GET·HEAD라도 방법 바꾸기(?_method=·X-HTTP-Method-Override)가 붙으면 보내지 않는다. 쿼리 키는 PHP처럼 앞 공백을 벗기고
+    소문자·공백·점·[ → _로 맞춘 뒤 method가 들어 있기만 해도 막는다(WP REST는 GET ?_method=DELETE를 삭제로 처리한다).
+    읽기 자리도 묶는다: REST 글·페이지·그림, 로그인 화면·nonce, Rank Math getHead, 초안 미리보기, 올린 그림 파일만.
+    wp-admin/post.php?action=trash 같은 관리 화면 GET은 보내지 않는다.
   - 그림 올리기(image/*, /media): 올리는 바이트의 sha256이 reviewed.json에 있어야 한다.
   - JSON은 dict만, 아는 칸만. content는 글자(str)만이고 그 sha256이 기록에 있어야 한다.
     본문 HTML은 허용 목록으로 읽는다: 아는 태그·속성만 받고 모르는 것(script·iframe·object·embed·srcdoc 따위)은 막는다.
@@ -119,21 +121,47 @@ _SNEAKY_PATH = re.compile(r"(^|/)\.\.?(/|$)|%2e|%2f|%5c", re.I)  # ../ 이나 �
 
 
 def _query_keys(url):
-    """PHP가 읽는 이름으로 바꾼 쿼리 키들(소문자, 공백·점·[ → _). `.method`·`_METHOD`·`_method[]`도 _method로 본다."""
+    """PHP가 읽는 이름으로 바꾼 쿼리 키들. PHP처럼 앞 공백을 벗기고(여기선 공백 문자 전부) 소문자, 공백·점·[ → _.
+    `+_method`·`%20_method`·`.method`·`_METHOD`·`_method[]`도 _method로 본다."""
     keys = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query, keep_blank_values=True)
-    return {re.sub(r"[ .\[]", "_", k.lower()) for k in keys}
+    return {re.sub(r"[ .\[]", "_", k.lstrip().lower()) for k in keys}
 
 
 def _method_override(url, headers=()):
     """WP REST가 방법을 바꿔 읽는 신호(?_method=, X-HTTP-Method-Override)가 있으면 그 이름, 없으면 None.
-    GET이라도 이것이 붙으면 서버는 DELETE·POST로 처리한다(class-wp-rest-server.php serve_request)."""
+    GET이라도 이것이 붙으면 서버는 DELETE·POST로 처리한다(class-wp-rest-server.php serve_request).
+    쿼리는 넓게 본다: 벗긴 키에 method가 들어 있기만 해도 신호로 본다."""
     for k in _query_keys(url):
-        if k.startswith("_method"):
+        if "method" in k:
             return f"쿼리 {k}"
     for h in headers:
-        if h.lower().replace("_", "-") == "x-http-method-override":
+        if "method" in h.lower().replace("_", "-") and "override" in h.lower():
             return f"헤더 {h}"
     return None
+
+
+_REST_READ = re.compile(r"/wp-json/wp/v2/(posts|pages|media)(/[1-9][0-9]*)?/?")
+_PREVIEW_KEYS = {"p", "page_id", "preview", "preview_id", "preview_nonce"}  # 레인이 쓰는 초안 미리보기(읽기만)
+
+
+def _read_ok(url, method="GET"):
+    """로그인한 채 보내는 읽기(GET·HEAD)도 자리를 묶는다: REST 읽기(글·페이지·그림), 로그인 화면, REST nonce 받기,
+    올린 그림 파일만. wp-admin/post.php?action=trash 처럼 GET으로 일을 하는 관리 주소는 보내지 않는다."""
+    u = urllib.parse.urlsplit(url)
+    if f"{u.scheme}://{u.netloc}" == BASE and not u.fragment and "rest_route" not in _query_keys(url):
+        if _REST_READ.fullmatch(u.path) or (u.path.rstrip("/") == "/sbk-entrance" and not u.query):
+            return
+        if u.path == "/wp-json/rankmath/v1/getHead" and _query_keys(url) == {"url"}:
+            return
+        if "preview" in _query_keys(url) and _query_keys(url) <= _PREVIEW_KEYS and not u.path.startswith(("/wp-", "/xmlrpc")):
+            return
+        if u.path == "/wp-admin/admin-ajax.php" and u.query == "action=rest-nonce":
+            return
+    try:
+        _image_url_ok(url)
+    except ReviewMissing:
+        raise ReviewMissing(f"{method} {url[:100]}: 읽기는 REST 글·페이지·그림, 로그인 화면, nonce, 올린 그림 파일만 보낸다"
+                            "(관리 화면 GET은 글을 지우거나 바꿀 수 있다)") from None
 
 
 def _image_url_ok(url):
@@ -348,6 +376,7 @@ class WP:
             if sig := _method_override(req.full_url, [h for h, _ in req.header_items()]):
                 raise ReviewMissing(f"{method} {req.full_url[:100]}: 방법 바꾸기({sig})가 붙은 읽기는 보내지 않는다"
                                     "(WP REST는 이것을 DELETE·POST로 처리한다)")
+            _read_ok(req.full_url, method)
             return False
         where = f"{method} {req.full_url}"
         if self.reviewed is None:

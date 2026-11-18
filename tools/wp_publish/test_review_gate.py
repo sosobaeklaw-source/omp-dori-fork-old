@@ -536,7 +536,9 @@ class ReviewGateTest(unittest.TestCase):
         c = self.client()
         c.nonce = "abcdef0123"
         for path in ("/posts/299?_method=DELETE", "/posts/299?_method=POST&status=trash", "/posts/299?_METHOD=DELETE",
-                     "/posts/299?context=edit&_Method=DELETE", "/posts/299?_method%5B%5D=DELETE", "/posts/299?.method=DELETE"):
+                     "/posts/299?context=edit&_Method=DELETE", "/posts/299?_method%5B%5D=DELETE", "/posts/299?.method=DELETE",
+                     "/posts/299?+_method=DELETE", "/posts/299?%20_method=DELETE", "/posts/299?context=edit&%20%20_method=DELETE",
+                     "/posts/299?+_method=POST&status=draft&title=x", "/posts/299?%09method=DELETE"):
             with self.assertRaisesRegex(ReviewMissing, "방법 바꾸기"):
                 c.get(path)
         for method in ("GET", "HEAD"):
@@ -545,9 +547,39 @@ class ReviewGateTest(unittest.TestCase):
                 with self.assertRaisesRegex(ReviewMissing, "방법 바꾸기"):
                     c._open(req)
         self.assertEqual((c.op.got, c.op.sent), ([], []))
+        with self.assertRaisesRegex(ReviewMissing, "방법 바꾸기"):
+            c._open(urllib.request.Request(w.BASE + "/?rest_route=/wp/v2/posts/299&%20_method=DELETE"))
+        # 관리 화면 GET(휴지통 보내기 따위)과 우리 자리 밖 읽기는 보내지 않는다
+        for url in (w.BASE + "/wp-admin/post.php?post=299&action=trash&_wpnonce=abc",
+                    w.BASE + "/wp-admin/post.php?post=299&action=edit", w.BASE + "/wp-admin/admin-ajax.php?action=x",
+                    w.BASE + "/?rest_route=/wp/v2/posts/299", w.API + "/users/1", w.API + "/posts/299/revisions",
+                    w.BASE + "/wp-json/rankmath/v1/getHead?url=x&action=y", "https://evil.example/x.png"):
+            with self.assertRaisesRegex(ReviewMissing, "읽기는 REST"):
+                c._open(urllib.request.Request(url))
+        self.assertEqual((c.op.got, c.op.sent), ([], []))
         # 그냥 읽기는 그대로 된다
         c.op.files[w.API + "/posts/299?context=edit"] = b"{}"
         self.assertEqual(c.get("/posts/299?context=edit"), {})
+        # 레인이 실제로 쓰는 읽기 자리는 그대로 열린다
+        for url in (w.BASE + "/sbk-entrance", w.BASE + "/wp-admin/admin-ajax.php?action=rest-nonce",
+                    w.BASE + "/wp-json/rankmath/v1/getHead?url=https%3A%2F%2Fsobaeklaw.co.kr%2Fx",
+                    w.BASE + "/?p=299&preview=true", w.BASE + "/x/?preview_id=299&preview_nonce=ab&preview=true",
+                    w.API + "/media/843?context=edit", w.API + "/pages", IMG):
+            c.op.files[url] = b"{}"
+            self.assertEqual(c._open(urllib.request.Request(url))[0], 200)
+
+    def test_odd_tag_shapes_still_have_their_images_checked(self):
+        """열한 번째 리뷰: 파서와 브라우저가 달리 읽는 모양도 그 안 그림은 우리 사이트 확인을 지난다."""
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        off = "https://evil.example/wp-content/uploads/x.png"
+        for body in (f'<img/src="{off}">', f'<p>글</p ><img src="{off}">',
+                     f'<svg><p>글</p><img src="{off}"></svg>'):
+            self.assertBlocked(c, "우리 사이트", {"content": body})
+            with self.assertRaisesRegex(ReviewMissing, "우리 사이트"):
+                for s in w._body_images(body, "x"):
+                    w._image_url_ok(s)
+        self.assertEqual(c.op.got, [])
 
     def test_tags_in_text_fields_are_refused(self):
         tag = f'제목<img src="{IMG}">'
