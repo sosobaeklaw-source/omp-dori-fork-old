@@ -1,5 +1,4 @@
-/** The fake agy environment the agy seat tests share: time, lock, account and usage are all in memory. */
-import { expect } from "bun:test";
+/** The fake agy environment the agy seat tests share: account and usage are all in memory. */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgyEnv, AgyRun } from "../src/writer-agy.ts";
@@ -7,7 +6,6 @@ import type { AgyEnv, AgyRun } from "../src/writer-agy.ts";
 /** Stand-ins for the seat's account and another one; real mails stay in local config, never in tests. */
 export const SEAT_MAIL = "seat@example.com";
 export const OTHER_MAIL = "other@example.com";
-export const NOW = Date.parse("2026-11-16T10:00:00Z");
 export const ok = (response: string): AgyRun => ({
   code: 0,
   stdout: JSON.stringify({ status: "SUCCESS", response }),
@@ -27,35 +25,22 @@ export const FORBIDDEN: AgyRun = {
 };
 
 /** `others` stands for s4 runs other lanes made outside this seat, which agy's own logs show. */
-export function setup(
-  answers: AgyRun[],
-  account = SEAT_MAIL,
-  others = { lastEndAt: 0, forbidden: false },
-) {
+export function setup(answers: AgyRun[], account = SEAT_MAIL, others = { forbidden: false }) {
   const home = mkdtempSync("/tmp/dwa-");
   mkdirSync(join(home, "state"));
   const prompt = join(home, "req.txt");
   writeFileSync(prompt, "본문 요청");
   const calls: { at: number; args: readonly string[]; request: string }[] = [];
-  let t = NOW;
+  let t = Date.parse("2026-11-16T10:00:00Z");
   const env: AgyEnv = {
-    root: home,
-    pid: process.pid,
     now: () => t,
-    alive: (pid) => pid === process.pid,
-    sleep: async (ms) => {
-      t += ms;
-    },
     log: () => {},
     account: () => account,
     seatAccount: SEAT_MAIL,
     usage: () => ({ ...others }),
     runLog: () => `I Print mode: starting\nI applyAuthResult: email=${account}, x\n`,
-    run: async (args, cwd, onSpawn) => {
-      onSpawn(process.pid);
+    run: async (args, cwd) => {
       calls.push({ at: t, args, request: readFileSync(join(cwd, "request.md"), "utf8") });
-      t += 30_000;
-      others.lastEndAt = t;
       return answers.shift() ?? ok("");
     },
   };

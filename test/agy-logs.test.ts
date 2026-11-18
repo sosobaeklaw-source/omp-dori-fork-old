@@ -16,23 +16,6 @@ describe("agy logs", () => {
     expect(accountFromLog(join(dir, "none.log"))).toBeUndefined();
   });
 
-  test("usage reads s4 print runs from agy's run logs, whichever lane made them", () => {
-    const dir = mkdtempSync("/tmp/dwa-logs-");
-    const run = (name: string, mail: string, print = true) =>
-      writeFileSync(
-        join(dir, name),
-        `${print ? "I printmode.go] Print mode: starting\n" : ""}I applyAuthResult: email=${mail}, authMethod=consumer\n`,
-      );
-    run("cli-20261116_193156.log", SEAT_MAIL);
-    run("cli-20261116_195141.log", SEAT_MAIL);
-    run("cli-20261116_192750.log", OTHER_MAIL);
-    run("cli-20261116_195513.log", SEAT_MAIL, false);
-    run("cli-20261115_120000.log", SEAT_MAIL);
-    const u = usageFromLogs(dir, SEAT_MAIL);
-    expect(u.lastEndAt).toBeGreaterThan(0);
-  });
-
-
   test("the latest s4 run's 403 shows as forbidden, even from yesterday; another account's 403 does not", () => {
     const dir = mkdtempSync("/tmp/dwa-logs-");
     const err = "E errorreport.go:307] generating and executing: PERMISSION_DENIED (code 403): disabled\n";

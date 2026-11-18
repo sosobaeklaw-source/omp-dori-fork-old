@@ -28,17 +28,6 @@ describe("agy log reading binds each run to its account, day and call", () => {
     expect(usageFromLogs(dir, S4).forbidden).toBe(false);
   });
 
-  test("a print run with no account line, or with s4 among other accounts, still counts as the seat's", () => {
-    const { dir, run } = logs();
-    run("cli-20261116_192000.log", [OTHER_MAIL]);
-    expect(usageFromLogs(dir, S4).lastEndAt).toBe(0);
-    run("cli-20261116_190000.log", []);
-    expect(usageFromLogs(dir, S4).lastEndAt).toBeGreaterThan(0);
-    const mixed = logs();
-    mixed.run("cli-20261116_191000.log", [OTHER_MAIL, S4]);
-    expect(usageFromLogs(mixed.dir, S4).lastEndAt).toBeGreaterThan(0);
-  });
-
   test("this call's own run log is found by its work folder, not by being the newest", () => {
     const { dir, run } = logs();
     run("cli-20261116_190000.log", [S4], "mine", "/private/tmp/agy-w-AbC123");

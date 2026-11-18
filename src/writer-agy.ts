@@ -2,7 +2,9 @@
  * The Antigravity writing seat: one Argon body request sent through the `agy` CLI the seat's account is logged into.
  *
  * Lanes call at the same time: nothing here waits for another call or for an `agy` process running outside it. What
- * stays is the seat's own safety:
+ * stays is the seat's own safety. There is no cap on how many run at once: the owner said so on 2026-11-18 (맥북 창
+ * 16:3x, "1분에 한편 뭐그런거 필요없다 내가 구독하는거 쓰는건데 … 병렬최대로"), accepting that a burst can draw the
+ * suspension an earlier account got for being driven like a tool. The 403 stop only fires after Google has acted.
  *   - only the configured mail ({@link AgyEnv.seatAccount}, local config, never in this repo), compared whole: from
  *     the CLI's own log before each call, and after it from that call's own run log (found by its work folder);
  *   - the request body goes into a fresh empty folder as `request.md`, and the prompt is one short line naming it;
@@ -17,7 +19,6 @@ import { join } from "node:path";
 import { type AgyRun, errorText, isForbidden, isQuota, linksFile } from "./agy-errors.ts";
 import { type AgyUsage, mailsIn } from "./agy-logs.ts";
 import * as own from "./agy-own.ts";
-import type { OwnerEnv } from "./lock-owner.ts";
 
 export const AGY_MODEL = "gemini-4-argon-high";
 const SEAT = "agy-s4";
@@ -28,10 +29,10 @@ export const ASK = "request.md을 읽고 본문만 한국어로 답하라. 파�
 export const EXIT = { ok: 0, empty: 3, linked: 20, forbidden: 21, stopped: 22, account: 24, unlogged: 25, quota: 26, failed: 1 };
 
 export type { AgyRun };
-export type AgyEnv = OwnerEnv & {
-  sleep: (ms: number) => Promise<void>;
-  /** Runs `agy` with these arguments in `cwd`; `onSpawn` gets its pid as soon as it exists. */
-  run: (args: readonly string[], cwd: string, onSpawn: (pid: number) => void) => Promise<AgyRun>;
+export type AgyEnv = {
+  now: () => number;
+  /** Runs `agy` with these arguments in `cwd`. */
+  run: (args: readonly string[], cwd: string) => Promise<AgyRun>;
   /** The mail `agy` last logged in with (its CLI log), or undefined if none is known. */
   account: () => string | undefined;
   /** The one mail the seat calls as (config.json `agyAccount`, or `DORI_AGY_ACCOUNT`); undefined refuses every send. */
@@ -96,7 +97,7 @@ export class AgyStop extends Error {
 }
 
 /** One call: run `agy`, record it; returns the answer or why there is none. */
-async function callOnce(env: AgyEnv, o: AgyOpts, kind: string, onPid: (pid: number) => void) {
+async function callOnce(env: AgyEnv, o: AgyOpts, kind: string) {
   refuseIfForbidden(env.usage(), o.home);
   const dir = mkdtempSync("/tmp/agy-w-");
   writeFileSync(join(dir, "request.md"), readFileSync(o.prompt));
@@ -107,7 +108,7 @@ async function callOnce(env: AgyEnv, o: AgyOpts, kind: string, onPid: (pid: numb
     r = await env.run([
       "-p", ASK, "--model", AGY_MODEL, "--sandbox", "--mode", "plan", "--output-format", "json",
       "--print-timeout", `${o.timeout}s`,
-    ], dir, onPid);
+    ], dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -165,7 +166,7 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
     refuseIfStopped(o.home);
     refuseIfQuota(env, o.home);
     checkAccount(env, o.home, "before the call");
-    const c = await callOnce(env, o, kind, () => {});
+    const c = await callOnce(env, o, kind);
     (meta["calls"] as unknown[]).push({ kind, at: new Date(env.now()).toISOString(), ...c, answer: undefined });
     if ("forbidden" in c)
       throw new AgyStop(EXIT.forbidden, `ESCALATE agy-s4 got 403 (${c.error}); seat stopped, no more calls`);

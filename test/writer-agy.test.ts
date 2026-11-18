@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { quotaPath } from "../src/agy-own.ts";
 import { AgyStop, EXIT, sendOnAgy, stopPath } from "../src/writer-agy.ts";
-import { FORBIDDEN, LINKED, NOW, OTHER_MAIL, ok, SEAT_MAIL, setup } from "./agy-fake.ts";
+import { FORBIDDEN, LINKED, OTHER_MAIL, ok, setup } from "./agy-fake.ts";
 
 describe("agy writer seat", () => {
   test("a plain answer is written; the request goes as a file with a short prompt; one agy-s4 line is logged", async () => {
-    const { env, opts, calls, tsv, home } = setup([ok("본문입니다.")]);
+    const { env, opts, calls, tsv } = setup([ok("본문입니다.")]);
     expect(await sendOnAgy(env, opts)).toBe(EXIT.ok);
     expect(readFileSync(opts.out, "utf8")).toBe("본문입니다.\n");
     expect(calls[0]!.request).toBe("본문 요청");
@@ -19,12 +19,23 @@ describe("agy writer seat", () => {
     expect(tsv()[0]!.split("\t").slice(1, 3).concat(tsv()[0]!.split("\t")[5]!)).toEqual(["agy-s4", "new", "답 6자"]);
   });
 
-  test("two sends started together both call agy at the same moment", async () => {
-    const a = setup([ok("하나")]);
-    const b = setup([ok("둘")]);
-    const [ra, rb] = await Promise.all([sendOnAgy(a.env, a.opts), sendOnAgy(b.env, b.opts)]);
+  test("two sends on one home both enter agy together, even with a recent last run and the old lock files left behind", async () => {
+    const { home, env, opts, calls } = setup([ok("하나"), ok("둘")]);
+    writeFileSync(join(home, "state", "agy-s4.lock"), `${process.pid} ${Date.now()}\n`);
+    writeFileSync(join(home, "state", "agy-s4.json"), JSON.stringify({ lastEndAt: Date.now() }));
+    let entered = 0;
+    const gate = Promise.withResolvers<void>();
+    const real = env.run;
+    env.run = async (args, cwd) => {
+      if (++entered === 2) gate.resolve();
+      await gate.promise;
+      return real(args, cwd);
+    };
+    const b = { ...opts, lane: "b", out: join(home, "b.txt"), meta: join(home, "b.meta.json") };
+    const [ra, rb] = await Promise.all([sendOnAgy(env, opts), sendOnAgy(env, b)]);
     expect([ra, rb]).toEqual([EXIT.ok, EXIT.ok]);
-    expect(a.calls[0]!.at).toBe(b.calls[0]!.at);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.at).toBe(calls[1]!.at);
   });
 
   test("a file-linked answer is dropped and asked exactly once more", async () => {
@@ -102,13 +113,8 @@ describe("agy writer seat", () => {
     expect(existsSync(stopPath(home))).toBe(true);
   });
 
-
   test("a 403 another lane got on s4 outside this seat stops the seat before any call", async () => {
-    const { env, opts, calls, home } = setup([ok("본문")], undefined, {
-      lastEndAt: 0,
-      running: false,
-      forbidden: true,
-    });
+    const { env, opts, calls, home } = setup([ok("본문")], undefined, { forbidden: true });
     await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.forbidden });
     expect(calls).toHaveLength(0);
     expect(existsSync(stopPath(home))).toBe(true);
@@ -125,6 +131,20 @@ describe("agy writer seat", () => {
   test("another account with no state folder yet still stops the seat with an ESCALATE, not a crash", async () => {
     const { env, opts, home } = setup([ok("본문")], OTHER_MAIL);
     rmSync(join(home, "state"), { recursive: true });
+    await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.account });
+    expect(existsSync(stopPath(home))).toBe(true);
+  });
+
+  test("agy signed in as another account after the call stops the seat", async () => {
+    let account = "seat@example.com";
+    const { env, opts, home } = setup([ok("본문"), ok("다음")]);
+    env.account = () => account;
+    const real = env.run;
+    env.run = async (args, cwd) => {
+      const r = await real(args, cwd);
+      account = OTHER_MAIL;
+      return r;
+    };
     await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.account });
     expect(existsSync(stopPath(home))).toBe(true);
   });

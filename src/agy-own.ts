@@ -5,7 +5,6 @@ import { join } from "node:path";
 /** A time as KST `YYYY-MM-DD HH:MM:SS`, the form the call log uses. */
 export const kst = (ms: number): string => new Date(ms + 9 * 3600e3).toISOString().replace("T", " ").slice(0, 19);
 
-
 /**
  * Until when Google's quota holds the seat: a 429 sets it from the reset time Google named ("reset after 3h12m",
  * "retry after 45s", `"retryDelay": "45s"`), or {@link QUOTA_HOLD_MS} when it named none, and no lane calls before it.

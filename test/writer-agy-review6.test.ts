@@ -37,7 +37,6 @@ describe("agy seat, sixth review", () => {
     expect(existsSync(opts.meta)).toBe(false);
   });
 
-
   test("a GEMINI_CALLS_TSV in the shell is not where the seat writes under a test home", async () => {
     const real = join(mkdtempSync("/tmp/dwa-real-"), "calls.tsv");
     process.env["GEMINI_CALLS_TSV"] = real;

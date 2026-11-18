@@ -193,19 +193,14 @@ try {
     try {
       code = await sendOnAgy(
         {
-          root: home,
-          pid: process.pid,
           now: Date.now,
-          alive,
-          sleep: (ms) => Bun.sleep(ms),
           log: (line) => console.error(line),
           account: () => accountFromLog(agyLog),
           seatAccount,
           usage: () => machineUsage(join(agyDir, "log"), seatAccount ?? ""),
           runLog: (workDir) => runLogFor(join(agyDir, "log"), workDir),
-          run: async (args, cwd, onSpawn) => {
+          run: async (args, cwd) => {
             const child = Bun.spawn(["agy", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
-            onSpawn(child.pid);
             const term = () => child.kill("SIGTERM");
             process.on("SIGTERM", term).on("SIGINT", term);
             try {

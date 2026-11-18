@@ -2,14 +2,14 @@
  * What `agy` itself records on this machine: the account it is signed into and every run, by any lane, with or
  * without the writing seat. The seat's account check and 403 check read from here.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 /**
- * Seat-account runs by anyone on this machine, not only this seat: when the last one ended, and whether the latest
- * seat-account run got the 403 (a lane that calls agy directly never writes the seat's stop file; this holds past midnight).
+ * Seat-account runs by anyone on this machine, not only this seat: whether the latest seat-account run got the 403
+ * (a lane that calls agy directly never writes the seat's stop file; this holds past midnight).
  */
-export type AgyUsage = { lastEndAt: number; forbidden: boolean };
+export type AgyUsage = { forbidden: boolean };
 
 /** Every mail on an `applyAuthResult` line; a run can sign in more than once. */
 export const mailsIn = (text: string): string[] =>
@@ -24,16 +24,13 @@ export function accountFromLog(logPath: string): string | undefined {
 
 /**
  * Seat-account print runs from agy's log folder: agy writes one `cli-YYYYMMDD_HHMMSS.log` per run (local time), with
- * `Print mode: starting` for `-p` and the signed-in mail on `applyAuthResult`; the file's mtime is when the run ended.
- * A print run with the account among its mails, or with no mail at all, counts as the seat's (it may have been). `forbidden` is the
- * 403 in the latest of those, cleared only by a later run that surely was the seat's.
+ * `Print mode: starting` for `-p` and the signed-in mail on `applyAuthResult`.
+ * `forbidden` is the 403 in the latest of those, cleared only by a later run that surely was the seat's.
  */
 export function usageFromLogs(logDir: string, account: string): AgyUsage {
-  let lastEndAt = 0;
   let forbidden = false;
   for (const name of (existsSync(logDir) ? readdirSync(logDir) : []).sort()) {
-    const m = /^cli-(\d{8})_\d{6}\.log$/.exec(name);
-    if (!m) continue;
+    if (!/^cli-\d{8}_\d{6}\.log$/.test(name)) continue;
     const path = join(logDir, name);
     const text = readFileSync(path, "utf8");
     if (!text.includes("Print mode: starting")) continue;
@@ -41,9 +38,8 @@ export function usageFromLogs(logDir: string, account: string): AgyUsage {
     if (mails.length > 0 && !mails.includes(account)) continue;
     if (/PERMISSION_DENIED \(code 403\)/.test(text)) forbidden = true;
     else if (mails.length > 0 && mails.every((x) => x === account)) forbidden = false;
-    lastEndAt = Math.max(lastEndAt, statSync(path).mtimeMs);
   }
-  return { lastEndAt, forbidden };
+  return { forbidden };
 }
 
 /**
