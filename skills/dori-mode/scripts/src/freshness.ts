@@ -59,7 +59,7 @@ const argvElements = (line: string): string[] | null => {
 };
 const argvReport = (line: string): string | null => {
   const last = argvElements(line)?.at(-1);
-  return last !== undefined && last.startsWith("[REPORT]") ? last : null;
+  return last?.startsWith("[REPORT]") ? last : null;
 };
 const reportCandidate = (l: string): string | null => {
   if (!l.includes("[REPORT]")) return l;

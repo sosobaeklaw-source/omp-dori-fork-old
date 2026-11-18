@@ -106,6 +106,7 @@ test("template shapes from #29 are not reports; the emitted report still wins", 
     'printf "[REPORT] demo-lane | milestone | %s\\n" "$msg"',
     "[REPORT] demo-lane | milestone | $message",
     "[REPORT] demo-lane | done | %s",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell placeholder, not a template
     "[REPORT] demo-lane | milestone | ${message}",
   ].join("\n");
   expect(anchoredReportLine(screen, "demo-lane")).toBe(emitted);
@@ -139,6 +140,7 @@ test("a [REPORT] that is a whole quoted argv element is a report; prose quoting 
     '["[REPORT] demo-lane | milestone | report not last", "herdr"]',
     '["herdr", "pane", "run", "lead:p1", "[REPORT] demo-lane | milestone | $message"]',
     '["herdr", "pane", "run", "lead:p1", "[REPORT] demo-lane | milestone | %s"]',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell placeholder, not a template
     '["herdr", "pane", "run", "lead:p1", "[REPORT] demo-lane | milestone | ${text}"]',
   ])
     expect(anchoredReportLine(row, "demo-lane")).toBeNull();
