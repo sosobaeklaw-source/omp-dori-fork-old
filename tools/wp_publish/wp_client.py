@@ -11,16 +11,18 @@ GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든
     그림·영상 태그(img·source·video·audio·track)의 src·srcset·poster·data-src는 하나하나 받아 sha256을 맞추고,
     <a href> 말고 바깥 자원을 부르는 속성, style 속 url·image·역슬래시, 그림을 서버에서 넣을 수 있는 것
     (wp:블록 주석 밖의 주석, 그림·동적 블록, [단축코드], 한 줄짜리 주소(oEmbed — WP autoembed 정규식 둘 다:
-    줄 전체가 주소인 것, 속성이 붙은 <p>URL</p> 본문 어디든))은 확인할 길이 없으니 막는다.
-    featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다. 그림은 https://sobaeklaw.co.kr·wp.sobaeklaw.co.kr에서만 받는다
-    (다른 곳 그림은 검수 뒤 바뀔 수 있어 막는다).
+    줄 전체가 주소인 것, 속성이 붙은 <p>URL</p> 본문 어디든), 닫히지 않은 채 끝나는 태그, SVG 칠 속성의 url( )은
+    확인할 길이 없으니 막는다.
+    featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다. 그림은 https://sobaeklaw.co.kr·wp.sobaeklaw.co.kr에서만
+    받고 리다이렉트도 그 안에서만 따라간다(nonce는 딸려 가지 않는다). 다른 곳 그림은 검수 뒤 바뀔 수 있어 막는다.
   - 글자 칸은 검수 기록 texts의 그 대상 항목과 똑같아야 한다(빈 값도): 글의 제목·요약·Rank Math 설명은 "post",
     그림(/media/<번호>)의 대체 글·캡션·제목은 그 번호의 source_url로 받은 바이트의 "media:<sha256>".
     방금 올린 그림의 칸은 source_url 말고 방금 올린 바이트로 맞춘다(-scaled 사본은 바이트가 달라진다).
-  - status는 draft만 보낼 수 있다(발행 글 갱신은 status를 빼고 보낸다). brand_write_guard.assert_clean도 여기서.
+  - status는 새 글 만들기(/posts)에서만 draft로 보낼 수 있다. 기존 글·Rank Math·그림 고침에는 status를 아예 못 넣는다
+    (status로 공개 글을 내리는 것을 막는다). brand_write_guard.assert_clean도 여기서.
   - 검수 기록의 글 번호(review_gate --post, 필수)와 URL의 글 번호·Rank Math(objectType=post) objectID·그림을 붙이는
     글 번호(post 칸)가 같아야 한다. 글 번호 없는 기록으로는 글·Rank Math 쓰기를 하지 못 한다.
-  - 확인한 것이 하나도 없는 요청은 그림 붙이기(post 칸)만 보낸다. status만 보내 공개 글을 내리는 것은 막는다.
+  - 확인한 것이 하나도 없는 요청은 그림 붙이기(post 칸)만 보낸다.
 하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다. 다 맞으면 findings.md 첫 문단과 읽은 모델을 보여 주고 보낸다.
 응답을 받은 뒤 상태 코드와 리드가 무엇을 열어 보았는지 적은 한 줄(ack, 비어 있으면 안 됨)을 reviewed.json 옆
 publish_log.jsonl에 남긴다. WP(reviewed=...)를 주지 않으면 읽기만 된다. 레인 스크립트가 c._open(...)으로 직접 POST해도
@@ -73,6 +75,7 @@ _RM_PLAIN = ("rank_math_twitter_use_facebook",)
 _MEDIA_TAGS = {"img", "source", "video", "audio", "track"}
 _MEDIA_URL_ATTRS = {"src", "srcset", "poster", "data-src", "data-srcset"}
 _COMMON_ATTRS = {"class", "id", "title", "lang", "dir", "role", "style", "width", "height", "align"}
+_SVG_TAGS = ("svg", "g", "path", "polyline", "polygon", "line", "circle", "rect", "ellipse")
 _SVG_ATTRS = {"viewbox", "xmlns", "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "points", "d",
               "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "transform", "opacity"}
 _TAG_ATTRS = {
@@ -89,8 +92,7 @@ _TAG_ATTRS = {
     "video": {"src", "poster", "controls", "preload", "muted", "loop", "playsinline", "autoplay"},
     "audio": {"src", "controls", "preload", "muted", "loop"},
     "track": {"src", "kind", "srclang", "label", "default"},
-    **{t: _SVG_ATTRS | {"aria-hidden", "focusable"} for t in ("svg", "g", "path", "polyline", "polygon", "line", "circle",
-                                                             "rect", "ellipse")},
+    **{t: _SVG_ATTRS | {"aria-hidden", "focusable"} for t in _SVG_TAGS},
 }
 _BLOCKS = {"paragraph", "heading", "list", "list-item", "table", "quote", "pullquote", "separator", "spacer", "group",
            "columns", "column", "details", "html", "preformatted", "code"}
@@ -100,7 +102,8 @@ _SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[A-Za-z][\w-]*")  # [dB(A)] 같은 소�
 _OEMBED_LINE = re.compile(r'^(\s*)(https?://[^\s<>"]+)(\s*)$', re.I | re.M | re.A)  # WP |^(\s*)(https?://[^\s<>"]+)(\s*)$|im — 글자 하나까지 같게
 _OEMBED_P = re.compile(r'(<p(?: [^>]*)?>\s*)(https?://[^\s<>"]+)(\s*</p>)', re.I | re.A)  # WP |(<p(?: [^>]*)?>\s*)(https?://[^\s<>"]+)(\s*<\/p>)|i — PHP \s는 /u 없이 ASCII(re.A)
 _STYLE_BAD = re.compile(r"\\|url|image|expression|@|/\*", re.I)
-_HREF_OK = re.compile(r"(https?:|mailto:|tel:|#|/(?![/\\]))", re.I)  # /\ 처럼 역슬래시도 브라우저는 슬래시로 읽는다
+_PAINT_URL = re.compile(r"url\s*\(|\\", re.I)  # SVG 칠 속성(fill·stroke…)의 값도 css url(·역슬래시를 못 쓰게
+_HREF_OK = re.compile(r"(https?:|mailto:|tel:|#|/(?![/\\]))", re.I)  # /\ 처럼 역슬래시는 브라우저는 슬래시로 읽는다
 
 
 class _Images(html.parser.HTMLParser):
@@ -120,6 +123,8 @@ class _Images(html.parser.HTMLParser):
                 self.bad.append(f"<{tag} {k}>")
             elif k == "style" and v and _STYLE_BAD.search(v):
                 self.bad.append(f"<{tag} style=…>")
+            elif tag in _SVG_TAGS and v and _PAINT_URL.search(v):
+                self.bad.append(f"<{tag} {k}=…>")
             elif tag == "a" and k == "href" and v and not _HREF_OK.match(v.strip()):
                 self.bad.append(f"<a href={v.strip()[:20]}>")
             elif tag in _MEDIA_TAGS and k in _MEDIA_URL_ATTRS and v:
@@ -166,12 +171,17 @@ def _body_images(content, where):
         pos = m.end()
     if m := _SHORTCODE.search(content):
         bad.append(f"단축코드 {m.group(0)}")
+    t = content.rstrip()
+    if t.rfind("<") > t.rfind(">"):  # 태그가 닫히지 않은 채 본문이 끝난다 — 브라우저는 theme 마크업 뒤에서 태그를 마저 읽는다
+        bad.append("태그가 닫히지 않은 채 끝난 본문")
     if m := _OEMBED_LINE.search(content):
         bad.append(f"한 줄짜리 주소(oEmbed) {m.group(0).strip()[:40]}")
     if m := _OEMBED_P.search(content):
         bad.append(f"한 줄짜리 주소(oEmbed) {m.group(2)[:40]}")
     p = _Images()
     p.feed(content)
+    if p.rawdata.strip():  # 파서가 못 끝낸 조각: close()가 그냥 버리면 브라우저와 읽는 게 달라진다
+        bad.append(f"끝까지 읽히지 않은 조각 {p.rawdata.strip()[:20]!r}")
     p.close()
     bad += p.bad
     if bad:
@@ -195,11 +205,25 @@ def totp():
     return m.group(0)
 
 
+class _GateRedirect(urllib.request.HTTPRedirectHandler):
+    """리다이렉트도 우리 사이트 https로만 따라간다. 따라가는 요청에 nonce를 싣지 않는다."""
+
+    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+        u = urllib.parse.urlsplit(newurl)
+        if u.scheme != "https" or u.hostname not in _IMAGE_HOSTS or u.username or u.port:
+            raise ReviewMissing(f"다른 곳으로 가는 리다이렉트는 따라가지 않는다: {newurl[:80]}")
+        r = super().redirect_request(req, fp, code, msg, hdrs, newurl)
+        if r is not None:
+            r.headers.pop("X-wp-nonce", None)  # Request 헤더는 capitalize 로 들어간다
+            r.unredirected_hdrs.pop("X-wp-nonce", None)
+        return r
+
+
 class WP:
     def __init__(self, reviewed=None, ack=""):
         self.reviewed, self.ack = reviewed, ack.strip()
         self.jar = http.cookiejar.CookieJar()
-        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar), _GateRedirect)
         self.op.addheaders = [("User-Agent", "Mozilla/5.0 sobaek-wp-publish")]
         self.nonce = None
         self._uploaded = {}  # 방금 올린 그림 번호 → 올린 바이트. -scaled 사본 말고 이 바이트로 칸을 맞춘다.
@@ -283,8 +307,12 @@ class WP:
         unknown = sorted(set(fields) - set(texts_keys) - set(image_keys) - set(plain) - set(media_keys) - {"content"})
         if unknown:
             raise ReviewMissing(f"{where}: 확인하지 않는 칸은 보내지 않는다: {', '.join(unknown)}")
-        if payload.get("status", "draft") != "draft":
-            raise ReviewMissing(f"{where}: status는 draft만 보낸다(발행 글 갱신은 status를 빼고 보낸다)")
+        if "status" in payload:
+            if not (path and path.group(1) == "posts" and not path.group(2)):
+                raise ReviewMissing(f"{where}: status는 새 글 만들기({API}/posts)에서만 보낸다"
+                                    "(기존 글 고칠 땐 status를 뺀다 — 내리기로 쓰지 않게)")
+            if payload["status"] != "draft":
+                raise ReviewMissing(f"{where}: status는 draft만 보낸다(발행 글 갱신은 status를 빼고 보낸다)")
         assert_clean(payload, context=where)
         post = doc.get("post")
         if (rankmath or (path and path.group(1) in ("posts", "pages"))) and post is None:

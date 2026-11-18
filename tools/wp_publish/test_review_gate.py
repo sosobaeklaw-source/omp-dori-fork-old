@@ -202,8 +202,13 @@ class ReviewGateTest(unittest.TestCase):
     def test_status_alone_cannot_take_a_post_down(self):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
-        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft"})
-        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft", "post": 299}, url=w.API + "/posts/299")
+        self.assertBlocked(c, "확인할 글자·그림이 하나도 없는", {"status": "draft"}, url=w.API + "/posts")
+        self.assertBlocked(c, "status는 새 글 만들기", {"status": "draft"})
+        self.assertBlocked(c, "status는 새 글 만들기", {"content": self.body, "status": "draft"})
+        self.assertBlocked(c, "status는 새 글 만들기", {"content": self.body, "status": "draft"}, url=w.API + "/pages/299")
+        self.assertBlocked(c, "status는 새 글 만들기", {"alt_text": "읽은 설명", "status": "draft"}, url=w.API + "/media/901")
+        st, _ = self.post(c, {"content": self.body, "status": "draft"}, url=w.API + "/posts")
+        self.assertEqual(st, 200)  # 만들기에서의 status=draft 는 그대로 간다
 
     def test_two_images_each_with_their_own_alt_and_caption(self):
         (self.dir / "second.png").write_bytes(b"PNG-second")
@@ -316,7 +321,7 @@ class ReviewGateTest(unittest.TestCase):
     def test_status_other_than_draft_is_refused_and_brand_guard_runs_on_direct_open(self):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
-        self.assertBlocked(c, "status는 draft만", {"content": self.body, "status": "publish"})
+        self.assertBlocked(c, "status는 draft만", {"content": self.body, "status": "publish"}, url=w.API + "/posts")
         st, _ = self.post(c, {"content": self.body})
         self.assertEqual(st, 200)
         self.assertEqual(self.guarded, ["POST " + w.API + "/posts/299"])
@@ -371,6 +376,68 @@ class ReviewGateTest(unittest.TestCase):
         self.record("본문3.html", "flow.png")
         st, _ = self.post(self.client(), {"content": body})
         self.assertEqual(st, 200)
+
+    def test_a_body_ending_mid_tag_is_refused_not_finished_by_the_theme(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        other = "https://evil.example/x.png"
+        for body in (f'<p>a</p>\n<img src="{other}" alt="x',  # 리뷰 표의 그대로: close()가 버리는 조각
+                     '<p>a</p>\n<img src="x',                 # 주소가 다 닿지 않아도 태그 안에서 끝난다
+                     '<p>마지막 문장</p>\n<p'):
+            self.assertBlocked(c, "확인할 수 없는", {"content": body})
+
+    def test_svg_paint_attributes_cannot_point_outside(self):
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        for body in ('<svg><polyline fill="url(https://evil.example/x.png#a)" points="1,2"/></svg>',
+                     '<svg><path stroke="u\\72l(https://evil.example/x.png)" d="M0 0"/></svg>',
+                     '<svg><circle fill="url( #a )" cx="1" cy="1" r="1"/></svg>'):
+            self.assertBlocked(c, "확인할 수 없는", {"content": body})
+        st, _ = self.post(c, {"content": self.body})
+        self.assertEqual(st, 200)
+
+    def test_redirects_stay_on_our_sites_and_drop_the_nonce(self):
+        req = urllib.request.Request(IMG, headers={"X-WP-Nonce": "n123"})
+        with self.assertRaisesRegex(ReviewMissing, "리다이렉트는 따라가지 않는다"):
+            w._GateRedirect().redirect_request(req, None, 302, "", {}, "https://evil.example/x.png")
+        with self.assertRaisesRegex(ReviewMissing, "리다이렉트는 따라가지 않는다"):
+            w._GateRedirect().redirect_request(req, None, 302, "", {}, "http://sobaeklaw.co.kr/x.png")
+        r = w._GateRedirect().redirect_request(req, None, 302, "", {}, COVER)
+        self.assertFalse(r.has_header("X-wp-nonce"))
+
+    def test_attacker_shapes_cannot_smuggle_a_resource(self):
+        """리드 요청: 파서가 다르게 읽을 수 있는 모양을 공격자처럼 직접 찔러 본다."""
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        other = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/other.png"
+        c.op.files[other] = b"PNG-unread"
+        # 엔티티로 숨겼다 브라우저에서 풀어 읽는 바깥 주소 → 호스트 대조에 걸린다
+        for body in ('<img src="&#104;ttps://evil.example/x.png">',
+                     '<img src="https&#58;//evil.example/x.png">',
+                     '<audio src="https://evil.example/x.mp3">'):
+            self.assertBlocked(c, "우리 사이트", {"content": body})
+        # 우리 사이트 안의 '검수 안 된 그림' 주소 — 받아 보고 나서 바이트 대조에 걸린다
+        for body in (f'<IMG SRC="{other}">',
+                     f'<video><source src="{other}"/></video>',
+                     f'<track src="{other}">',
+                     f'<img src="{IMG}" srcset="  {other}  2x">',
+                     f'<img srcset="{other} 1x, {IMG} 2x">',
+                     f'<picture><source srcset="{other} 2x"></picture>',
+                     f'<audio src="{other}"></audio>'):
+            self.assertBlocked(c, r"본문 그림 other\.png", {"content": body})
+        # 아예 못 쓰는 태그·속성·선언, 풀어진 css url( → 모양 자체가 거부된다
+        for body in (f'<p style="background:&u&#114;l({other})">a</p>',
+                     f'<p style="@import url({other})">a</p>',
+                     f'<use href="{other}">',
+                     f'<svg><use href="{other}"/></svg>',
+                     '<base href="https://evil.example/">',
+                     '<meta http-equiv="refresh" content="0;url=https://evil.example/">',
+                     '<SCRIPT>x=1</SCRIPT>', '<STYLE>p{x:1}</STYLE>',
+                     '<?xml-stylesheet href="https://evil.example/x.css"?>',
+                     '<!DOCTYPE html>',
+                     '<a href="javascript&colon;alert(1)">a</a>'):
+            self.assertBlocked(c, "확인할 수 없는", {"content": body})
+        # title 속성 값에 태그 모양이 들어가도 브라우저는 도구 설명 글자로만 읽는다 — 자원이 아니니 그냥 간다
 
     def test_links_are_not_images_and_nonce_stays_home(self):
         (self.dir / "본문2.html").write_text(self.body + '<a href="https://www.law.go.kr/">법령</a>', encoding="utf-8")
