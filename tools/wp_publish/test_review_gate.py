@@ -20,12 +20,13 @@ COVER = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/cover.jpg"
 
 
 class FakeOpener:
-    """그림 주소·media 조회는 files에서 돌려주고, 보낸 요청은 sent에 쌓는다."""
+    """그림 주소·media 조회는 files에서 돌려주고, 보낸 요청은 sent(GET 밖)·got(GET)에 쌓는다."""
     def __init__(self, files):
-        self.files, self.sent, self.post = files, [], {}
+        self.files, self.sent, self.got, self.post = files, [], [], {}
 
     def open(self, req, timeout=60):
         if req.get_method() == "GET":
+            self.got.append(req.full_url)
             data = self.files[req.full_url]
         else:
             self.sent.append((req.get_method(), req.full_url))
@@ -299,8 +300,9 @@ class ReviewGateTest(unittest.TestCase):
     def test_rank_math_share_image_ids_are_checked_like_featured_media(self):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
-        c.op.files[w.API + "/media/999"] = json.dumps({"source_url": "https://sobaeklaw.co.kr/u/unread.png"}).encode()
-        c.op.files["https://sobaeklaw.co.kr/u/unread.png"] = b"PNG-unread"
+        unread = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/unread.png"
+        c.op.files[w.API + "/media/999"] = json.dumps({"source_url": unread}).encode()
+        c.op.files[unread] = b"PNG-unread"
         rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
         for k in ("rank_math_facebook_image_id", "rank_math_twitter_image_id"):
             self.assertBlocked(c, rf"{k} unread\.png", {"objectType": "post", "objectID": 299,
@@ -504,6 +506,87 @@ class ReviewGateTest(unittest.TestCase):
             self.post(c, {"title": "읽은 제목"})
         log = json.loads((self.dir / "publish_log.jsonl").read_text(encoding="utf-8").splitlines()[0])
         self.assertIn("리다이렉트", log["status"])
+
+    def test_checking_never_fetches_rest_or_override_urls(self):
+        """열 번째 리뷰: 검수 안 된 본문이 가리키는 REST 주소를 검사하면서 받으면(nonce까지 실어) 그 자체가 삭제·쓰기가 된다."""
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        c.nonce = "abcdef0123"
+        for bad in (w.API + "/posts/299?_method=DELETE",
+                    w.BASE + "/?rest_route=/wp/v2/posts/299&_method=DELETE",
+                    w.BASE + "/wp-json/wp/v2/posts/299",
+                    w.BASE + "/wp-admin/admin-ajax.php?action=x",
+                    IMG + "?_method=DELETE", IMG + "?x=1",
+                    "https://sobaeklaw.co.kr/wp-content/uploads/../../wp-json/wp/v2/posts/299",
+                    "https://sobaeklaw.co.kr/wp-content/uploads/%2e%2e/%2e%2e/wp-json/wp/v2/posts/299"):
+            # 받을 수 있는 그림이 앞에 있어도 아무것도 받기 전에 멈춘다
+            for body in (f'<img src="{bad}">', f'<img src="{IMG}"><img src="{bad}">', f'<img src="{IMG}" srcset="{bad} 2x">'):
+                self.assertBlocked(c, "올린 그림 자리|우리 사이트", {"content": body})
+            self.assertBlocked(c, "올린 그림 자리|우리 사이트", {"objectType": "post", "objectID": 299,
+                                                         "meta": {"rank_math_facebook_image": bad}},
+                               url=w.BASE + "/wp-json/rankmath/v1/updateMeta")
+        self.assertEqual(c.op.got, [])
+        # 첨부 번호가 알려 준 source_url이 REST 주소여도 받지 않는다 — 읽는 것은 고정 /media/<번호> 하나뿐
+        c.op.files[w.API + "/media/950"] = json.dumps({"source_url": w.API + "/posts/299?_method=DELETE"}).encode()
+        self.assertBlocked(c, "올린 그림 자리", {"featured_media": 950})
+        self.assertBlocked(c, "확인하지 못했다", {"featured_media": "950?_method=DELETE"})
+        self.assertEqual(c.op.got, [w.API + "/media/950"])
+
+    def test_reads_with_a_method_override_are_refused(self):
+        c = self.client()
+        c.nonce = "abcdef0123"
+        for path in ("/posts/299?_method=DELETE", "/posts/299?_method=POST&status=trash", "/posts/299?_METHOD=DELETE",
+                     "/posts/299?context=edit&_Method=DELETE", "/posts/299?_method%5B%5D=DELETE", "/posts/299?.method=DELETE"):
+            with self.assertRaisesRegex(ReviewMissing, "방법 바꾸기"):
+                c.get(path)
+        for method in ("GET", "HEAD"):
+            for name in ("X-HTTP-Method-Override", "x_http_method_override"):
+                req = urllib.request.Request(w.API + "/posts/299", method=method, headers={name: "DELETE"})
+                with self.assertRaisesRegex(ReviewMissing, "방법 바꾸기"):
+                    c._open(req)
+        self.assertEqual((c.op.got, c.op.sent), ([], []))
+        # 그냥 읽기는 그대로 된다
+        c.op.files[w.API + "/posts/299?context=edit"] = b"{}"
+        self.assertEqual(c.get("/posts/299?context=edit"), {})
+
+    def test_tags_in_text_fields_are_refused(self):
+        tag = f'제목<img src="{IMG}">'
+        self.record("본문.html", "flow.png", "cover.jpg", texts={"title": tag, "rank_math_description": tag})
+        c = self.client()
+        self.assertBlocked(c, "title에 태그 글자", {"title": tag})
+        self.assertBlocked(c, "rank_math_description에 태그 글자", {"objectType": "post", "objectID": 299,
+                                                              "meta": {"rank_math_description": tag}},
+                           url=w.BASE + "/wp-json/rankmath/v1/updateMeta")
+        self.assertBlocked(c, "caption에 태그 글자", {"caption": "<p>x</p>"}, url=w.API + "/media/843")
+        self.assertEqual(c.op.got, [])
+
+    def test_login_forms_cannot_be_used_to_skip_the_gate(self):
+        import inspect
+        self.assertNotIn("_login_form", inspect.signature(w.WP._open).parameters)
+        self.record("본문.html", "flow.png", "cover.jpg")
+        c = self.client()
+        with self.assertRaises(TypeError):
+            c._open(urllib.request.Request(w.API + "/posts/299", data=b"{}", method="POST"), _login_form=True)
+        for url in (w.API + "/posts/299", "https://evil.example/sbk-entrance", w.BASE + "/sbk-entrance?_method=DELETE",
+                    w.BASE + "/sbk-entrance?rest_route=/wp/v2/posts/299", "http://wp.sobaeklaw.co.kr/sbk-entrance",
+                    w.BASE + "/wp-admin/post.php"):
+            with self.assertRaisesRegex(ReviewMissing, "로그인 폼"):
+                c._login_post(url, {"content": "x"}, url)
+        self.assertEqual(c.op.sent, [])
+        c._login_post(w.BASE + "/wp-login.php?action=validate_2fa", {"authcode": "123456"}, w.BASE)
+        self.assertEqual(c.op.sent, [("POST", w.BASE + "/wp-login.php?action=validate_2fa")])
+
+    def test_redirects_from_images_stay_on_uploaded_files(self):
+        req = urllib.request.Request(IMG)
+        for to in (w.API + "/posts/299", w.BASE + "/?rest_route=/wp/v2/posts/299", IMG + "?_method=DELETE",
+                   w.BASE + "/wp-admin/admin-ajax.php"):
+            with self.assertRaisesRegex(ReviewMissing, "리다이렉트|올린 그림 자리"):
+                w._GateRedirect().redirect_request(req, None, 302, "", {}, to)
+        media = urllib.request.Request(w.API + "/media/843", headers={"X-WP-Nonce": "n"})
+        for to in (w.API + "/posts/299?_method=DELETE", w.BASE + "/?rest_route=/wp/v2/posts/299"):
+            with self.assertRaisesRegex(ReviewMissing, "리다이렉트"):
+                w._GateRedirect().redirect_request(media, None, 302, "", {}, to)
+        self.assertIsNotNone(w._GateRedirect().redirect_request(req, None, 302, "", {}, COVER))
 
 
 if __name__ == "__main__":
