@@ -68,8 +68,7 @@ export async function captureHandoff(
   record.oldSourceHash = sourceManifest(record.oldSource).hash;
   if (
     !bootstrap &&
-    (!health ||
-      !health.presetLoaded ||
+    (!health?.presetLoaded ||
       realpathSync(health.source) !== record.oldSource ||
       health.extensionHash !== digest(readFileSync(join(record.oldSource, "extension/index.ts"))))
   )

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 /** What a file lock needs to judge its holder: this process's pid, the clock, and whether a pid still runs. */
 export type ClaimEnv = { pid: number; now: () => number; alive: (pid: number) => boolean };
@@ -54,14 +55,14 @@ export function takeFile(env: ClaimEnv, path: string, ownerlessMs: number): (() 
 }
 
 /**
- * Runs `act` holding `<path>.claim-<digest of seen>`, or returns false while another live process holds that claim.
- * Every process that judged the same content of `path` left behind needs the same claim, so only one of them acts on
- * it, and `act` checks again under the claim that `path` still reads as `seen`. The claim is itself a takeFile lock: a
- * claimer that died is taken over the same way one level down.
+ * Runs `act` under a fixed-length sibling `.lock-claim-<sha256>` keyed by the target basename and full observed
+ * snapshot, or returns false while another live process holds that claim. Directory aliases share the same claim.
+ * Every process that judged the same snapshot needs the same claim, and `act` checks again that `path` reads as `seen`.
+ * The claim is itself a takeFile lock, so dead claimers are taken over without growing any filename.
  */
 export function underClaim(env: ClaimEnv, path: string, seen: string, ownerlessMs: number, act: () => void): boolean {
-  const digest = createHash("sha256").update(seen).digest("hex").slice(0, 16);
-  const claim = takeFile(env, `${path}.claim-${digest}`, ownerlessMs);
+  const digest = createHash("sha256").update(basename(path)).update("\0").update(seen).digest("hex");
+  const claim = takeFile(env, join(dirname(path), `.lock-claim-${digest}`), ownerlessMs);
   if (!claim) return false;
   try {
     act();

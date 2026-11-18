@@ -55,7 +55,7 @@ export const laneGoalActive = async (
   const lane = `You are the ${key} lane`;
   if (omp) {
     const state = await trustedPaneState(omp.run, omp.stateDir, omp.ref, omp.rts);
-    if (!state || state.role !== "lane" || state.goal?.status !== "active") return false;
+    if (state?.role !== "lane" || state.goal?.status !== "active") return false;
     if (sessionDirFor(sessionsDir, state.cwd) !== sessionDirFor(sessionsDir, cwd)) return false;
     const dir = sessionDirFor(sessionsDir, cwd);
     let path = state.sessionFile;

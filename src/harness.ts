@@ -10,7 +10,8 @@ import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
 import { Runtimes } from "./runtime/registry.ts";
 import { configuredOmp } from "./lane-model.ts";
-import { ompStateDir } from "./runtime/omp.ts";
+import { isOmpArgv } from "./runtime/omp.ts";
+import { ompStateDir } from "./runtime/omp-state-dir.ts";
 import { type RuntimeChoice, readRuntimeChoice } from "./runtime/select.ts";
 import { Store } from "./store.ts";
 import { type HostLoad, KEY_RE, type Role, reservedKey } from "./store-types.ts";
@@ -83,7 +84,11 @@ export const defaultDeps = (): Deps => {
 export function defaultAgentCmd(root: string, release?: { home?: string; sourceRoot?: string }): string {
   const selected = processOmpCommand();
   if (selected) return selected.map(shq).join(" ");
-  if (process.env["DORI_AGENT_CMD"] !== undefined) return process.env["DORI_AGENT_CMD"];
+  if (process.env["DORI_AGENT_CMD"] !== undefined) {
+    const legacy = [process.env["DORI_AGENT_CMD"]] as const;
+    const resolved = resolveConsumerOmpCommand(legacy, release);
+    return resolved === legacy ? legacy[0] : resolved.map(shq).join(" ");
+  }
   const command = resolveConsumerOmpCommand(["omp"], release);
   if (command[0] !== "omp") return command.map(shq).join(" ");
   const configured = configuredOmp(root);
@@ -93,20 +98,9 @@ export function defaultAgentCmd(root: string, release?: { home?: string; sourceR
 
 /** Recognize an OMP executable through quoted paths, environment assignments and the env utility. */
 export function isOmpAgentCommand(command: string): boolean {
-  const words = (command.match(/(?:[^\s"'\\]|\\.|"[^"]*"|'[^']*')+/g) ?? []).map((word) =>
-    word.replace(/^(['"])(.*)\1$/, "$2"),
+  return isOmpArgv(
+    (command.match(/(?:[^\s"'\\]|\\.|"[^"]*"|'[^']*')+/g) ?? []).map((word) => word.replace(/^(['"])(.*)\1$/, "$2")),
   );
-  let at = 0;
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at] ?? "")) at++;
-  if (words[at]?.split("/").at(-1) === "env") at++;
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at] ?? "")) at++;
-  const name = words[at]?.split("/").at(-1);
-  if (name === "omp") return true;
-  if (name !== "bun" && name !== "node") return false;
-  at++;
-  while (words[at]?.startsWith("-")) at++;
-  const script = words[at] ?? "";
-  return script.split("/").at(-1) === "omp" || /@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/.test(script);
 }
 
 /** Give OMP the extension role while preserving configured arguments and explicit role/command overrides. */

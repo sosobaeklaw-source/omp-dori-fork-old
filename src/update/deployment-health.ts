@@ -56,8 +56,7 @@ export async function observeDeploymentHealth(
   } else {
     const health = readRuntimeHealth(config);
     if (
-      !health ||
-      !health.presetLoaded ||
+      !health?.presetLoaded ||
       health.pid !== runtime.pid ||
       health.startedAt !== runtime.startedAt ||
       realpathSync(health.source) !== realpathSync(source) ||

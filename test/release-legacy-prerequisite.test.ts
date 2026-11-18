@@ -51,7 +51,7 @@ Object.defineProperties(process, {
   platform: { value: ${JSON.stringify(platform)} },
   arch: { value: ${JSON.stringify(arch)} },
 });
-prerequisites(true);`,
+prerequisites("herdr", true, true);`,
       ],
       { env: { HOME: home, PATH: [...directories, tools].join(":") }, stdout: "pipe", stderr: "pipe" },
     );
@@ -111,6 +111,6 @@ for (const [platform, arch] of [
     const f = fixture();
     const result = f.run([f.independent], undefined, platform, arch);
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr.toString()).toContain("This release supports Linux x64");
+    expect(result.stderr.toString()).toContain(`Unsupported release host/runtime: ${platform}/${arch}/herdr`);
     expect(existsSync(join(f.home, "executed"))).toBe(false);
   });

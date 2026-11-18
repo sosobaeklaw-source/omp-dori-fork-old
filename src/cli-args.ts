@@ -41,7 +41,12 @@ export const USAGE = `dori harness - a proactive multi-session harness on herdr 
 --text may be omitted to read the message from stdin.
 send, report and ready exit 3 and print HELD <target> when the delivery may or may not have reached the pane:
 it is held and never resent, so do not send it again: check the pane, then dori harness inbox ack or dori harness inbox resend it.
-QUEUED (exit 0) means it waits in the pane's inbox.`;
+QUEUED (exit 0) means it waits in the pane's inbox.
+  dori harness publish-approve --channel C --action <publish|delete> --owner-msg ID
+                          --artifact F [--artifact F]... [--note T]
+                                  the lead records the owner's go for exactly these artifacts (sha256)
+  dori harness publish-check --channel C --action <publish|delete> --artifact F [--artifact F]...
+                                  PASS only with an approval record matching every artifact hash`;
 
 /** `rest`: every argument after a bare `--` in flag position, verbatim (the command `lock` runs). */
 export type Args = { pos: string[]; flags: Map<string, string[]>; rest: string[] };

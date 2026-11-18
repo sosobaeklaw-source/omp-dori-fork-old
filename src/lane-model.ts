@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
 import { ConfigError, readConfig } from "./hooks.ts";
-import { ompStateDir } from "./runtime/omp.ts";
+import { ompStateDir } from "./runtime/omp-state-dir.ts";
 
 const PIN = /^[^\s|]+(\|[^\s|]+)?$/;
 

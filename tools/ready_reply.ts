@@ -13,7 +13,11 @@
  * goes with `--send-without-desk-review` and the posted text says so; a reply without a picture goes as before. Before
  * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
- * that gets no reply prints `SKIP <why>` and tells nobody: it stays inbox-only as before.
+ * that gets no reply prints `SKIP <why>`, except a lane not marked public: its
+ * READY goes to the macmini lead for review (`HANDED`), through DORI_TO_MACMINI (default `<home>/bin/to-macmini.sh`,
+ * see examples/sobaek/), with the lane, the orders its brief header marks and its 결과.md itself (the macmini cannot
+ * open MacBook paths). No `--order` is passed: a hand-off waiting for review is not the order's delivery, so the
+ * hourly loop keeps naming it 결과미전달 until the lead answers the owner. Each READY hands over again (rework is new).
  * Only a lane whose brief carries the line `public: true` (written by the lead for public-material work) is answered;
  * the reply text and the picture's OCR text are checked against salted client-name hashes exported by the macmini:
  * DORI_NAME_HASHES (default `<stateDir>/case-name-hashes.json`) under the salt in DORI_NAME_HASH_SALT_FILE (default
@@ -66,6 +70,24 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
   }
 }
 
+/** At most this much of 결과.md goes into the hand-off; the lead asks the lane for the rest. */
+const HAND_MAX = 6000;
+
+/** Hands a READY the owner did not get to the macmini lead; returns the sender's first line or why it failed. */
+function hand(sender: string, key: string, resultsDir: string, orders: readonly string[]) {
+  const file = join(resultsDir, "결과.md");
+  const result = existsSync(file) ? readFileSync(file, "utf8") : "(결과.md 없음)";
+  const cut = result.length > HAND_MAX ? `${result.slice(0, HAND_MAX)}\n… (맥북 ${file}에 이어짐)` : result;
+  const body = `job: ${key}\n원 글번호: ${orders.join(", ") || "-"}\n결과 폴더(맥북): ${resultsDir}\n\n${cut}\n`;
+  try {
+    const r = Bun.spawnSync([sender, `리드 검수 대기 READY ${key}`], { stdin: Buffer.from(body) });
+    const out = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0] ?? "";
+    return r.exitCode === 0 ? { ok: out } : { why: out || `exit ${r.exitCode}` };
+  } catch (error) {
+    return { why: `cannot run ${sender}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
 /** Tells the lead; returns how that went instead of throwing, so a failure is recorded even when the lead is away. */
 async function tell(d: Deps, text: string, key: string): Promise<string> {
   try {
@@ -105,8 +127,24 @@ async function main(argv: readonly string[]): Promise<number> {
     // READY again after rework does not answer the same owner message twice.
     const why = plan.post ? `already replied to ${plan.owner.id}` : plan.why;
     console.log(`SKIP ${key}: ${why}`);
-    if (!a.flags.has("dry-run")) note(stateDir, `SKIP ${key}: ${why}`);
-    return 0;
+    if (a.flags.has("dry-run")) return 0;
+    if (plan.post || !plan.toLead) {
+      note(stateDir, `SKIP ${key}: ${why}`);
+      return 0;
+    }
+    // Not public: the owner's room is not the place to decide that, the lead is. It reviews and forwards.
+    const orders = plan.toLead.orders;
+    const sender = process.env["DORI_TO_MACMINI"] ?? join(home, "bin", "to-macmini.sh");
+    const r = hand(sender, key, join(home, "results", key), orders);
+    const ids = orders.join(",") || "-";
+    if ("ok" in r) {
+      note(stateDir, `HANDED ${key} ${ids}: ${why}, to the lead (${r.ok})`);
+      return 0;
+    }
+    const told = await tell(d, `[READY ${key}] 리드 검수 넘김 실패: ${r.why}`, key);
+    note(stateDir, `FAIL ${key} ${ids}: not handed to the lead: ${r.why} (lead: ${told})`);
+    console.error(`FAIL ${r.why}`);
+    return 1;
   }
   const { owner, text, image } = plan;
   if (a.flags.has("dry-run")) {

@@ -26,6 +26,7 @@ import { assertNoLiveDori } from "./live.ts";
 import { validateReleaseManifest } from "./manifest.ts";
 import { provisionNativeSource } from "./native.ts";
 import { assertLock, provisionDependency } from "./provision.ts";
+import { installIsolatedReferences, preflightReferences } from "./references.ts";
 import {
   activateRelease,
   assertInstalledPointer,
@@ -38,9 +39,11 @@ import {
 
 export function preflightInstallation(paths: ConsumerPaths): void {
   pointer(paths.live);
-  const native = pointer(join(paths.dori, "bin/omp"));
-  if (native && !/^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(relative(paths.releases, native)))
-    throw new Error("Unmanaged native OMP command; preserve it and move it aside before installing");
+  if (paths.dori === join(paths.home, ".dori")) {
+    const native = pointer(join(paths.dori, "bin/omp"));
+    if (native && !/^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(relative(paths.releases, native)))
+      throw new Error("Unmanaged native OMP command; preserve it and move it aside before installing");
+  }
   for (const [path, target] of paths.links) {
     realDirectory(dirname(path));
     const current = pointer(path);
@@ -48,6 +51,7 @@ export function preflightInstallation(paths: ConsumerPaths): void {
       throw new Error(`Unmanaged installation link: ${path}; preserve it and move it aside before installing`);
   }
   regularFile(paths.config);
+  preflightReferences(paths);
   assertNoLiveDori(paths);
 }
 
@@ -71,13 +75,16 @@ async function installReferences(
   if (!regularFile(paths.config)) {
     const example = JSON.parse(readFileSync(join(source, "skills/dori-mode/references/config.example.json"), "utf8"));
     example.ompUlwPath = dependency;
-    if (native)
+    example.runtime = process.platform === "darwin" ? "hc" : "herdr";
+    if (paths.dori !== join(paths.home, ".dori")) example.stateDir = join(paths.dori, "state");
+    if (native || paths.dori !== join(paths.home, ".dori"))
       example.agentCommand = [
         join(paths.dori, "bin/omp"),
         ...(example.agentCommand?.slice(1) ?? ["--dori-role", "lane", "--model", "{model}", "{prompt}"]),
       ];
     writeFileSync(paths.config, `${JSON.stringify(example, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   }
+  installIsolatedReferences(paths, source);
   for (const [path, target] of paths.links) {
     realDirectory(dirname(path), true);
     owned(dirname(path));

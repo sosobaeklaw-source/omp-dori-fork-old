@@ -9,6 +9,8 @@
         "tools/onto_concepts.ts",
         "scripts/update-supervisor.ts",
         "scripts/source-dependencies.ts",
+        "scripts/verify-consumer-release.ts",
+        "scripts/consumer-smoke-harness.ts",
         "scripts/bench-discord-intake.ts",
         "src/update/deployment-launcher.ts",
         "skills/dori-mode/scripts/src/cli.ts",

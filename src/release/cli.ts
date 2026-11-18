@@ -1,13 +1,25 @@
-import { lstatSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { acquireBundle } from "./bundle.ts";
-import { acquireConsumerLock, consumerPaths, initialize, pointer, realDirectory } from "./files.ts";
+import {
+  acquireConsumerLock,
+  consumerPaths,
+  initialize,
+  pointer,
+  readJson,
+  realDirectory,
+  regularFile,
+} from "./files.ts";
 import { installBundle, preflightInstallation, rollbackRelease } from "./install.ts";
 import { prerequisites } from "./provision.ts";
+import { supportsReleaseProfile } from "./manifest.ts";
+import { consumerReleaseHome } from "./runtime.ts";
 import { hasConsumerState, loadInstalled, recoverInstalled, verifyRelease } from "./state.ts";
 import type { ReleaseManifest } from "./types.ts";
 
-const USAGE = `dori update <check|install|status|rollback> [--version vX.Y.Z] [--from DIST]
+const USAGE = `dori update <check|install|status|rollback> [--version vX.Y.Z] [--from DIST] [--home PATH] [--runtime hc|herdr]
   check       verify an available public release without activating it
   install     verify and install a fixed release; no messenger, watcher, model or service is started
   status      print verified installed and retained previous release identities
@@ -30,7 +42,13 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
       args: argv,
       allowPositionals: true,
       strict: true,
-      options: { version: { type: "string" }, from: { type: "string" }, help: { type: "boolean", short: "h" } },
+      options: {
+        version: { type: "string" },
+        from: { type: "string" },
+        home: { type: "string" },
+        runtime: { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
     });
     if (args.values.help || args.positionals.length === 0) {
       console.log(USAGE);
@@ -42,19 +60,61 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
     if (args.values.version !== undefined && !/^v\d+\.\d+\.\d+$/.test(args.values.version))
       throw new Error("--version must be an exact vX.Y.Z tag");
     if (args.values.from !== undefined && !args.values.from.trim()) throw new Error("--from requires a directory");
+    if (args.values.runtime !== undefined && !["hc", "herdr"].includes(args.values.runtime))
+      throw new Error("--runtime must be hc or herdr");
     if (
       (command === "status" && (args.values.from || args.values.version)) ||
       (command === "rollback" && args.values.from)
     )
       throw new Error("--from applies to check/install; status takes no selection");
-    const paths = consumerPaths();
+    const installedHome = consumerReleaseHome(realpathSync(resolve(import.meta.dir, "../..")));
+    const selected = args.values.home ?? installedHome ?? process.env["DORI_HOME"] ?? join(homedir(), ".dori");
+    if (!isAbsolute(selected)) throw new Error("--home / DORI_HOME must be an absolute installation home");
+    const paths = consumerPaths(homedir(), selected);
     realDirectory(paths.dori);
     realDirectory(paths.root);
+    if (!hasConsumerState(paths) && lstatSync(join(paths.dori, ".omp-dori"), { throwIfNoEntry: false }))
+      throw new Error("Unmanaged source installation; use a separate release home or the documented stopped migration");
+    let runtime = args.values.runtime;
+    if (command === "status") prerequisites(runtime ?? (process.platform === "darwin" ? "hc" : "herdr"), false);
+    if (command !== "status") {
+      if (regularFile(paths.config)) {
+        const config = readJson(paths.config);
+        if (config === null || typeof config !== "object" || Array.isArray(config))
+          throw new Error("Preserved config must be an object");
+        if (!("runtime" in config))
+          throw new Error(
+            'Preserved config must explicitly select runtime: set "runtime" to "herdr" or "hc" before retrying',
+          );
+        if (typeof config.runtime !== "string") throw new Error("Preserved config runtime must be a string");
+        if (runtime !== undefined && runtime !== config.runtime)
+          throw new Error(`Selected runtime ${runtime} conflicts with preserved config runtime ${config.runtime}`);
+        runtime ??= config.runtime;
+      }
+      runtime ??= process.platform === "darwin" ? "hc" : "herdr";
+      prerequisites(runtime, command === "install" || command === "rollback");
+    }
+    const compatible = (manifest: ReleaseManifest, metadata?: Uint8Array): void => {
+      if (
+        paths.dori !== join(paths.home, ".dori") &&
+        !manifest.source.files.some((file) => file.path === "release-capabilities.json")
+      )
+        throw new Error("Legacy releases do not support isolated homes; keep them in the primary ~/.dori home");
+      if (
+        !supportsReleaseProfile(
+          manifest,
+          { platform: process.platform, arch: process.arch, runtime: runtime ?? "" },
+          metadata,
+        )
+      )
+        throw new Error(`Release ${manifest.tag} does not support ${process.platform}/${process.arch}/${runtime}`);
+    };
     if (command === "check") {
       const bundle = await acquireBundle({
         ...(args.values.version ? { version: args.values.version } : {}),
         ...(args.values.from ? { from: args.values.from } : {}),
       });
+      compatible(bundle.manifest, bundle.files.find((file) => file.path === "release-capabilities.json")?.bytes);
       const state = loadInstalled(paths);
       console.log(
         JSON.stringify(
@@ -77,10 +137,31 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
       console.log(JSON.stringify({ installed: false }));
       return 0;
     }
-    if (command === "install" || command === "rollback") prerequisites();
     // An unowned source directory/link is held before creating release metadata or downloading assets.
     if (!hasConsumerState(paths) && lstatSync(paths.live, { throwIfNoEntry: false }))
       throw new Error(`Unmanaged source: ${paths.live}; preserve it and move it aside before installing`);
+    if (command !== "status") preflightInstallation(paths);
+    const bundle =
+      command === "install"
+        ? await acquireBundle({
+            ...(args.values.version ? { version: args.values.version } : {}),
+            ...(args.values.from ? { from: args.values.from } : {}),
+          })
+        : undefined;
+    if (bundle)
+      compatible(bundle.manifest, bundle.files.find((file) => file.path === "release-capabilities.json")?.bytes);
+    if (command === "rollback") {
+      const previous = loadInstalled(paths)?.previous;
+      if (previous) {
+        const source = verifyRelease(paths, previous);
+        compatible(
+          previous,
+          previous.source.files.some((file) => file.path === "release-capabilities.json")
+            ? readFileSync(join(source, "release-capabilities.json"))
+            : undefined,
+        );
+      }
+    }
     initialize(paths);
     releaseLock = acquireConsumerLock(paths);
     const before = recoverInstalled(paths);
@@ -100,18 +181,20 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
       return 0;
     }
     preflightInstallation(paths);
-    const bundle =
-      command === "install"
-        ? await acquireBundle({
-            ...(args.values.version ? { version: args.values.version } : {}),
-            ...(args.values.from ? { from: args.values.from } : {}),
-          })
-        : undefined;
-    if ((bundle?.manifest ?? before?.previous)?.requirements.omp === "18.18.8") prerequisites(true);
-    const after =
-      command === "rollback"
-        ? await rollbackRelease(paths, before, args.values.version)
-        : await installBundle(paths, bundle!, before);
+    if (!bundle && before?.previous) {
+      const source = verifyRelease(paths, before.previous);
+      compatible(
+        before.previous,
+        before.previous.source.files.some((file) => file.path === "release-capabilities.json")
+          ? readFileSync(join(source, "release-capabilities.json"))
+          : undefined,
+      );
+    }
+    if ((bundle?.manifest ?? before?.previous)?.requirements.omp === "18.18.8")
+      prerequisites(runtime!, true, true, paths);
+    const after = bundle
+      ? await installBundle(paths, bundle, before)
+      : await rollbackRelease(paths, before, args.values.version);
     console.log(
       JSON.stringify(
         {

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isOmpCommand } from "../skills/dori-mode/scripts/src/config.ts";
+import { isOmpArgv } from "../src/runtime/omp.ts";
 import { assertNativeSource, nativeDirectory } from "../src/release/native.ts";
 import { assertSourceBundle, readSourceBundle } from "../src/release/source-bundle.ts";
 import { provisionSourceOverlay } from "../src/release/source-checkout.ts";
@@ -27,7 +27,7 @@ test("the same upstream version and launcher bytes cannot satisfy a bound patche
   const home = join(f.root, "home");
   const receipt = nativeCacheFixture(f.source, home, f.checkout);
   expect(assertNativeSource(f.source, home).identity).toBe(receipt.identity);
-  expect(isOmpCommand([receipt.omp, "{prompt}"])).toBe(true);
+  expect(isOmpArgv([receipt.omp, "{prompt}"])).toBe(true);
   const launcher = readFileSync(receipt.omp);
   fixtureGit(join(receipt.directory, "source"), "restore", "--source=HEAD", "--staged", "--worktree", "index.ts");
   expect(readFileSync(receipt.omp)).toEqual(launcher);

@@ -44,14 +44,14 @@ describe("a rollback that puts the inbox back on the old session", () => {
   test("a send to the replacement after the rollback took its lock waits, then queues on that id; no spool is left", async () => {
     const s = setup();
     const next = s.w.addPane("w1:p4", "idle");
-    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "first" });
+    await s.d.store.enqueue(OLD, { at: s.d.now(), from: "cli", text: "first" }, false);
     await moveInbox(s.d, OLD, NEW, opts);
     // A wait for the route resolves at once, but only once the rollback in this thread has let go of it.
     const waits = spyOn(Bun, "sleep").mockImplementation(async () => {});
     let sent: Promise<unknown> = Promise.resolve();
     let during: unknown;
     const paused = atMarkerRemoval(s.d, () => {
-      sent = s.d.store.enqueue(NEW, { at: s.d.now(), from: "cli", text: "late" });
+      sent = s.d.store.enqueue(NEW, { at: s.d.now(), from: "cli", text: "late" }, false);
       during = { spool: spooled(s.d, NEW), queue: s.d.store.queued(NEW).map((m) => m.text) };
     });
     await moveBack(s.d, OLD, NEW, opts);
@@ -81,7 +81,7 @@ describe("a rollback that puts the inbox back on the old session", () => {
       }
       return REAL_EXISTS(p);
     }) as never);
-    expect(await s.d.store.enqueue(NEW, { at: s.d.now(), from: "cli", text: "late" })).toEqual({
+    expect(await s.d.store.enqueue(NEW, { at: s.d.now(), from: "cli", text: "late" }, false)).toEqual({
       kind: "queued",
       at: NEW,
     });

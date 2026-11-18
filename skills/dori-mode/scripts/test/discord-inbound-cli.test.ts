@@ -159,3 +159,56 @@ test("a ledger that cannot be read only warns, and intake still commits its curs
     expect.stringMatching(/^WARN ledger 1571500000000000006: /),
   ]);
 });
+
+test("an opted-in transcriber fills an empty voice message; text, non-voice, no transcriber, failure and timeout pass through", async () => {
+  const { voiceEmit } = await import("../src/cli-discord.ts");
+  const voice = {
+    channel: "1",
+    message: "2",
+    reference: null,
+    text: "",
+    replyTo: null,
+    attachments: [{ filename: "voice-message.ogg", size: 9, url: "https://cdn.example/v.ogg", voice: true as const }],
+  };
+  const opts = { prefix: "[heard] ", deadlineMs: 50 };
+  const printed: string[] = [];
+  const warned: string[] = [];
+  const kept: string[] = [];
+  const print = (shown: { text: string }, sent: { text: string }) => {
+    printed.push(shown.text);
+    kept.push(sent.text); // What a verbatim record (the correction ledger) gets: never the transcript.
+  };
+  const warn = (l: string) => void warned.push(l);
+  const heard = voiceEmit(print, async (url) => `들은 말 ${url}`, warn, opts);
+  await heard(voice);
+  await heard({ ...voice, text: "글로 쓴 지시" });
+  await heard({ ...voice, attachments: [{ filename: "a.png", size: 1, url: "https://cdn.example/a.png" }] });
+  expect(voiceEmit(print, undefined, warn, opts)(voice)).toBeUndefined(); // No transcriber: printed at once.
+  await voiceEmit(print, async () => Promise.reject(new Error("empty transcript")), warn, opts)(voice);
+  await voiceEmit(print, () => new Promise<string>(() => {}), warn, opts)(voice);
+  expect(printed).toEqual(["[heard] 들은 말 https://cdn.example/v.ogg", "글로 쓴 지시", "", "", "", ""]);
+  expect(kept).toEqual(["", "글로 쓴 지시", "", "", "", ""]);
+  expect(warned).toEqual(["WARN transcribe 2: empty transcript", "WARN transcribe 2: timed out after 0.05s"]);
+});
+
+test("transcription is opt-in, needs a hook and a non-empty marker, and announces itself", async () => {
+  const withHook = {
+    prepare: (dir: string) =>
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({ stateDir: dir, runtime: "herdr", hooks: { transcribe: ["true", "{file}"] } }),
+      ),
+  };
+  const on = await inboundCli(["--loop", "0"], { DORI_DISCORD_TRANSCRIBE: "1" }, withHook);
+  expect(on.out.split("\n")[0]).toBe("INBOUND_READY discord owner=10 channel=20 bot=99 transcribe=on");
+  const off = await inboundCli(["--loop", "0"], {}, withHook);
+  expect(off.out.split("\n")[0]).toBe("INBOUND_READY discord owner=10 channel=20 bot=99");
+  for (const [environment, around, said] of [
+    [{ DORI_DISCORD_TRANSCRIBE: "yes" }, withHook, "DORI_DISCORD_TRANSCRIBE must be 1, 0 or unset"],
+    [{ DORI_DISCORD_TRANSCRIBE: "1" }, {}, "DORI_DISCORD_TRANSCRIBE=1 needs hooks.transcribe"],
+    [{ DORI_DISCORD_TRANSCRIBE: "1", DORI_DISCORD_VOICE_PREFIX: " " }, withHook, "must not be empty"],
+  ] as const) {
+    const { out, err, code } = await inboundCli(["--loop", "0"], environment, around);
+    expect({ code, out, said: err.includes(said) }).toEqual({ code: 1, out: "", said: true });
+  }
+});

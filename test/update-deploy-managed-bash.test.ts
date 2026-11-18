@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { procCmdline } from "../src/update/proc.ts";
-import { once } from "node:events";
-import { appendFileSync, existsSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { readActiveDeployment } from "../src/update/deployment-active.ts";
 import { captureStartedMonitors } from "../src/update/deployment-handoff.ts";
 import { observeDeploymentHealth } from "../src/update/deployment-health.ts";
@@ -16,6 +16,10 @@ import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
+// Each case starts real shells, OMP fixtures and herdr probes and waits on their real exits, signals and file
+// writes, never on a clock; under a loaded macOS runner that exceeds bun's 5s default, so the budget only bounds a
+// genuine hang.
+setDefaultTimeout(60_000);
 
 posix("a managed Bash launch journals its real actor, verifies health and becomes active", async () => {
   const f = await managedBashFixture();
@@ -88,18 +92,25 @@ posix("launchRuntime executes once through a positively bare root Bash prompt", 
   const starts = join(f.root, "starts");
   const before = readFileSync(starts, "utf8").trim().split("\n");
   const cli = foregroundCli(f.config, f.observe, f.sendLine);
-  const watcher = watch(starts);
+  // The runtime announces itself on the pane's stdout only after appending its start; fs.watch can drop that write.
+  // Other pane output may precede it, so wait for the announcement line itself; an early stdout close ends the loop.
+  const lines = createInterface({ input: f.stdout });
+  const announcement = (async () => {
+    for await (const line of lines) if (line.startsWith('{"pid":')) return line;
+    throw new Error("pane stdout closed before the runtime announced itself");
+  })();
   try {
-    const changed = once(watcher, "change");
     await launchRuntime(f.config, cli, f.record);
-    await changed;
+    const line = await announcement;
     const after = readFileSync(starts, "utf8").trim().split("\n");
     expect(after).toHaveLength(before.length + 1);
-    expect(processIdentity(Number(after.at(-1)))).toBeDefined();
-    await expect(requireShell(f.config, cli)).rejects.toThrow(DeploymentHeld);
+    const pid = Number(after.at(-1));
+    expect(line).toStartWith(`{"pid":${pid},`);
+    expect(processIdentity(pid)).toBeDefined();
   } finally {
-    watcher.close();
+    lines.close();
   }
+  await expect(requireShell(f.config, cli)).rejects.toThrow(DeploymentHeld);
 });
 
 posix.each([

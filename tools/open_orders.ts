@@ -68,6 +68,17 @@ const sinceMs = (raw: string): number => {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 };
 
+/** The order ids a brief marks on purpose: `회장님 원문(<id>…)` on one of its first HEADER_LINES non-empty lines. */
+export function briefOrders(brief: string): string[] {
+  const head = brief
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .slice(0, HEADER_LINES);
+  const ids = head.flatMap((line) => BRIEF_MARK.exec(line)?.[1]?.match(/\d+/g) ?? []);
+  return [...new Set(ids.filter((id) => ID.test(id)))];
+}
+
 /**
  * The order ids a lane names on purpose: `orders` in its record (strings only: a JSON number above 2^53 has already lost
  * its digits, so anything that is not a string is ignored and counted in `ignored`), and the header of its brief.
@@ -76,13 +87,7 @@ function marked(record: Record<string, unknown>, brief: string, ignored: { count
   const entries: unknown[] = Array.isArray(record["orders"]) ? record["orders"] : [];
   const listed = entries.filter((x): x is string => typeof x === "string");
   ignored.count += entries.length - listed.length;
-  const head = brief
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
-    .slice(0, HEADER_LINES);
-  const inHeader = head.flatMap((line) => BRIEF_MARK.exec(line)?.[1]?.match(/\d+/g) ?? []);
-  return [...new Set([...listed, ...inHeader].map((id) => id.trim()).filter((id) => ID.test(id)))];
+  return [...new Set([...listed.map((id) => id.trim()).filter((id) => ID.test(id)), ...briefOrders(brief)])];
 }
 
 type Row = { id: unknown; author_id: unknown; body: unknown };
