@@ -1,9 +1,5 @@
-# seo: 독후감 원문 대목(PATH:START-END), macmini ~/sobaegi-lead/results/ 를 owner-now-sync가 같은 경로로 비춘 것. 요약본은 넣지 않는다 (rootfix-pr4-1116)
-~/sobaegi-lead/results/rewrite-299-1116/기자팁원리.md:6-29
-~/sobaegi-lead/results/readable-1110/flow/독후감_글흐름.md:7-17
-~/sobaegi-lead/results/readable-1110/flow/독후감_글흐름.md:45-47
-~/sobaegi-lead/results/voice-rootcause/독후감_자연스러운_법률문장.md:51-55
-~/sobaegi-lead/results/rewrite02-review-1115/독후감_반영대목.md:5-30
-~/sobaegi-lead/results/writing-cases/글카드영상_반려사례.md:1-152
-~/sobaegi-lead/results/notion-8-8-1116/독후감.md:37-51
-~/sobaegi-lead/results/notion-8-8-1116/빠진것.md:5-15
+# 소화본이 맡는다: ~/.omp-dori/독후감/소화본/seo.md
+# 법률가 문장의 근본(주어·판결 동사·짝말·건수·고시 기준·평석) — 판결·칼럼 원문과 함께 통째로 (pipeline-qa-1117)
+~/.omp-dori/독후감/독후감_법률가문장_근본.md:1-227
+# 조쉬 빌더 뉴스레터 짜임 독후감 원문(josh-learn-1117). 소화본 seo.md 조쉬 절의 원천 — 소화본을 고쳐도 이 줄은 지우지 않는다 (josh-wire-1117)
+~/.omp-dori/results/josh-learn-1117/독후감_조쉬방식.md:3-21
