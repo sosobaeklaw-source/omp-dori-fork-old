@@ -22,14 +22,14 @@ COVER = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/cover.jpg"
 class FakeOpener:
     """그림 주소·media 조회는 files에서 돌려주고, 보낸 요청은 sent에 쌓는다."""
     def __init__(self, files):
-        self.files, self.sent = files, []
+        self.files, self.sent, self.post = files, [], {}
 
     def open(self, req, timeout=60):
         if req.get_method() == "GET":
             data = self.files[req.full_url]
         else:
             self.sent.append((req.get_method(), req.full_url))
-            data = b"{}"
+            data = self.post.get(req.full_url, b"{}")
 
         class R:
             status = 200
@@ -58,9 +58,9 @@ class ReviewGateTest(unittest.TestCase):
                                               encoding="utf-8")
         self.reviewed = self.dir / "reviewed.json"
 
-    def record(self, *names, texts=None, media_texts=None):
+    def record(self, *names, texts=None, media_texts=None, post=None):
         review_gate.record(self.reviewed, [self.dir / n for n in names], "opencodex/anthropic/claude-opus-5-5",
-                           self.dir / "findings.md", texts, {self.dir / f: kv for f, kv in (media_texts or {}).items()})
+                           self.dir / "findings.md", texts, {self.dir / f: kv for f, kv in (media_texts or {}).items()}, post)
 
     def client(self, ack="본문 첫 화면과 순서도 그림, 대표 그림을 폰 크기로 열어 봤다"):
         c = w.WP(reviewed=self.reviewed, ack=ack)
@@ -244,6 +244,31 @@ class ReviewGateTest(unittest.TestCase):
                     "https://user@sobaeklaw.co.kr/x.png", "/wp-content/uploads/x.png"):
             self.assertBlocked(c, "우리 사이트", {"content": f'<img src="{src}">'})
 
+    def test_recorded_post_id_must_match_the_target(self):
+        self.record("본문.html", "flow.png", "cover.jpg", post=299)
+        c = self.client()
+        self.assertBlocked(c, "검수 기록은 글 299용이다. 글 300", {"content": self.body}, url=w.API + "/posts/300")
+        rm = w.BASE + "/wp-json/rankmath/v1/updateMeta"
+        self.assertBlocked(c, "검수 기록은 글 299용이다.*objectID=300",
+                           {"objectType": "post", "objectID": 300, "meta": {"rank_math_description": "x"}}, url=rm)
+        st, _ = self.post(c, {"content": self.body})
+        self.assertEqual(st, 200)
+
+    def test_upload_meta_is_checked_against_the_uploaded_bytes_not_a_scaled_copy(self):
+        self.record("본문.html", "flow.png", media_texts={"flow.png": {"alt_text": "읽은 설명", "caption": "캡션"}})
+        scaled = "https://sobaeklaw.co.kr/wp-content/uploads/2026/11/flow-scaled.png"
+        c = self.client()
+        c.op.post[w.API + "/media"] = json.dumps({"id": 901}).encode()
+        c.op.files.update({scaled: b"SCALED-different", w.API + "/media/901": json.dumps({"source_url": scaled}).encode()})
+        with redirect_stdout(io.StringIO()):
+            c.upload(self.dir / "flow.png", "읽은 설명", "캡션", 299)
+        self.assertEqual([u for _, u in c.op.sent], [w.API + "/media", w.API + "/media/901"])
+        c2 = self.client()  # 설명이 기록과 다르면 그 그림 바이트의 기록과 다르다고 막힌다
+        c2.op.post[w.API + "/media"] = json.dumps({"id": 902}).encode()
+        with self.assertRaisesRegex(ReviewMissing, "alt_text"):
+            with redirect_stdout(io.StringIO()):
+                c2.upload(self.dir / "flow.png", "틀린 설명", "캡션", 299)
+
     def test_rank_math_share_image_ids_are_checked_like_featured_media(self):
         self.record("본문.html", "flow.png", "cover.jpg")
         c = self.client()
@@ -299,7 +324,10 @@ class ReviewGateTest(unittest.TestCase):
                      f"<p style=\"background-image:image-set('{other}' 1x)\">a</p>",
                      f'<p style="background:u\\72l({other})">a</p>', "<embed src=x>", "<form action=x></form>",
                      "<a href=\"javascript:alert(1)\">a</a>", "<a href=\"//evil.example/x\">a</a>",
+                     '<a href="/\\evil.example/x">a</a>',
                      "https://www.youtube.com/watch?v=abc", "<p>https://twitter.com/x/status/1</p>",
+                     '<p class="embed">https://www.youtube.com/watch?v=abc</p>',
+                     '<p>앞 문장</p><p>https://www.youtube.com/watch?v=a</p>',
                      "<p>a <![CDATA[x]]> b</p>", "<?php echo 1 ?>"):
             self.assertBlocked(c, "확인할 수 없는", {"content": body})
 
@@ -345,8 +373,9 @@ class ReviewGateTest(unittest.TestCase):
         out = self.dir / "r.json"
         subprocess.run([sys.executable, str(Path(review_gate.__file__)), "record", str(out), "--model", "m",
                         "--findings", str(self.dir / "findings.md"), "--text", f"title={self.title}",
-                        "--text", "excerpt=a=b", str(self.dir / "본문.html")], check=True, capture_output=True)
+                        "--text", "excerpt=a=b", "--post", "299", str(self.dir / "본문.html")], check=True, capture_output=True)
         self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["texts"], {"post": {"title": self.title, "excerpt": "a=b"}})
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8")).get("post"), 299)
 
 
 if __name__ == "__main__":

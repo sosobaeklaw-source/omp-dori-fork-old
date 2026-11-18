@@ -4,10 +4,9 @@
     python3 review_gate.py record <reviewed.json> --model <읽은 모델> --findings <findings.md> \\
         [--text title=<읽은 제목>] [--text excerpt=<읽은 요약>] ... \\
         [--media-text <그림 파일> alt_text=<그 그림의 대체 글>] [--media-text <그림 파일> caption=<캡션>] ... \\
-        <본문.html> <그림>...
-  → {"files": [{"path", "sha256"}...], "texts": {"post": {칸: 값}, "media:<sha256>": {칸: 값}}, "model", "at", "findings"}.
-  글 칸(제목·요약·Rank Math)은 "post"에, 그림 칸(대체 글·캡션)은 그 그림 바이트의 sha256 항목에 적는다.
-  판정은 적지 않는다. 읽었다는 사실만 적는다.
+        [--post <검수한 글 번호>] <본문.html> <그림>...
+  → {"files": [{"path", "sha256"}...], "texts": {"post": {칸: 값}, "media:<sha256>": {칸: 값}}, "model", "at", "findings"}
+    (+ 줬을 때 "post": 글 번호). 글 번호를 적으면 발행 쪽에서 URL 글 번호·Rank Math objectID와 같은지 맞춘다.
 
 발행 쪽: wp_client.WP(reviewed=..., ack=...)가 올릴 본문과 그 본문이 부르는 그림(대표 그림 포함)의
 sha256을 check_bytes로, 글자 칸은 check_texts로 그 대상(글 또는 그 그림) 항목의 같은 칸 값과 똑같은지
@@ -32,8 +31,8 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def record(out, files, model, findings, texts=None, media_texts=None):
-    """texts: 글 칸→값. media_texts: {그림 파일: {칸: 값}} — 그 그림 바이트의 sha256 항목으로 적는다."""
+def record(out, files, model, findings, texts=None, media_texts=None, post=None):
+    """texts: 글 칸→값. media_texts: {그림 파일: {칸: 값}} — 그 그림 바이트의 sha256 항목으로 적는다. post: 검수한 글 번호."""
     if not Path(findings).is_file():
         raise SystemExit(f"findings.md가 없다: {findings}")
     entries = [{"path": str(Path(f).resolve()), "sha256": sha(Path(f).read_bytes())} for f in files]
@@ -46,6 +45,8 @@ def record(out, files, model, findings, texts=None, media_texts=None):
     doc = {"files": entries, "texts": by_target, "model": model,
            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
            "findings": str(Path(findings).resolve())}
+    if post is not None:
+        doc["post"] = post
     Path(out).write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
     return doc
 
@@ -90,6 +91,7 @@ if __name__ == "__main__":
     ap.add_argument("out")
     ap.add_argument("--model", required=True)
     ap.add_argument("--findings", required=True)
+    ap.add_argument("--post", type=int)
     ap.add_argument("--text", action="append", default=[], metavar="칸=값")
     ap.add_argument("--media-text", action="append", default=[], nargs=2, metavar=("그림", "칸=값"))
     ap.add_argument("files", nargs="+")
@@ -100,5 +102,5 @@ if __name__ == "__main__":
     media_texts = {}
     for f, kv in a.media_text:
         media_texts.setdefault(f, {}).__setitem__(*kv.split("=", 1))
-    print(json.dumps(record(a.out, a.files, a.model, a.findings, texts, media_texts), ensure_ascii=False, indent=1))
+    print(json.dumps(record(a.out, a.files, a.model, a.findings, texts, media_texts, a.post), ensure_ascii=False, indent=1))
     sys.exit(0)

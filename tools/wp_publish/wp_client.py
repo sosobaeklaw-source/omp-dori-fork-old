@@ -10,12 +10,15 @@ GET·HEAD 밖의 모든 요청(/wp-json·?rest_route=·wp-admin 어디로 가든
     본문 HTML은 허용 목록으로 읽는다: 아는 태그·속성만 받고 모르는 것(script·iframe·object·embed·srcdoc 따위)은 막는다.
     그림·영상 태그(img·source·video·audio·track)의 src·srcset·poster·data-src는 하나하나 받아 sha256을 맞추고,
     <a href> 말고 바깥 자원을 부르는 속성, style 속 url·image·역슬래시, 그림을 서버에서 넣을 수 있는 것
-    (wp:블록 주석 밖의 주석, 그림·동적 블록, [단축코드], 한 줄짜리 주소(oEmbed))은 확인할 길이 없으니 막는다.
+    (wp:블록 주석 밖의 주석, 그림·동적 블록, [단축코드], 한 줄짜리 주소(oEmbed — WP autoembed 정규식 둘 다:
+    줄 전체가 주소인 것, 속성이 붙은 <p>URL</p> 본문 어디든))은 확인할 길이 없으니 막는다.
     featured_media·Rank Math 그림(주소·첨부 번호)도 받아 맞춘다. 그림은 https://sobaeklaw.co.kr·wp.sobaeklaw.co.kr에서만 받는다
     (다른 곳 그림은 검수 뒤 바뀔 수 있어 막는다).
   - 글자 칸은 검수 기록 texts의 그 대상 항목과 똑같아야 한다(빈 값도): 글의 제목·요약·Rank Math 설명은 "post",
     그림(/media/<번호>)의 대체 글·캡션·제목은 그 번호의 source_url로 받은 바이트의 "media:<sha256>".
+    방금 올린 그림의 칸은 source_url 말고 방금 올린 바이트로 맞춘다(-scaled 사본은 바이트가 달라진다).
   - status는 draft만 보낼 수 있다(발행 글 갱신은 status를 빼고 보낸다). brand_write_guard.assert_clean도 여기서.
+  - 검수 기록에 글 번호(review_gate --post)가 적혀 있으면 URL의 글 번호·Rank Math objectID와 같아야 한다.
   - 확인한 것이 하나도 없는 요청은 그림 붙이기(post 칸)만 보낸다. status만 보내 공개 글을 내리는 것은 막는다.
 하나라도 기록에 없으면 어느 것이 읽히지 않았는지 대고 멈춘다. 다 맞으면 findings.md 첫 문단과 읽은 모델을 보여 주고 보낸다.
 응답을 받은 뒤 상태 코드와 리드가 무엇을 열어 보았는지 적은 한 줄(ack, 비어 있으면 안 됨)을 reviewed.json 옆
@@ -93,9 +96,10 @@ _BLOCKS = {"paragraph", "heading", "list", "list-item", "table", "quote", "pullq
 _BLOCK_COMMENT = re.compile(r"<!-- /?wp:([a-z0-9-]+(?:/[a-z0-9-]+)?)(?: (\{(?:(?!-->)[^<>])*\}))? /?-->")
 _BLOCK_ATTR_MEDIA = re.compile(r"url|src|image|media|featured|\"ids?\"|//", re.I)
 _SHORTCODE = re.compile(r"\[\[?/?(?!dB\()[A-Za-z][\w-]*")  # [dB(A)] 같은 소음 단위는 글자다(그런 단축코드는 없다)
-_OEMBED_LINE = re.compile(r"^\s*(?:<p>\s*)?https?://[^\s<>\"]+\s*(?:</p>)?\s*$", re.I | re.M)
+_OEMBED_LINE = re.compile(r"^\s*(?:<p>\s*)?https?://[^\s<>\"()]+\s*(?:</p>)?\s*$", re.I | re.M)
+_OEMBED_P = re.compile(r'(<p(?: [^>]*)?>\s*)(https?://[^\s<>"()]+)(\s*</p>)', re.I)  # WP autoembed: 속성 있는 <p>URL</p> 본문 어디든
 _STYLE_BAD = re.compile(r"\\|url|image|expression|@|/\*", re.I)
-_HREF_OK = re.compile(r"(https?:|mailto:|tel:|#|/(?!/))", re.I)
+_HREF_OK = re.compile(r"(https?:|mailto:|tel:|#|/(?![/\\]))", re.I)  # /\ 처럼 역슬래시도 브라우저는 슬래시로 읽는다
 
 
 class _Images(html.parser.HTMLParser):
@@ -163,6 +167,8 @@ def _body_images(content, where):
         bad.append(f"단축코드 {m.group(0)}")
     if m := _OEMBED_LINE.search(content):
         bad.append(f"한 줄짜리 주소(oEmbed) {m.group(0).strip()[:40]}")
+    if m := _OEMBED_P.search(content):
+        bad.append(f"한 줄짜리 주소(oEmbed) {m.group(2)[:40]}")
     p = _Images()
     p.feed(content)
     p.close()
@@ -195,6 +201,7 @@ class WP:
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
         self.op.addheaders = [("User-Agent", "Mozilla/5.0 sobaek-wp-publish")]
         self.nonce = None
+        self._uploaded = {}  # 방금 올린 그림 번호 → 올린 바이트. -scaled 사본 말고 이 바이트로 칸을 맞춘다.
 
     def _fetch(self, url):
         """검사용 읽기. 우리 사이트(https) 그림만 받는다. 받지 못한 그림은 확인 못 한 것이니 막는다. nonce는 우리 WP에만."""
@@ -208,9 +215,13 @@ class WP:
         return b
 
     def _media_bytes(self, where, name, k, media_id):
-        """/media/<번호>의 source_url 그림 바이트. 번호·응답이 이상하면 칸 이름을 대고 멈춘다."""
+        """/media/<번호>의 그림 바이트. 방금 올린 그림이면 그 바이트를 그대로 쓴다(-scaled 사본과 무관).
+        번호·응답이 이상하면 칸 이름을 대고 멈춘다."""
         try:
-            m = json.loads(self._fetch(f"{API}/media/{int(media_id)}"))
+            mid = str(int(media_id))
+            if mid in self._uploaded:
+                return f"<방금 올린 그림 {mid}>", self._uploaded[mid]
+            m = json.loads(self._fetch(f"{API}/media/{mid}"))
             src = m["source_url"]
             if not isinstance(src, str):
                 raise TypeError(src)
@@ -274,6 +285,13 @@ class WP:
         if payload.get("status", "draft") != "draft":
             raise ReviewMissing(f"{where}: status는 draft만 보낸다(발행 글 갱신은 status를 빼고 보낸다)")
         assert_clean(payload, context=where)
+        post = doc.get("post")
+        if post is not None:
+            mid = path.group(2)[1:] if path and path.group(2) else None
+            if mid and path.group(1) in ("posts", "pages") and mid != str(post):
+                raise ReviewMissing(f"{where}: 검수 기록은 글 {post}용이다. 글 {mid}에는 보내지 않는다")
+            if rankmath and str(payload.get("objectID")) != str(post):
+                raise ReviewMissing(f"{where}: 검수 기록은 글 {post}용이다(Rank Math objectID={payload.get('objectID')!r})")
         items, texts, target = [], [], "post"
         if path and path.group(1) == "media":
             if not path.group(2):
@@ -366,12 +384,14 @@ class WP:
         meta = {"alt_text": alt, "caption": caption, "title": file.stem, "post": post_id}
         assert_clean({"file": file.name, **meta}, context=f"media upload {file.name}")
         mime = "image/png" if file.suffix == ".png" else "image/jpeg"
+        data = file.read_bytes()
         st, _, b = self._open(urllib.request.Request(
-            API + "/media", data=file.read_bytes(), method="POST",
+            API + "/media", data=data, method="POST",
             headers={"X-WP-Nonce": self.nonce, "Content-Type": mime,
                      "Content-Disposition": f'attachment; filename="{file.name}"'}), timeout=180)
         if st not in (200, 201):
             raise SystemExit(f"upload {file.name} → {st} {b[:300]!r}")
         m = json.loads(b)
+        self._uploaded[str(m["id"])] = data  # 뒤따르는 칸 확인은 source_url(-scaled) 말고 이 바이트로 한다
         return self.post_json(f"/media/{m['id']}", {"alt_text": alt, "caption": caption, "post": post_id},
                               context=f"media meta {m['id']}")
