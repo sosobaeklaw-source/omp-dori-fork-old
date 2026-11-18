@@ -5,8 +5,9 @@
 # 파일을 붙이면 그 파일이 교열 데스크가 통과시킨 바로 그 판이어야 한다. --passed 의 교열 라운드 폴더(review.py --out 폴더)에서
 #   verdict.txt 첫 줄이 `나가도 됩니다`이고, 보내는 파일마다 sha256이 그 verdict.txt 의 `경로 sha256` 줄에 있어야 한다. 바이트만
 #   비교한다. 통과한 판이라도 같은 상위 폴더의 형제 라운드(r2, v2r9 같은 더 최신 라운드; verdict.txt 수정시각과, 접두사가 같으면
-#   이름 끝 숫자로 가린다)에 더 최신 판정이 있으면 그 판은 못 보낸다. 검수 모델이 읽지 않고 해시만 남긴 `읽지 않고 함께 나가는
-#   파일` 줄의 파일도 통과 판이 아니므로 --send-without-desk-review 로만 나간다. 하나라도 어긋나면 아무것도 올리지 않고
+#   이름 끝 숫자로 가린다)에 더 최신 판정이 있으면 그 판은 못 보낸다. 검수 모델이 읽지 않은 파일(`읽지 않고 함께 나가는 파일`
+#   줄에 글 폴더 기준 상대 경로로 오르고 해시도 함께 오른다; 해시로 가린다)도 통과 판이 아니므로 --send-without-desk-review
+#   로만 나간다. 하나라도 어긋나면 아무것도 올리지 않고
 #   `REFUSED <파일> is not the passed copy: …` 한 줄을 stderr 에 찍고 65 로 끝난다.
 #   교열이 보지 않는 파일(회장님이 달라 한 화면 캡처나 로그)만 --send-without-desk-review 로 보내고, 올라가는 글에 그 사실이 적히며
 #   DORI_HOME/state/send-without-desk-review.log 에 남는다. 파일 없이 글만 보내는 호출은 이 점검과 상관없다.
@@ -68,14 +69,25 @@ if cands:
     except (OSError,IndexError): first=""
     if first!="나가도 됩니다": refuse(names[0],"더 최신 교열 라운드 %s 가 이 판을 나가지 못하게 했습니다(%s)" % (n,os.path.join(q,"verdict.txt")))
     refuse(names[0],"더 최신 교열 라운드 %s 의 판정이 있으니 그 라운드를 --passed 로 지정해야 합니다" % n)
-# 나열 해시는 마디가 sha256(소문자 16진 64자)로 끝나는 줄만 센다. 검수 모델이 읽지 않고 해시만 남긴 파일은 통과 판이 아니다.
-listed={l.split()[-1] for l in lines[1:] if l.split() and re.fullmatch(r"[0-9a-f]{64}",l.split()[-1])}
-unread={w for l in lines[1:] if l.startswith("읽지 않고 함께 나가는 파일") for w in l.split(":",1)[-1].replace(","," ").split()}
-unread_abs={os.path.abspath(u) for u in unread}
+# 나열 해시는 마디가 sha256(소문자 16진 64자)로 끝나는 줄만 센다. 검수 모델이 읽지 않은 파일은 경로가 아니라 해시로 가린다:
+# review.py 는 `읽지 않고 함께 나가는 파일` 줄에 글 폴더 기준 상대 경로를 ", " 로 이어 쓰고, 그 파일의 해시도 해시 줄에
+# 올리므로, 그 상대 경로로 끝나는 해시 줄의 sha256 묶음에 드는 바이트는 통과 판이 아니다(--send-without-desk-review 로만 나간다).
+pairs=[]
+for l in lines[1:]:
+    w=l.split()
+    if w and re.fullmatch(r"[0-9a-f]{64}",w[-1]): pairs.append((" ".join(w[:-1]),w[-1]))
+listed={h for _,h in pairs}
+unread_hashes=set()
+for l in lines[1:]:
+    if l.startswith("읽지 않고 함께 나가는 파일"):
+        for u in l.split(":",1)[-1].split(", "):
+            u=u.strip()
+            if u: unread_hashes|={h for p,h in pairs if p.endswith(u)}
 for i,name in enumerate(names):
-    if name in unread or os.path.abspath(name) in unread_abs:
+    digest=hashlib.sha256(open(os.path.join(tmp,"f%d" % i),"rb").read()).hexdigest()
+    if digest in unread_hashes:
         refuse(name,"검수 모델이 읽지 않은 파일이라 --send-without-desk-review 로만 보낼 수 있습니다")
-    if hashlib.sha256(open(os.path.join(tmp,"f%d" % i),"rb").read()).hexdigest() not in listed: refuse(name,"its sha256 is not listed in %s" % verdict)' "$passed" "$tmp" "$@"
+    if digest not in listed: refuse(name,"its sha256 is not listed in %s" % verdict)' "$passed" "$tmp" "$@"
 fi
 [ $# -eq 0 ] || [ -z "$unreviewed" ] || text="$text"$'\n\n'"(첨부한 파일은 교열 데스크를 거치지 않았습니다)"
 # payload_json goes in from a file: with -F "payload_json=<text>" curl reads any ; in the text as a field parameter

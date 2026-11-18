@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -166,34 +166,43 @@ test("a later round that blocked the same bytes refuses the earlier pass; the ne
   expect(behind.err).toContain("더 최신 교열 라운드 r3 의 판정이 있으니 그 라운드를 --passed 로 지정해야 합니다");
 });
 
-test("a file the model did not read needs the explicit unreviewed path even though its hash is listed", () => {
+test("a file the model did not read is refused by its hash, sent as the 나갈판 copy from outside the piece folder", () => {
   const dir = rig();
-  const card = piece(dir, "01.png", "그림");
-  const shot = piece(dir, "캡처.png", "화면");
+  // The piece folder as the desk sees it: a read artifact and a space-named attachment reached only by an href.
+  const card = piece(dir, "글/카드.html", "글 바이트");
+  const attach = piece(dir, "글/첨부 1.pdf", "첨부 바이트");
   const folder = join(dir, "review", "r1");
   mkdirSync(folder, { recursive: true });
+  // review.py's shape: hash lines carry the source paths, the unread line carries piece-folder-relative
+  // paths joined with ", ", and both files' hashes sit among the hash lines.
   writeFileSync(
     join(folder, "verdict.txt"),
     `나가도 됩니다
-${card} ${sha("그림")}
-${shot} ${sha("화면")}
-읽지 않고 함께 나가는 파일(검수 모델이 내용을 읽지 못함): ${shot}
+${card} ${sha("글 바이트")}
+${attach} ${sha("첨부 바이트")}
+읽지 않고 함께 나가는 파일(검수 모델이 내용을 읽지 못함): 첨부 1.pdf
 사이트 자원(복사 안 함, 발행 사이트에서 불러옴): https://lawsobaek.com/a.css
 검수 모델: fake/model
 `,
   );
-  const refused = run(dir, ["--passed", folder, "결과입니다", shot]);
+  // The copy the desk made in 나갈판 is what the lane sends; its path matches nothing on the unread line.
+  const deskCard = join(folder, "나갈판", "카드.html");
+  const deskAttach = join(folder, "나갈판", "첨부 1.pdf");
+  mkdirSync(join(folder, "나갈판"), { recursive: true });
+  copyFileSync(card, deskCard);
+  copyFileSync(attach, deskAttach);
+  const refused = run(dir, ["--passed", folder, "결과입니다", deskAttach]);
   expect(refused.code).toBe(65);
   expect(refused.err.trim()).toBe(
-    `REFUSED ${shot} is not the passed copy: 검수 모델이 읽지 않은 파일이라 --send-without-desk-review 로만 보낼 수 있습니다`,
+    `REFUSED ${deskAttach} is not the passed copy: 검수 모델이 읽지 않은 파일이라 --send-without-desk-review 로만 보낼 수 있습니다`,
   );
   expect([refused.posts, refused.payload]).toEqual([0, undefined]);
-  // The read file beside it is the passed copy; the noise lines (site resources, model name) never count as hashes.
-  const ok = run(dir, ["--passed", folder, "결과입니다", card]);
-  expect([ok.code, ok.out.trim(), ok.posts]).toEqual([0, "SENT 777", 1]);
-  const unreviewed = run(dir, ["--send-without-desk-review", "화면입니다", shot]);
+  // The read artifact from the same round, its 나갈판 copy, goes up as the passed copy.
+  const ok = run(dir, ["--passed", folder, "결과입니다", deskCard]);
+  expect([ok.code, ok.out.trim(), ok.posts, ok.upload(0)]).toEqual([0, "SENT 777", 1, "글 바이트"]);
+  const unreviewed = run(dir, ["--send-without-desk-review", "첨부입니다", deskAttach]);
   // posts counts every post this rig made: one for the passed card above, one here.
-  expect([unreviewed.code, unreviewed.posts, unreviewed.upload(0)]).toEqual([0, 2, "화면"]);
+  expect([unreviewed.code, unreviewed.posts, unreviewed.upload(0)]).toEqual([0, 2, "첨부 바이트"]);
 });
 
 test("a file name with a newline cannot forge an extra line in the unreviewed log", () => {
