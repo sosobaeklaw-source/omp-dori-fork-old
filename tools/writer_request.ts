@@ -198,6 +198,7 @@ try {
           account: () => accountFromLog(agyLog),
           seatAccount,
           usage: () => machineUsage(join(agyDir, "log"), seatAccount ?? ""),
+          logDir: join(agyDir, "log"),
           runLog: (workDir) => runLogFor(join(agyDir, "log"), workDir),
           run: async (args, cwd) => {
             const child = Bun.spawn(["agy", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });

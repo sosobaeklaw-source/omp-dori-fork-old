@@ -6,7 +6,10 @@
  * 16:3x, "1분에 한편 뭐그런거 필요없다 내가 구독하는거 쓰는건데 … 병렬최대로"), accepting that a burst can draw the
  * suspension an earlier account got for being driven like a tool. The 403 stop only fires after Google has acted.
  *   - only the configured mail ({@link AgyEnv.seatAccount}, local config, never in this repo), compared whole: from
- *     the CLI's own log before each call, and after it from that call's own run log (found by its work folder);
+ *     the CLI's own log before each call, and after it from that call's own run log. agy names a run log
+ *     `cli-YYYYMMDD_HHMMSS.log`, a second apart at best, so two calls that start together would share one file and
+ *     one of them would look unlogged. Each call passes `--log-file` with its own work-folder name on the end, and
+ *     the log is read back from that exact path;
  *   - the request body goes into a fresh empty folder as `request.md`, and the prompt is one short line naming it;
  *   - an answer that links a file (`implementation_plan.md` and the like) is dropped and asked once more;
  *   - a 403 stops the seat for good (`state/agy-stopped.json`) until a person removes that file. The stop file, the
@@ -15,7 +18,7 @@
  * Every call adds one line, account `agy-s4`, to the call log (`gemini-calls.tsv`) the web runner writes.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type AgyRun, errorText, isForbidden, isQuota, linksFile } from "./agy-errors.ts";
 import { type AgyUsage, mailsIn } from "./agy-logs.ts";
 import * as own from "./agy-own.ts";
@@ -40,6 +43,8 @@ export type AgyEnv = {
   usage: () => AgyUsage;
   /** The text of agy's run log for the call made in `workDir`, or undefined if agy wrote none. */
   runLog: (workDir: string) => string | undefined;
+  /** Where agy keeps its run logs (`~/.gemini/antigravity-cli/log`); each call writes its own file there. */
+  logDir: string;
   log: (line: string) => void;
 };
 /** `calls` is the call log path (`gemini-calls.tsv`), chosen by the caller, so a test never writes the real one. */
@@ -102,12 +107,14 @@ async function callOnce(env: AgyEnv, o: AgyOpts, kind: string) {
   const dir = mkdtempSync("/tmp/agy-w-");
   writeFileSync(join(dir, "request.md"), readFileSync(o.prompt));
   const startedAt = env.now();
+  const stamp = new Date(startedAt).toISOString().replace(/\D/g, "").slice(0, 14);
+  const logFile = join(env.logDir, `cli-${stamp}-${basename(dir)}.log`);
   let r: AgyRun;
   try {
     // biome-ignore format: one flag and its value per pair
     r = await env.run([
       "-p", ASK, "--model", AGY_MODEL, "--sandbox", "--mode", "plan", "--output-format", "json",
-      "--print-timeout", `${o.timeout}s`,
+      "--print-timeout", `${o.timeout}s`, "--log-file", logFile,
     ], dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -138,9 +145,9 @@ async function callOnce(env: AgyEnv, o: AgyOpts, kind: string) {
       : `빈 답(${json.status ?? `exit ${r.code}`}${error ? `: ${error}` : ""})`;
   const code = linked ? EXIT.linked : answer ? EXIT.ok : EXIT.empty;
   record(o, kind, result, code, startedAt, endAt);
-  // Bound to this call by its own work folder: no log, or any mail on it other than the seat's, stops the seat before
-  // the answer is used, since the account check rests on these logs.
-  const log = env.runLog(dir);
+  // Bound to this call by the log file it was given: no log, or any mail on it other than the seat's, stops the seat
+  // before the answer is used, since the account check rests on these logs.
+  const log = env.runLog(logFile);
   if (log === undefined) {
     stop(o.home, `agy's run logs did not record the call at ${new Date(startedAt).toISOString()}`);
     return { unlogged: true as const };

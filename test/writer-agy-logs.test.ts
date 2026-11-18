@@ -35,6 +35,38 @@ describe("agy log reading binds each run to its account, day and call", () => {
     expect(runLogFor(dir, "/tmp/agy-w-AbC123")).toContain("mine");
     expect(runLogFor(dir, "/tmp/agy-w-none")).toBeUndefined();
   });
+  test("two runs that share one timestamped log name each keep their own text", () => {
+    const { dir, run } = logs();
+    run("cli-20261118_163623-agy-w-AbC123.log", [S4], "first", "/tmp/agy-w-AbC123");
+    run("cli-20261118_163623-agy-w-ZzZ999.log", [S4], "second", "/tmp/agy-w-ZzZ999");
+    expect(runLogFor(dir, "/tmp/agy-w-AbC123")).toContain("first");
+    expect(runLogFor(dir, "/tmp/agy-w-ZzZ999")).toContain("second");
+    expect(runLogFor(dir, "/tmp/agy-w-AbC123")).not.toContain("second");
+  });
+
+  test("a 403 in a suffixed log name still forbids the seat", () => {
+    const { dir, run } = logs();
+    run("cli-20261118_163623-agy-w-AbC123.log", [S4], ERR);
+    expect(usageFromLogs(dir, S4).forbidden).toBe(true);
+  });
+  test("two calls that start in the same second each get their own log and both pass", async () => {
+    const { dir, run } = logs();
+    const { home, env, opts, calls } = setup([ok("하나"), ok("둘")]);
+    env.logDir = dir;
+    env.run = async (args, cwd) => {
+      const logFile = args[args.indexOf("--log-file") + 1] ?? "";
+      run(logFile.slice(dir.length + 1), [S4], "own", cwd);
+      calls.push({ at: env.now(), args, request: "" });
+      return ok("본문");
+    };
+    env.runLog = (p) => runLogFor(dir, p);
+    const b = { ...opts, lane: "b", out: join(home, "b.txt"), meta: join(home, "b.meta.json") };
+    const [ra, rb] = await Promise.all([sendOnAgy(env, opts), sendOnAgy(env, b)]);
+    expect([ra, rb]).toEqual([EXIT.ok, EXIT.ok]);
+    expect(existsSync(stopPath(home))).toBe(false);
+    const names = calls.map((c) => c.args[c.args.indexOf("--log-file") + 1]);
+    expect(new Set(names).size).toBe(2);
+  });
 });
 
 describe("the seat calls only as its configured mail, checked on this call's own log", () => {

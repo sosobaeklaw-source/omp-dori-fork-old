@@ -30,7 +30,7 @@ export function accountFromLog(logPath: string): string | undefined {
 export function usageFromLogs(logDir: string, account: string): AgyUsage {
   let forbidden = false;
   for (const name of (existsSync(logDir) ? readdirSync(logDir) : []).sort()) {
-    if (!/^cli-\d{8}_\d{6}\.log$/.test(name)) continue;
+    if (!/^cli-\d{8}_\d{6}(-.+)?\.log$/.test(name)) continue;
     const path = join(logDir, name);
     const text = readFileSync(path, "utf8");
     if (!text.includes("Print mode: starting")) continue;
@@ -43,15 +43,23 @@ export function usageFromLogs(logDir: string, account: string): AgyUsage {
 }
 
 /**
- * The run log of the call made in `workDir`: agy names the workspace on its `workspaceDirs=[…]` line, and the seat
- * makes a fresh `mkdtemp` folder per call, so its name picks out this call's log and no other lane's.
+ * The run log of the call made in `workDir`: the seat passes agy `--log-file` with the work folder's name on the end
+ * (`cli-<stamp>-<folder>.log`), because agy's own name is only precise to the second and two calls that start
+ * together would otherwise share one file. A log written by an agy call made outside the seat keeps the plain name
+ * and is still found by its `workspaceDirs` line.
  */
 export function runLogFor(logDir: string, workDir: string): string | undefined {
-  const tail = `/${basename(workDir)}]`;
+  const tail = basename(workDir);
+  if (workDir.startsWith(logDir) && existsSync(workDir)) return readFileSync(workDir, "utf8");
+  const own = existsSync(logDir)
+    ? readdirSync(logDir).find((name) => name.startsWith("cli-") && name.endsWith(`-${tail}.log`))
+    : undefined;
+  if (own !== undefined) return readFileSync(join(logDir, own), "utf8");
+  const mark = `/${tail}]`;
   for (const name of existsSync(logDir) ? readdirSync(logDir) : []) {
-    if (!/^cli-\d{8}_\d{6}\.log$/.test(name)) continue;
+    if (!/^cli-\d{8}_\d{6}(-.+)?\.log$/.test(name)) continue;
     const text = readFileSync(join(logDir, name), "utf8");
-    if (/workspaceDirs=\[[^\]\n]*\]/.exec(text)?.[0].endsWith(tail)) return text;
+    if (/workspaceDirs=\[[^\]\n]*\]/.exec(text)?.[0].endsWith(mark)) return text;
   }
   return undefined;
 }

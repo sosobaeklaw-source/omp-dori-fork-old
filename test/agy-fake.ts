@@ -38,6 +38,7 @@ export function setup(answers: AgyRun[], account = SEAT_MAIL, others = { forbidd
     account: () => account,
     seatAccount: SEAT_MAIL,
     usage: () => ({ ...others }),
+    logDir: home,
     runLog: () => `I Print mode: starting\nI applyAuthResult: email=${account}, x\n`,
     run: async (args, cwd) => {
       calls.push({ at: t, args, request: readFileSync(join(cwd, "request.md"), "utf8") });
