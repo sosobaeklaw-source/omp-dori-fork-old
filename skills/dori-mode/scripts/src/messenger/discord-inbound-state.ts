@@ -64,8 +64,7 @@ export const fileDiscordInboundStore = (stateDir: string, channelId: string): Di
         privateFile(fstatSync(fd));
         const state = JSON.parse(readFileSync(fd, "utf8")) as { version?: number; channelId?: string; cursor?: string };
         if (
-          !state ||
-          state.version !== 1 ||
+          state?.version !== 1 ||
           state.channelId !== channelId ||
           (state.cursor !== "0" && !isDiscordSnowflake(state.cursor))
         ) {

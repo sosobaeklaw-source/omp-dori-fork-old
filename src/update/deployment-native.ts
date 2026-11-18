@@ -68,8 +68,7 @@ export async function captureRuntime(
   const state = readPaneState(config.stateDir, config.pane);
   const current = await cli.probe(config.pane, "deployment held", config.stateDir);
   if (
-    !state ||
-    state.role !== "dori" ||
+    state?.role !== "dori" ||
     state.sessionId !== config.sessionId ||
     state.paneId !== config.pane ||
     current.pid !== state.pid ||

@@ -152,7 +152,7 @@ function recoverPromotionLock(ctx: UpdateContext, owner: UpdateLock | undefined,
       (candidate) =>
         candidate.phase === "ready" && (state.active === candidate.id || candidate.promotion?.status !== "complete"),
     );
-  if (!job || job.review?.verdict !== "approve" || job.review.sourceHash !== job.sourceHash) return false;
+  if (job?.review?.verdict !== "approve" || job.review.sourceHash !== job.sourceHash) return false;
   if (
     job.commands.some(
       (command) =>
