@@ -1,8 +1,6 @@
-# card: lexicon passage (11-10 owner quote, 법문서 작성 215쪽, same-name rule), headline notes, r3 word table, instagram notes. 독후감은 macmini 원문 경로(owner-now-sync 미러) (rootfix-pr4-1116)
-~/sobaegi-lead/results/lexicon-natural-1110/독후감_자연스러운말.md:12-12
-~/sobaegi-lead/results/lexicon-natural-1110/독후감_자연스러운말.md:20-22
-~/sobaegi-lead/results/copy-1114/독후감.md:7-15
+# 소화본이 맡는다: ~/.omp-dori/독후감/소화본/card.md
 ~/.omp-dori/results/cardmag-hybrid-1116/r3/문구표_r3.md:12-53
-~/.omp-dori/results/insta-jaehae-1116/ref/instagram-cardnews-principles-20261103.md:1-45
-~/sobaegi-lead/results/channels-8-1110/독후감_인스타.md:1-11
-~/sobaegi-lead/results/insta-ref2-1109/독후감.md:1-64
+# 법률가 문장의 근본(주어·판결 동사·짝말·건수·고시 기준·평석) — 판결·칼럼 원문과 함께 통째로 (pipeline-qa-1117)
+~/.omp-dori/독후감/독후감_법률가문장_근본.md:1-236
+# 가스켓러브 독후감 3절(여는 사람 자리·폰 몇 초 안에 판단)과 확인 기준 문단: 소화본 전환(11-17 digest) 때 빠진 줄을 되살림 (parukuri-exec-1118 R61)
+~/sobaegi-lead/results/gasket-study-1114/독후감.md:25-33
