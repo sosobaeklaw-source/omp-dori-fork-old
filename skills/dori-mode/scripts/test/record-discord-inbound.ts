@@ -2,6 +2,7 @@ import type { TestDiscordMessage } from "./discord-inbound-fakes.ts";
 
 // Stateful local REST fixture for the public CLI; no request leaves this process.
 let polls = 0;
+let heads = 0;
 let requests = 0;
 const delays: number[] = [];
 const scenario = process.env["DORI_TEST_DISCORD_CASE"];
@@ -44,7 +45,8 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   else if (url.pathname === "/api/v10/channels/20/messages") {
     if (scenario === "permissions") return new Response('{"diagnostic":"private channel body"}', { status: 403 });
     const limit = Number(url.searchParams.get("limit"));
-    if (limit === 100 && !url.searchParams.has("before")) {
+    // The first head is startup access/baseline; each later head begins a poll.
+    if (limit === 1 && ++heads > 1 && !url.searchParams.has("before")) {
       polls++;
       if (polls === 1)
         history.push(message("101", "10", "first owner text"), message("102", "11", "private other user"));
@@ -61,12 +63,20 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       .filter((item) => before === null || BigInt(item.id) < BigInt(before))
       .sort((a, b) => (BigInt(a.id) > BigInt(b.id) ? -1 : 1))
       .slice(0, limit);
+  } else if (url.pathname === "/api/v10/channels/20" && scenario === "context") {
+    body = { id: "20", type: 11, name: "task thread", parent_id: "30" };
+  } else if (url.pathname === "/api/v10/channels/30" && scenario === "context") {
+    body = { id: "30", type: 0, name: "dev", topic: "editable topic" };
+  } else if (url.pathname === "/api/v10/channels/20" && scenario === "context-denied") {
+    return new Response('{"diagnostic":"private channel body"}', { status: 403 });
   } else throw new Error("unexpected Discord REST endpoint in test");
   return new Response(JSON.stringify(body), { status: 200 });
 }) as typeof fetch;
 
+const realSleep = Bun.sleep;
 Object.defineProperty(Bun, "sleep", {
   value: async (ms: number) => {
+    if (process.env["DORI_INBOUND_HOLD"] === "1") return await realSleep(ms);
     delays.push(ms);
     if (delays.length === 2) {
       console.log(`DISCORD_INBOUND_QA ${JSON.stringify({ delays, polls, requests })}`);

@@ -126,8 +126,13 @@ describe("monitor tool", () => {
     await run(dori, { op: "start", name: "w", argv: ["sleep", "30"], filter: "." });
     const pid = Number(/pid (\d+)/.exec((await run(dori, { op: "list" }))?.content[0]?.text ?? "")?.[1]);
     dori.session = { id: "plain", entries: [] };
-    await dori.emit("session_switch", { type: "session_switch", reason: "new" });
+    await dori.emit("session_switch", { type: "session_switch", reason: "resume" });
     await until(() => !alive(pid));
+    expect(dori.session.entries).toEqual([]);
+    expect(dori.active).not.toContain("monitor");
+    await expect(run(dori, { op: "list" })).rejects.toThrow(
+      "monitor works only in the Dori session (omp --dori-role dori)",
+    );
   });
 
   test("monitors stop when /tree moves the Dori session to a point before its role was recorded", async () => {

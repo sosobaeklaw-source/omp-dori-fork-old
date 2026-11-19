@@ -47,7 +47,10 @@ test("the Linux source launcher argv is admitted as native OMP, not as an extern
   const pkg = "/opt/agent tools/packages/coding-agent/";
   const source = ["bun", "--preload", `${pkg}scripts/omp.ts`, `${pkg}scripts/../src/cli.ts`];
   expect(() => load([...source, "--resume", "session", "{prompt}"])).toThrow();
-  expect(() => load(["sh", "-c", 'exec "$0" "$@"', "omp", "--resume", "session", "{prompt}"])).not.toThrow();
+  // A shell script that names OMP cannot be read: it must opt out explicitly instead of silently losing the guard.
+  const shell = ["sh", "-c", 'exec "$0" "$@"', "omp", "--resume", "session", "{prompt}"];
+  expect(() => load(shell)).toThrow("cannot read");
+  expect(() => load(shell, "external")).not.toThrow();
 });
 
 test.each([
@@ -59,6 +62,8 @@ test.each([
   ["env with a non-shell NAME=VALUE", ["env", "a-b=1", "./x=2", "omp"]],
   ["an abbreviated env --un=NAME", ["env", "--un=FOO", "omp"]],
   ["env -a NAME", ["env", "-a", "omp", "omp"]],
+  ["env running env", ["env", "-i", "/usr/bin/env", "-u", "FOO", "A=1", "omp"]],
+  ["an assignment between two env", ["env", "A=1", "env", "omp"]],
 ])("an OMP argv behind %s keeps the native resume guard", (_, command) => {
   expect(() => load([...command, "--resume", "session", "{prompt}"])).toThrow("without session resume");
 });

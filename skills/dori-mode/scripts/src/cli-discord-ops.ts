@@ -2,11 +2,13 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { type Command, die } from "./cli-context.ts";
+import { type Command, die, messageText } from "./cli-context.ts";
 import { type DcChannel, Discord, isForumType } from "./messenger/discord.ts";
+import { DiscordChannels, purposeText } from "./messenger/discord-channels.ts";
 import { discordInboundEnv } from "./messenger/discord-inbound-state.ts";
 import { postKind, recordSent } from "./messenger/discord-sent.ts";
 import { fetchHttp } from "./messenger/http.ts";
+import { DISCORD_LIMIT } from "./messenger/split.ts";
 import { TranscriptionError } from "./messenger/voice.ts";
 import { realClock } from "./run.ts";
 
@@ -64,17 +66,22 @@ const tagIds = (forum: DcChannel, names: readonly string[]): string[] =>
     );
   });
 
-export const sendDiscord: Command = async ({ need, opt, values, config }) => {
+export const sendDiscord: Command = async (cli) => {
+  const { need, opt, values, config } = cli;
   const thread = opt("thread");
   const to = thread === undefined ? need("to") : undefined;
-  const text = need("text");
+  const text = await messageText(cli);
   // An --edit given empty ("$UNSET") or not a message id is refused before any request: it must never post anew.
   const edit = values["edit"] === undefined ? undefined : discordInboundEnv("--edit", opt("edit"));
   const kind = postKind(opt("kind"));
-  const rawReply = opt("reply");
   const rawCloses = opt("closes");
-  const reply = rawReply === undefined ? undefined : discordInboundEnv("--reply", rawReply);
   const closes = rawCloses === undefined ? undefined : discordInboundEnv("--closes", rawCloses);
+  // Likewise a --reply that is not a message id never becomes a plain post.
+  const reply = values["reply"] === undefined ? undefined : discordInboundEnv("--reply", opt("reply"));
+  if (edit !== undefined && reply !== undefined) die("--reply makes a new message; it cannot be used with --edit");
+  // An edit replaces one message, so it is never split: over the limit it is refused before the channel lookup.
+  if (edit !== undefined && text.length > DISCORD_LIMIT)
+    die(`--edit text exceeds ${DISCORD_LIMIT} UTF-16 code units; shorten the text or send without --edit`);
   const dc = client();
   let target: string;
   if (thread !== undefined) target = discordInboundEnv("--thread", thread);
@@ -84,32 +91,48 @@ export const sendDiscord: Command = async ({ need, opt, values, config }) => {
       die(`${channel.id} is a forum: post with dori thread discord create, or pass --thread`);
     target = channel.id;
   }
-  if (edit !== undefined) return await dc.edit(target, edit, text);
-  const id = await dc.send(target, text, reply);
-  // The post is out: print its id before the log line so a log fault never hides it and invites a duplicate send.
-  console.log(`SENT ${id}`);
-  try {
-    recordSent(config.stateDir, id, process.env["DORI_LANE"], kind, { reply, closes });
-  } catch (e) {
-    console.log(`WARN sent-log ${id}: ${(e as Error).message}`);
+  if (edit !== undefined) {
+    await dc.edit(target, edit, text);
+    return;
+  }
+  const ids = await dc.send(target, text, reply === undefined ? {} : { replyTo: reply });
+  // The posts are out: print their ids before the log line so a log fault never hides them and invites a duplicate send.
+  console.log(`SENT ${ids.join(" ")}`);
+  for (const id of ids) {
+    try {
+      recordSent(config.stateDir, id, process.env["DORI_LANE"], kind, { reply, closes });
+    } catch (e) {
+      console.log(`WARN sent-log ${id}: ${(e as Error).message}`);
+    }
   }
 };
 
-export const threadDiscord: Command = async ({ positionals, need, strings, values }) => {
+export const threadDiscord: Command = async ({ positionals, need, opt, strings, values }) => {
   const action = positionals[1];
   const tags = strings("tag");
   if (values["archive"] === true && values["unarchive"] === true) die("choose --archive or --unarchive");
   const dc = client();
   if (action === "create") {
+    // A thread on an existing message: checked before any request, so a bad id never opens a thread without one.
+    const message = values["message"] === undefined ? undefined : discordInboundEnv("--message", opt("message"));
+    // Any --tag counts, a bare one included: it is never silently dropped from a --message thread.
+    if (message !== undefined && values["tag"] !== undefined)
+      die("--tag needs a forum post; --message opens a thread on a message");
     const channel = await channelOf(dc, need("to"));
     if (tags.length && !isForumType(channel.type)) die("--tag needs a forum channel");
+    if (message !== undefined && isForumType(channel.type))
+      die(`${channel.id} is a forum: its posts are threads already; drop --message`);
     const title = need("title");
     const name = values["title"];
     const text = values["text"];
-    const thread = await dc.createThread(channel, typeof name === "string" ? name : title, {
-      ...(typeof text === "string" ? { text } : {}),
-      ...(tags.length ? { appliedTags: tagIds(channel, tags) } : {}),
-    });
+    const titled = typeof name === "string" ? name : title;
+    const thread =
+      message === undefined
+        ? await dc.createThread(channel, titled, {
+            ...(typeof text === "string" ? { text } : {}),
+            ...(tags.length ? { appliedTags: tagIds(channel, tags) } : {}),
+          })
+        : await dc.threadOnMessage(channel.id, message, titled, typeof text === "string" ? text : undefined);
     console.log(`THREAD ${thread.id}${thread.messageId === undefined ? "" : ` mid=${thread.messageId}`}`);
   } else if (action === "set") {
     const threadId = discordInboundEnv("thread", positionals[2]);
@@ -132,6 +155,34 @@ export const threadDiscord: Command = async ({ positionals, need, strings, value
     });
     console.log(`THREAD ${id}`);
   } else die("thread discord needs create or set");
+};
+
+/** The operator's purpose notes per channel or thread: `set <channel> --purpose T`, `clear <channel>`, `list`. */
+export const channelDiscord: Command = async ({ positionals, opt, config }) => {
+  const action = positionals[1];
+  const store = new DiscordChannels(config.stateDir);
+  if (action === "list") {
+    for (const [id, entry] of Object.entries(store.read()))
+      console.log(
+        `CHANNEL ${id} name=${JSON.stringify(entry.name ?? "")} purpose=${JSON.stringify(entry.purpose)} updated=${entry.updatedAt}`,
+      );
+    return;
+  }
+  if (action !== "set" && action !== "clear") return die("channel discord needs set, clear or list");
+  const raw = positionals[2] ?? die(`channel discord ${action} needs a channel or thread`);
+  if (action === "clear") {
+    // An ID needs no lookup, so a deleted channel's note can still be removed.
+    const id = /^\d+$/.test(raw) ? discordInboundEnv("channel", raw) : (await channelOf(client(), raw)).id;
+    console.log(`${(await store.clear(id)) ? "PURPOSE_CLEARED" : "PURPOSE_NONE"} ${id}`);
+    return;
+  }
+  // Checked before the lookup, so a bad purpose sends no request.
+  const purpose = purposeText(opt("purpose") ?? "");
+  const channel = await channelOf(client(), raw);
+  // A DM or an unnamed channel may answer with a null name: only a string is recorded.
+  const name = typeof channel.name === "string" ? channel.name : undefined;
+  const entry = await store.set(channel.id, purpose, name, Date.now());
+  console.log(`PURPOSE ${channel.id} ${JSON.stringify(entry.purpose)}`);
 };
 
 export const reactDiscord: Command = async ({ need, opt, values }) => {

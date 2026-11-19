@@ -9,8 +9,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 import { freezeSource } from "../update/source.ts";
 import { extractArchive } from "./archive.ts";
+import { setAutomaticEnabled } from "./automatic-state.ts";
 import type { VerifiedBundle } from "./bundle.ts";
 import {
   type ConsumerPaths,
@@ -23,10 +25,11 @@ import {
   saveJson,
 } from "./files.ts";
 import { assertNoLiveDori } from "./live.ts";
+import { assertNoConsumerLaunches, waitLaunchGate } from "./launch-leases.ts";
 import { validateReleaseManifest } from "./manifest.ts";
 import { provisionNativeSource } from "./native.ts";
 import { assertLock, provisionDependency } from "./provision.ts";
-import { installIsolatedReferences, preflightReferences } from "./references.ts";
+import { preflightReferences } from "./references.ts";
 import {
   activateRelease,
   assertInstalledPointer,
@@ -68,27 +71,47 @@ async function installReferences(
   source: string,
   dependency: string,
   manifest: InstalledState["current"],
+  launchOwner?: number,
 ): Promise<void> {
   // Preflight the entire set before the first link/config creation. Existing custom files stay untouched.
   preflightInstallation(paths);
   const native = manifest.requirements.omp === "18.20.0" ? await provisionNativeSource(source, paths.home) : undefined;
-  if (!regularFile(paths.config)) {
-    const example = JSON.parse(readFileSync(join(source, "skills/dori-mode/references/config.example.json"), "utf8"));
-    example.ompUlwPath = dependency;
-    example.runtime = process.platform === "darwin" ? "hc" : "herdr";
-    if (paths.dori !== join(paths.home, ".dori")) example.stateDir = join(paths.dori, "state");
-    if (native || paths.dori !== join(paths.home, ".dori"))
-      example.agentCommand = [
-        join(paths.dori, "bin/omp"),
-        ...(example.agentCommand?.slice(1) ?? ["--dori-role", "lane", "--model", "{model}", "{prompt}"]),
-      ];
-    writeFileSync(paths.config, `${JSON.stringify(example, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  }
-  installIsolatedReferences(paths, source);
-  for (const [path, target] of paths.links) {
-    realDirectory(dirname(path), true);
-    owned(dirname(path));
-    if (pointer(path) === undefined) replacePointer(path, undefined, target);
+  const gate = await waitLaunchGate(paths);
+  try {
+    assertNoConsumerLaunches(paths, launchOwner);
+    preflightInstallation(paths);
+    if (!regularFile(paths.config)) {
+      const example = JSON.parse(readFileSync(join(source, "skills/dori-mode/references/config.example.json"), "utf8"));
+      example.ompUlwPath = dependency;
+      example.runtime = process.platform === "darwin" ? "hc" : "herdr";
+      if (paths.dori !== join(paths.home, ".dori")) example.stateDir = join(paths.dori, "state");
+      if (native || paths.dori !== join(paths.home, ".dori"))
+        example.agentCommand = [
+          join(paths.dori, "bin/omp"),
+          ...(example.agentCommand?.slice(1) ?? ["--dori-role", "lane", "--model", "{model}", "{prompt}"]),
+        ];
+      writeFileSync(paths.config, `${JSON.stringify(example, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    }
+    if (paths.dori !== join(paths.home, ".dori")) {
+      // Wrappers are release behavior too. Using this updater's renderer would retain newer bytes on rollback.
+      const renderer = "src/release/references.ts";
+      if (!manifest.source.files.some((file) => file.path === renderer))
+        throw new Error("Selected release has no authenticated consumer reference renderer");
+      if (verifyRelease(paths, manifest) !== source || !regularFile(join(source, renderer)))
+        throw new Error("Selected consumer reference renderer is unavailable");
+      const target = await import(pathToFileURL(join(source, renderer)).href);
+      if (typeof target.installIsolatedReferences !== "function")
+        throw new Error("Selected consumer reference renderer has no installer");
+      await target.installIsolatedReferences(paths, source);
+      preflightReferences(paths);
+    }
+    for (const [path, target] of paths.links) {
+      realDirectory(dirname(path), true);
+      owned(dirname(path));
+      if (pointer(path) === undefined) replacePointer(path, undefined, target);
+    }
+  } finally {
+    gate();
   }
 }
 
@@ -96,6 +119,8 @@ export async function installBundle(
   paths: ConsumerPaths,
   bundle: VerifiedBundle,
   before: InstalledState | undefined,
+  beforeActivate?: () => void,
+  launchOwner?: number,
 ): Promise<InstalledState> {
   preflightInstallation(paths);
   assertInstalledPointer(paths, before);
@@ -116,7 +141,7 @@ export async function installBundle(
       throw new Error("Installed release identity collision");
     const source = verifyRelease(paths, manifest);
     const dependency = await provisionDependency(paths, manifest, source);
-    await installReferences(paths, source, dependency, manifest);
+    await installReferences(paths, source, dependency, manifest, launchOwner);
     assertInstalledPointer(paths, before);
     return before;
   }
@@ -139,9 +164,10 @@ export async function installBundle(
       freezeDirectories(destination);
     }
     const source = verifyRelease(paths, manifest);
-    await installReferences(paths, source, dependency, manifest);
+    await installReferences(paths, source, dependency, manifest, launchOwner);
     const after: InstalledState = { version: 1, current: manifest, ...(before ? { previous: before.current } : {}) };
-    activateRelease(paths, before, after);
+    beforeActivate?.();
+    activateRelease(paths, before, after, launchOwner);
     return after;
   } finally {
     rmSync(stage, { recursive: true, force: true });
@@ -162,6 +188,8 @@ export async function rollbackRelease(
   const dependency = await provisionDependency(paths, before.previous, source);
   await installReferences(paths, source, dependency, before.previous);
   const after: InstalledState = { version: 1, current: before.previous, previous: before.current };
+  // A requested rollback remains selected until the owner explicitly resumes automatic updates.
+  setAutomaticEnabled(paths, false, true);
   activateRelease(paths, before, after);
   return after;
 }

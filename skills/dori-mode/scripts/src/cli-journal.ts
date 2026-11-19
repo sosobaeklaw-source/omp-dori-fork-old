@@ -1,6 +1,7 @@
 /** dori report, lesson, worklog, checkpoint and checkpoints: the durable journals. */
 import { CheckpointError, Checkpoints } from "./checkpoints.ts";
 import { type Cli, type Command, die } from "./cli-context.ts";
+import { autoTrackLinks } from "./cli-pr.ts";
 import { isLessonOutcome, LessonError, Lessons } from "./lessons.ts";
 import { isReportKind, ReportError, Reports, reportLine } from "./reports.ts";
 import { realClock, runtimesOf } from "./run.ts";
@@ -127,7 +128,8 @@ const worklog: Command = async ({ key, positionals, values, need, config }) => {
   }
 };
 
-const checkpoint: Command = async ({ key, positionals, need, strings, lane, config }) => {
+const checkpoint: Command = async (cli) => {
+  const { key, positionals, need, strings, lane, config } = cli;
   const target = await lane(key ?? die("checkpoint needs a lane key"));
   // parseArgs takes one value per flag; a second bare receipt would otherwise be dropped and its effect repeated later.
   const stray = positionals.slice(1);
@@ -143,6 +145,7 @@ const checkpoint: Command = async ({ key, positionals, need, strings, lane, conf
     realClock.now(),
   );
   console.log(JSON.stringify(result));
+  autoTrackLinks(cli, target, result.checkpoint.remoteEffects.join(" "), `checkpoint ${target.key}`);
 };
 
 export const journalCommands: Readonly<Record<string, Command>> = {

@@ -1,0 +1,34 @@
+Follow the [ready-for-review requirements](https://github.com/vntrevx/omp-dori/blob/main/CONTRIBUTING.md#ready-for-review).
+Keep this PR draft/not ready while applicable local evidence is missing. Explain any N/A.
+Required remote CI may be pending for review; all three jobs must pass before merge.
+
+## Change
+
+- One concern and reason:
+- Related PRs and unmerged dependencies (or none):
+
+## Contract
+
+- Final source/head SHA and target branch/base SHA:
+- Owned state/config and defaults (before -> after):
+- Compatibility and earlier accepted fences preserved:
+
+## Evidence
+
+Use the existing [setup/gates](https://github.com/vntrevx/omp-dori/blob/main/CONTRIBUTING.md#run-the-gates)
+and [CI workflow](https://github.com/vntrevx/omp-dori/blob/main/.github/workflows/ci.yml).
+Give actual commands/results and revisions, or links to those runs. Do not relabel carried-forward
+or combined partial counts as a full rerun.
+
+- Bug reproduction before and after the fix (or not a bug):
+- Relevant boundary and failure regressions:
+- Affected checks rerun after the last code change:
+- Full local `bun run ci` on stabilized final content (command and result):
+- Required remote jobs on the PR head (run links and results, or pending):
+- Changed CLI/native/runtime surface: actual run, isolated state and runtime/host identity (or N/A):
+- Performance claim: pinned same-workload baseline/candidate, correctness and relevant time/memory
+  results (or no claim):
+- Failed/skipped/unrun checks and environment/capability limits, with reasons:
+
+- [ ] Earlier regression coverage preserved; no tests/assertions, skips or timeouts weakened to pass.
+- [ ] No credentials, private transcripts, account data or private config in patches, fixtures or evidence.

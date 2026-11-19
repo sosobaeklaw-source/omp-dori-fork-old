@@ -135,7 +135,7 @@ export async function releaseGate(
     }
     return { name, checkId: Number(match[1]) };
   });
-  // Only these four independent GETs overlap. Drain all reads before validating in required-job order.
+  // Only the required independent GETs overlap. Drain all reads before validating in required-job order.
   const results = await Promise.allSettled(
     requiredChecks.map(({ checkId }) => reads.api(`${prefix}/check-runs/${checkId}`)),
   );

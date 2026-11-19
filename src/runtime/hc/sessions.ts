@@ -101,6 +101,19 @@ export async function start(exec: Exec, id: string, command: string): Promise<vo
 /** This core's live terminals, all of them or those labelled `dori.group=<group>`. */
 export async function list(exec: Exec, group: string | undefined): Promise<SessionInfo[]> {
   const result = await hcCall(exec, ["ls", ...(group === undefined ? [] : ["--label", `dori.group=${group}`])]);
+  const terminals = result["terminals"];
+  if (
+    !Array.isArray(terminals) ||
+    terminals.some(
+      (t) =>
+        t === null ||
+        typeof t !== "object" ||
+        typeof t["address"] !== "string" ||
+        t["address"] === "" ||
+        typeof t["state"] !== "string",
+    )
+  )
+    throw new Error("hc did not return a valid terminal list");
   const out: SessionInfo[] = [];
   for (const t of rows(result)) {
     const id = str(t["address"]);

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   readlinkSync,
   renameSync,
   rmdirSync,
@@ -94,6 +95,22 @@ export function regularFile(path: string): boolean {
   return true;
 }
 
+/** Hash every byte through one descriptor without allocating a whole-file Buffer. */
+export function fileDigest(path: string): string {
+  const fd = openSync(path, "r");
+  try {
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) {
+      const count = readSync(fd, buffer, 0, buffer.length, null);
+      if (count === 0) return hash.digest("hex");
+      hash.update(buffer.subarray(0, count));
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function readJson(path: string): unknown {
   if (!regularFile(path)) throw new Error(`Missing file: ${path}`);
   if (lstatSync(path).size > 4 * 1024 * 1024) throw new Error(`Metadata is too large: ${path}`);
@@ -161,9 +178,14 @@ export function initialize(paths: ConsumerPaths): void {
     throw new Error("Consumer release ownership differs");
 }
 
+export class ConsumerLockBusy extends Error {}
+
 /** A dead holder may be recovered; incomplete or live lock ownership always holds. */
-export function acquireConsumerLock(paths: ConsumerPaths): () => void {
-  const lock = join(paths.root, "consumer.lock");
+export function acquireConsumerLock(
+  paths: ConsumerPaths,
+  name: "consumer.lock" | "consumer-launch.lock" = "consumer.lock",
+): () => void {
+  const lock = join(paths.root, name);
   const identity = processIdentity(process.pid);
   if (!identity) throw new Error("Consumer process identity is unavailable");
   const claim = () => {
@@ -176,8 +198,23 @@ export function acquireConsumerLock(paths: ConsumerPaths): () => void {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     realDirectory(lock);
     owned(lock);
-    const holder = readJson(join(lock, "owner.json")) as Partial<ProcessIdentity>;
+    const owner = join(lock, "owner.json");
+    if (!regularFile(owner)) throw new ConsumerLockBusy("Consumer release lock is held; its owner is being recorded");
+    let holder: Partial<ProcessIdentity>;
+    try {
+      holder = readJson(owner) as Partial<ProcessIdentity>;
+    } catch (error) {
+      if (
+        error instanceof SyntaxError ||
+        (error as NodeJS.ErrnoException).code === "ENOENT" ||
+        !lstatSync(owner, { throwIfNoEntry: false })
+      )
+        throw new ConsumerLockBusy("Consumer release lock is held; its owner is incomplete");
+      throw error;
+    }
     if (
+      !holder ||
+      typeof holder !== "object" ||
       !Number.isSafeInteger(holder.pid) ||
       holder.pid! <= 0 ||
       typeof holder.startTicks !== "string" ||
@@ -186,14 +223,20 @@ export function acquireConsumerLock(paths: ConsumerPaths): () => void {
       sameProcess(holder as ProcessIdentity) ||
       (!processIdentity(holder.pid!) && processExists(holder.pid!))
     )
-      throw new Error("Consumer release lock is held; let its owner finish");
+      throw new ConsumerLockBusy("Consumer release lock is held; let its owner finish");
     const stale = createHash("sha256")
       .update(JSON.stringify([holder.pid, holder.startTicks, holder.bootId, holder.executable]))
       .digest("hex");
     // Never delete, rename, or reuse this nonempty tombstone: it reserves the observed identity
     // so a delayed contender cannot move a newer live lock over it.
-    renameSync(lock, `${lock}.stale-${stale}`);
-    claim();
+    try {
+      renameSync(lock, `${lock}.stale-${stale}`);
+      claim();
+    } catch (error) {
+      if (["EEXIST", "ENOTEMPTY", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? ""))
+        throw new ConsumerLockBusy("Consumer release lock is held; another owner recovered it");
+      throw error;
+    }
   }
   return () => {
     const holder = readJson(join(lock, "owner.json")) as ProcessIdentity;

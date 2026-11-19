@@ -10,7 +10,7 @@ export type TestDiscordMessage = {
   author: { id: string; bot?: boolean; system?: boolean };
   content?: string;
   webhook_id?: string;
-  message_reference?: { message_id?: string };
+  message_reference?: { message_id?: string; type?: number };
   referenced_message?: { id: string; author: { id: string }; content: string } | null;
   flags?: number;
   attachments?: unknown;
@@ -70,7 +70,7 @@ export const discordRestWorld = (messages: TestDiscordMessage[] = []) => {
     }
     await state.blocked.get(path);
     if (state.unreachable.has(path)) throw new TypeError("private transport diagnostic");
-    const response = state.responses.get(path);
+    const response = state.responses.get(path + url.search) ?? state.responses.get(path);
     if (response !== undefined) return { status: 200, headers: {}, body: response };
     let body: unknown;
     if (path === "/users/@me") body = { id: state.botId, bot: state.bot };

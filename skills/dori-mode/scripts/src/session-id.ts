@@ -2,7 +2,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { isOmpProcessCommand } from "../../../../src/runtime/omp.ts";
+import { isOmpProcessCommand, namesOmpProcess } from "../../../../src/runtime/omp.ts";
 import type { Probe, SessionRef } from "../../../../src/runtime/types.ts";
 import { type PaneState, readPaneState } from "./lane-state.ts";
 import { type ChosenRuntimes, type Runner, runtimesFor } from "./run.ts";
@@ -146,12 +146,11 @@ export const resolveSession = async (
   const { candidates, probe } = await sessionProcs(ref, table, deps);
   const state = deps.stateDir === undefined ? null : stateForAgent(deps.stateDir, ref, candidates, probe);
   if (state) return { id: state.sessionId, via: "extension", pid: state.pid };
-  const agent = candidates.find(
-    (p) => (isOmpProcessCommand(p.cmd) || CUSTOM_AGENT.test(p.cmd)) && !/\bmcp\b/.test(p.cmd),
-  );
+  // Without the extension's record only the start-time folder is read, so any line naming OMP is found, as before.
+  const agent = candidates.find((p) => (namesOmpProcess(p.cmd) || CUSTOM_AGENT.test(p.cmd)) && !/\bmcp\b/.test(p.cmd));
   if (!agent) return { id: "", via: "none" };
   // --session and PI_SESSION_ID belong to custom senpi/omo agents, never to OMP's current session.
-  const omp = isOmpProcessCommand(agent.cmd);
+  const omp = namesOmpProcess(agent.cmd);
   if (!omp) {
     const argv = agent.cmd.split(/\s+/);
     const flagAt = argv.indexOf("--session");

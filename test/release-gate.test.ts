@@ -1,10 +1,22 @@
 import { expect, test } from "bun:test";
 import { releaseGate } from "../scripts/release-gate.ts";
+import { object } from "../src/update/config.ts";
 import { githubFixture } from "./release-producer-setup.ts";
 
-test("allows only a real complete CI4 response bound to the tagged commit, workflow and Actions app", async () => {
+test("allows only a real complete CI response bound to the tagged commit, workflow and Actions app", async () => {
   const f = githubFixture();
   await expect(releaseGate(f.manifest, f.reads)).resolves.toBeUndefined();
+});
+
+test("release validation follows the four CI jobs, including the macOS job", async () => {
+  const workflow = Bun.YAML.parse(await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text());
+  if (!object(workflow) || !object(workflow["jobs"])) throw new Error("CI workflow jobs must be a mapping");
+  const jobs = workflow["jobs"];
+  const names = Object.keys(jobs);
+  expect(names).toEqual(["check", "test-macos", "e2e-herdr", "e2e-hc"]);
+  expect(githubFixture().jobs.map((job) => job["name"])).toEqual(names);
+  for (const name of ["check", "e2e-herdr", "e2e-hc"]) expect(jobs[name]).toHaveProperty("runs-on", "ubuntu-latest");
+  expect(jobs["test-macos"]).toHaveProperty("runs-on", "macos-15");
 });
 
 test.each(["application", "suite", "head"])("holds a successful-looking check with a different %s", async (kind) => {

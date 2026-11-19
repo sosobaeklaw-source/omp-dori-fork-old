@@ -1,5 +1,6 @@
-import { isOmpArgv } from "../../../../src/runtime/omp.ts";
+import { mayRunOmpArgv } from "../../../../src/runtime/omp-argv.ts";
 import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { withDeliveryLock } from "./delivery-lock.ts";
 import { type FlowDeps, movedOn } from "./done-flow.ts";
 import type { GoalStatus } from "./lane-state.ts";
 import { trustedPaneState } from "./session-id.ts";
@@ -34,7 +35,7 @@ const goalCommand = async (
   target: GoalStatus,
 ): Promise<"confirmed" | "unconfirmed" | "failed"> => {
   const rts = runtimesOf(deps);
-  const omp = isOmpArgv(deps.config.agentCommand);
+  const omp = mayRunOmpArgv(deps.config.agentCommand);
   const shown = omp ? NO_GOAL_SHOWN : target === "paused" ? PAUSED_SHOWN : RESUMED_SHOWN;
   const before = count(await readScreen(rts, ref, 200), shown);
   if ((await sendVerified(rts, deps.clock, ref, text)) === "failed") return "failed";
@@ -60,6 +61,25 @@ export const pauseLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
   if (!PAUSABLE.has(status)) return { lane, lines: [`NOT_PAUSED ${lane.key} is ${status}, not working`], code: 2 };
   const ref = sessionOf(lane);
   if (!ref) return { lane, lines: [`PAUSE_UNVERIFIED ${lane.key} has no pane, so its goal cannot be paused`], code: 3 };
+  // The whole pause holds the lane's delivery lock, so a `dori tell` cannot start a turn after its Escape.
+  const held = await withDeliveryLock(deps, lane.key, () => pauseHeld(deps, lane, ref, status, note));
+  if (held.ok) return held.value;
+  return {
+    lane,
+    lines: [
+      `PAUSE_UNVERIFIED ${lane.key} a message to the lane is in flight (delivery lock: ${held.holder}); lane left ${status}`,
+    ],
+    code: 3,
+  };
+};
+
+const pauseHeld = async (
+  deps: FlowDeps,
+  lane: Lane,
+  ref: SessionRef,
+  status: LaneStatus,
+  note: string,
+): Promise<PauseResult> => {
   // The goal first: stopping the running turn must not hand off to a goal continuation. sendVerified delivers it under
   // the status it reads, so a working agent gets it as queued input ("working"), an idle one under "idle".
   const goal = await goalCommand(deps, ref, "/goal pause", "paused");

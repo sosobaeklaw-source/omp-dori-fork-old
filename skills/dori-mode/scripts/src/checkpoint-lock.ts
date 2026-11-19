@@ -56,8 +56,15 @@ export const alive = (pid: number): boolean => {
  * host, time and a nonce. A live writer's lock is not taken. A lock whose pid is dead on this host, or that is
  * LOCK_STALE_MS old, is taken over: so a writer killed mid-write never locks the file. A lock with no owner record or
  * an unreadable time is aged by its mtime. `fail` builds the error for a lock that could not be put back.
+ * `keepLiveOwner`: a lock whose owner is alive on this host is never taken over by age, for locks held across pane
+ * round trips that may outlast LOCK_STALE_MS; a reused pid then holds it until that process ends.
  */
-export const takeLock = (lock: string, now: number, fail: (message: string) => Error): (() => void) | string => {
+export const takeLock = (
+  lock: string,
+  now: number,
+  fail: (message: string) => Error,
+  opts: { readonly keepLiveOwner?: boolean } = {},
+): (() => void) | string => {
   const record = JSON.stringify({
     pid: process.pid,
     host: hostname(),
@@ -105,8 +112,11 @@ export const takeLock = (lock: string, now: number, fail: (message: string) => E
     const owner = ownerOf(seen.raw);
     const at = owner ? Date.parse(owner.at) : NaN;
     const since = Number.isFinite(at) ? at : seen.mtimeMs;
-    const dead = owner !== null && owner.host === hostname() && !alive(owner.pid);
-    if (!dead && now - since < LOCK_STALE_MS)
+    const local = owner !== null && owner.host === hostname();
+    const dead = local && !alive(owner.pid);
+    // A lock held across slow I/O keeps a live local owner however old it is; only death releases it.
+    const kept = opts.keepLiveOwner === true && local && !dead;
+    if (!dead && (kept || now - since < LOCK_STALE_MS))
       return `${owner ? `pid ${owner.pid}` : "no owner record"}, ${Math.max(0, Math.round((now - since) / 1000))} s old`;
     // Move the stale lock aside under a unique name, then check it is the one judged stale: another writer may have
     // taken it over and locked again in between. Rename keeps the inode, so the inode and record identify it.

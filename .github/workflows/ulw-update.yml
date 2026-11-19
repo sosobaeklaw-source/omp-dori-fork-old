@@ -1,0 +1,71 @@
+name: ULW update candidate
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ulw-update-candidate
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'vntrevx/omp-dori'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.prepare.outputs.changed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - name: Prepare exact ULW source candidate without executing upstream code
+        id: prepare
+        run: |
+          bun scripts/update-ulw.ts --out "$RUNNER_TEMP/ulw-candidate"
+          if [ -f "$RUNNER_TEMP/ulw-candidate/candidate.json" ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.prepare.outputs.changed == 'true'
+        with:
+          name: ulw-candidate
+          path: ${{ runner.temp }}/ulw-candidate
+          if-no-files-found: error
+          retention-days: 7
+
+  propose:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ulw-candidate
+          path: ${{ runner.temp }}/ulw-candidate
+      - name: Propose metadata-only draft and dispatch exact-head CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/update-ulw-publish.ts --from "$RUNNER_TEMP/ulw-candidate"

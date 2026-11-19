@@ -10,7 +10,7 @@ import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
 import { Runtimes } from "./runtime/registry.ts";
 import { configuredOmp } from "./lane-model.ts";
-import { isOmpArgv } from "./runtime/omp.ts";
+import { isOmpArgv } from "./runtime/omp-argv.ts";
 import { ompStateDir } from "./runtime/omp-state-dir.ts";
 import { type RuntimeChoice, readRuntimeChoice } from "./runtime/select.ts";
 import { Store } from "./store.ts";

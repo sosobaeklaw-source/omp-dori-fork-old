@@ -119,6 +119,26 @@ test("a reply in the General topic counts as topic 1, not its reply-root id", as
   expect(out[1]!.thread).toBe(1);
 });
 
+test("a reply names the message it answers; a topic's own root, named on every topic message, is no reply", async () => {
+  const replying = (text: string, target: number, thread: number, isTopic: boolean) => ({
+    ...msg(OWNER, GROUP, "supergroup", text, thread, isTopic),
+    reply_to_message: { message_id: target },
+  });
+  const { http } = telegramFake([
+    [
+      { update_id: 60, message: replying("plain post in topic 3", TOPIC, TOPIC, true) },
+      { update_id: 61, message: replying("2", 77, TOPIC, true) },
+      // In General a reply's message_thread_id is its reply root, which may be the very message it answers.
+      { update_id: 62, message: replying("1", 1234, 1234, false) },
+      { update_id: 63, edited_message: replying("2, sorry", 77, TOPIC, true) },
+    ],
+  ]);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-reply"));
+  const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER, groupChatId: GROUP });
+  // The last is the owner's edit of the reply: it still names the message it answers.
+  expect(out.map((i) => i.replyTo ?? "-")).toEqual(["-", 77, 1234, 77]);
+});
+
 test("a private chat run with topics carries the topic on DMs", async () => {
   const { http } = telegramFake([
     [

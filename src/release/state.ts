@@ -13,6 +13,7 @@ import {
   syncDirectory,
 } from "./files.ts";
 import { assertNoLiveDori } from "./live.ts";
+import { acquireLaunchGate, assertNoConsumerLaunches } from "./launch-leases.ts";
 import { validateReleaseManifest } from "./manifest.ts";
 import { assertLock } from "./provision.ts";
 import { preflightReferences } from "./references.ts";
@@ -88,7 +89,7 @@ function removeState(paths: ConsumerPaths): void {
 }
 
 /** Reconcile the only two allowed pointer positions; never guess around an externally changed path. */
-export function recoverInstalled(paths: ConsumerPaths): InstalledState | undefined {
+function recoverInstalledUnlocked(paths: ConsumerPaths): InstalledState | undefined {
   const state = loadInstalled(paths);
   if (!regularFile(paths.journal)) {
     assertInstalledPointer(paths, state);
@@ -138,7 +139,22 @@ export function recoverInstalled(paths: ConsumerPaths): InstalledState | undefin
   return recovered;
 }
 
-export function activateRelease(paths: ConsumerPaths, before: InstalledState | undefined, after: InstalledState): void {
+export function recoverInstalled(paths: ConsumerPaths, launchOwner?: number): InstalledState | undefined {
+  if (!regularFile(paths.journal)) return recoverInstalledUnlocked(paths);
+  const unlock = acquireLaunchGate(paths);
+  try {
+    assertNoConsumerLaunches(paths, launchOwner);
+    return recoverInstalledUnlocked(paths);
+  } finally {
+    unlock();
+  }
+}
+
+function activateReleaseUnlocked(
+  paths: ConsumerPaths,
+  before: InstalledState | undefined,
+  after: InstalledState,
+): void {
   assertInstalledPointer(paths, before);
   if (before) verifyRelease(paths, before.current);
   const target = verifyRelease(paths, after.current);
@@ -169,6 +185,21 @@ export function activateRelease(paths: ConsumerPaths, before: InstalledState | u
   }
   unlinkSync(paths.journal);
   syncDirectory(paths.root);
+}
+
+export function activateRelease(
+  paths: ConsumerPaths,
+  before: InstalledState | undefined,
+  after: InstalledState,
+  launchOwner?: number,
+): void {
+  const unlock = acquireLaunchGate(paths);
+  try {
+    assertNoConsumerLaunches(paths, launchOwner);
+    activateReleaseUnlocked(paths, before, after);
+  } finally {
+    unlock();
+  }
 }
 
 export function hasConsumerState(paths: ConsumerPaths): boolean {

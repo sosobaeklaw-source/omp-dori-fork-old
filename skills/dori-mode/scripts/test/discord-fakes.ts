@@ -19,6 +19,7 @@ export type DiscordRoute = {
   readonly raw?: string;
   readonly status?: number;
   readonly failure?: "fetch" | "body";
+  readonly sequence?: readonly DiscordRoute[];
 };
 type RecordedRequest = { readonly key: string; readonly body: Record<string, unknown> | null };
 type AudioReceipt = {
@@ -37,6 +38,7 @@ type DiscordCli = {
       readonly routes?: Record<string, DiscordRoute>;
       readonly environment?: Record<string, string | undefined>;
       readonly hook?: readonly string[] | null;
+      readonly stdin?: string;
     },
   ) => Promise<{
     code: number;
@@ -137,6 +139,7 @@ const discordCli = (): DiscordCli => {
             DORI_TEST_DISCORD_ROUTES: routeFile,
             ...options.environment,
           },
+          stdin: options.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
           stdout: "pipe",
           stderr: "pipe",
           timeout: 20_000,

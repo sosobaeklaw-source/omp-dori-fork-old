@@ -1,6 +1,8 @@
 import { join } from "node:path";
 
 import { configPath } from "./config.ts";
+import type { Decisions } from "./decisions.ts";
+import { decisionBootLines } from "./decisions-render.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { shellQuote } from "./launch-footer.ts";
 import type { SessionInfo } from "../../../../src/runtime/types.ts";
@@ -24,6 +26,7 @@ export type SlackCheck = () => Promise<{
 export type BootDeps = Pick<FlowDeps, "run" | "registry" | "config" | "clock" | "rts" | "env"> & {
   readonly reports: Reports;
   readonly worklog: Worklog;
+  readonly decisions?: Decisions;
   /** null when no Slack token is configured; boot then skips the check. */
   readonly slack: SlackCheck;
   readonly monitorDirs?: readonly string[];
@@ -176,6 +179,9 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
     failed = true;
     lines.push(`WORKLOG unreadable ${shellQuote(deps.worklog.path)}`);
   }
+  const decisions = deps.decisions ? decisionBootLines(deps.decisions, deps.clock.now()) : undefined;
+  lines.push(...(decisions?.lines ?? []));
+  if (decisions?.failed) failed = true;
   const { manifests, errors } = readMonitorManifests(
     deps.config.sessionsDir,
     deps.monitorDirs,

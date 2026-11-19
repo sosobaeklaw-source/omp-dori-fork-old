@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isOmpArgv } from "../../../../src/runtime/omp.ts";
+import { isOmpArgv } from "../../../../src/runtime/omp-argv.ts";
+import type { FlowDeps } from "../src/done-flow.ts";
 import { laneGoalActive } from "../src/goal-record.ts";
 import { launchLane } from "../src/launch.ts";
 import { pauseLane } from "../src/pause.ts";
@@ -103,6 +104,75 @@ test.each(forms)("%s OMP vouches for its session, goal, launch, sync and pause",
   expect(paused.code).toBe(0);
 });
 
+// The configured command wraps OMP; the pane's process is OMP itself (`bun /x/omp`), as after exec.
+const wrapped = [
+  ["timeout", ["timeout", "600", "/opt/bin/omp"]],
+  ["the side wrapper", ["/home/user/.omp-dori/bin/omp-dori", "omp"]],
+  ["a shell exec", ["sh", "-c", 'exec /opt/bin/omp "$@"', "sh"]],
+  ["an env -S string", ["env", "-S", "/opt/bin/omp --advisor"]],
+  ["a shell behind timeout", ["timeout", "600", "sh", "-c", 'exec /opt/bin/omp "$@"', "sh"]],
+  ["a shell given OMP's path by env", ["env", "OMP_BIN=/opt/bin/omp", "sh", "-c", 'exec "$OMP_BIN" "$@"', "sh"]],
+  ["a shell exec of a bare omp", ["sh", "-c", 'exec omp "$@"', "agent"]],
+  ["a shell loop running omp", ["bash", "-c", 'cd /repo && while true; do omp "$@"; done', "agent"]],
+  ["a shell assignment before omp", ["sh", "-c", 'FOO=bar omp "$@"', "agent"]],
+  ["a shell env before omp", ["sh", "-c", 'exec env FOO=bar omp "$@"', "agent"]],
+  ["a shell running a spaced OMP path", ["sh", "-c", 'exec "/opt/agent tools/omp" "$@"', "agent"]],
+  ["npx running OMP's package", ["npx", "--yes", "@oh-my-pi/pi-coding-agent"]],
+  ["pnpm dlx running OMP's package", ["pnpm", "dlx", "@oh-my-pi/pi-coding-agent"]],
+  // A script that only mentions omp is read as OMP too: a wrong match only asks for the session record.
+  ["a shell commenting on omp", ["sh", "-c", 'exec codex "$@" # previously exec omp', "agent"]],
+] as const;
+const ompProc = ["bun", "/opt/bin/omp", "--dori-role", "lane"];
+const wrappedLaunch = (deps: FlowDeps, prefix: readonly string[], key: string, brief: string) =>
+  launchLane(
+    {
+      ...deps,
+      config: { ...deps.config, agentCommand: [...prefix, "--dori-role", "lane", "--model", "{model}", "{prompt}"] },
+    },
+    { key, title: key, brief, done: "file /never-checked" },
+  );
+
+test.each(wrapped)("an OMP lane started through %s is proven by its session record", async (_, prefix) => {
+  const { deps, sessionFile, brief } = setup(ompProc, "wrapped");
+  const launched = await wrappedLaunch(deps, prefix, "wrapped", brief);
+  expect(launched.startup).toBe(`STARTUP_OK wrapped ${REF.id}`);
+  world.onSendText = (_id, text) => {
+    if (text === "/goal pause")
+      laneState(state.dir, REF.id, { sessionId: SID, sessionFile, agentStatus: "working", goal: { status: "paused" } });
+  };
+  expect((await pauseLane(deps, launched.lane, "owner said wait")).code).toBe(0);
+});
+
+test.each([...wrapped, ["a Bun option operand", ["bun", "--preload", "/hook.ts", "/opt/bin/omp"]]] as const)(
+  "quoted goal text cannot start an OMP lane run through %s",
+  async (_, prefix) => {
+    const { deps, brief } = setup(ompProc, "quoted", false);
+    world.screen = "cat notes.md\nPursuing goal: a quoted line";
+    expect((await wrappedLaunch(deps, prefix, "quoted", brief)).startup).not.toStartWith("STARTUP_OK");
+  },
+);
+
+// A custom agent keeps its screen goal marker: an unreadable env prefix or prose that mentions omp is not OMP.
+test.each([
+  ["an env -S string", ["env", "-S", "claude --verbose"]],
+  ["an unknown env option", ["env", "--bogus", "claude"]],
+  ["an argument mentioning omp", ["claude", "--system", "use omp style"]],
+  [
+    "prose naming the source launcher",
+    ["claude", "--append-system-prompt", "Read /x/packages/coding-agent/scripts/omp.ts"],
+  ],
+  ["its own -c option", ["mycli", "-c", "use omp here"]],
+  ["its own -c option behind env", ["env", "TERM=xterm", "codex", "-c", 'instructions="Compare omp and codex"']],
+  ["an argument naming a runner and OMP's package", ["echo", "npx", "@oh-my-pi/pi-coding-agent"]],
+  ["an external wrapper naming a runner", ["/opt/wrapper", "npx", "@oh-my-pi/pi-coding-agent"]],
+  ["an env option operand naming a runner", ["env", "-u", "npm", "codex", "@oh-my-pi/pi-coding-agent"]],
+  ["a shell running another agent", ["sh", "-c", 'exec codex "$@"', "sh"]],
+] as const)("a custom agent behind %s still starts on its goal marker", async (_, prefix) => {
+  const { deps, brief } = setup(["claude"], "custom", false);
+  world.screen = "Pursuing goal: the brief";
+  expect((await wrappedLaunch(deps, prefix, "custom", brief)).startup).toBe(`STARTUP_OK custom ${REF.id}`);
+});
+
 test("a source OMP without its extension record falls back to OMP's start-time session folder", async () => {
   const argv = forms[1][1];
   const { deps, rts, sessionsDir } = setup(argv, "fallback", false);
@@ -113,6 +183,23 @@ test("a source OMP without its extension record falls back to OMP's start-time s
   const hit = await resolveSession(REF, "/repo", world.procs ?? [], { run, rts, stateDir: state.dir, sessionsDir });
   expect(hit).toEqual({ id: SID, via: "start-time", pid: 4242 });
   expect(world.calls.some((cmd) => cmd.includes("eww"))).toBe(false);
+});
+
+test.each([
+  ["Bun run of the published CLI", ["bun", "run", "/opt/tools/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"]],
+  [
+    "the published CLI under a spaced root",
+    ["bun", "/opt/agent tools/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"],
+  ],
+  ["Bun run of omp", ["bun", "--smol", "run", "/opt/bin/omp"]],
+] as const)("%s without its extension record is still found in OMP's start-time session folder", async (_, argv) => {
+  const { deps, rts, sessionsDir } = setup([...argv, "--dori-role", "lane"], "fallback", false);
+  const run = async (cmd: readonly string[]) =>
+    cmd[0] === "ps" && cmd.includes("lstart=")
+      ? { code: 0, out: "Thu Jan  1 12:00:01 2026 GMT", err: "" }
+      : deps.run(cmd);
+  const hit = await resolveSession(REF, "/repo", world.procs ?? [], { run, rts, stateDir: state.dir, sessionsDir });
+  expect(hit).toEqual({ id: SID, via: "start-time", pid: 4242 });
 });
 
 test.each([

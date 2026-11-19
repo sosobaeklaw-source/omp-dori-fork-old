@@ -1,5 +1,6 @@
 import type { Clock } from "../run.ts";
 import { guardText, type Http, MessengerError, withBackoff } from "./http.ts";
+import { DISCORD_LIMIT, splitForDiscord } from "./split.ts";
 
 const retryAfter = (body: string): number | undefined => {
   try {
@@ -14,6 +15,7 @@ export type DcChannel = {
   readonly id: string;
   readonly type: number;
   readonly name?: string;
+  readonly topic?: string | null;
   readonly parent_id?: string | null;
   readonly available_tags?: readonly { readonly id: string; readonly name: string }[];
 };
@@ -51,19 +53,59 @@ export class Discord {
     return (res.body ? JSON.parse(res.body) : {}) as T;
   }
 
-  /** `replyTo` posts the message as a reply to that message, which must be in the same channel. */
-  async send(channelId: string, content: string, replyTo?: string): Promise<string> {
-    return (
-      await this.call<{ id: string }>("POST", `/channels/${channelId}/messages`, {
-        content: guardText(content),
-        allowed_mentions: { parse: [] },
-        ...(replyTo === undefined ? {} : { message_reference: { message_id: replyTo, fail_if_not_exists: true } }),
-      })
-    ).id;
+  /**
+   * Posts the text as consecutive messages of at most 2000 characters (`splitForDiscord`) and returns their IDs in
+   * order. `replyTo` makes the first message a reply that pings nobody; a deleted target is refused by Discord and nothing is posted. A failed
+   * part stops the rest; its error names the parts already posted, which stay.
+   */
+  async send(channelId: string, content: string, opts: { readonly replyTo?: string } = {}): Promise<string[]> {
+    return await this.post(channelId, splitForDiscord(guardText(content)), opts.replyTo);
   }
 
+  /** `before`: messages of the same text already posted (a forum starter), counted in a failure's part numbers. */
+  private async post(
+    channelId: string,
+    parts: readonly string[],
+    replyTo?: string,
+    before: readonly string[] = [],
+  ): Promise<string[]> {
+    const ids: string[] = [...before];
+    const total = before.length + parts.length;
+    for (const part of parts) {
+      const reference =
+        ids.length === 0 && replyTo !== undefined
+          ? { message_reference: { message_id: replyTo, fail_if_not_exists: true } }
+          : {};
+      try {
+        const sent = await this.call<{ id: string }>("POST", `/channels/${channelId}/messages`, {
+          content: part,
+          allowed_mentions: { parse: [] },
+          ...reference,
+        });
+        ids.push(sent.id);
+      } catch (e) {
+        if (ids.length === 0) throw e;
+        // Any failure after a posted part, a transport error or an unreadable answer included, names what stays.
+        const why = e instanceof MessengerError ? e.message : `discord POST /channels/${channelId}/messages failed`;
+        throw new MessengerError(
+          `${why} (part ${ids.length + 1} of ${total}; already posted: ${ids.join(" ")})`,
+          e instanceof MessengerError ? e.status : 0,
+          e instanceof MessengerError ? e.code : undefined,
+        );
+      }
+    }
+    return ids;
+  }
+
+  /** One message is edited in place: text over the limit is refused before any request, never split. */
   async edit(channelId: string, messageId: string, content: string): Promise<void> {
-    await this.call("PATCH", `/channels/${channelId}/messages/${messageId}`, { content: guardText(content) });
+    const guarded = guardText(content);
+    if (guarded.length > DISCORD_LIMIT)
+      throw new MessengerError(
+        `discord edit: text exceeds ${DISCORD_LIMIT} UTF-16 code units; shorten the text or send without --edit`,
+        400,
+      );
+    await this.call("PATCH", `/channels/${channelId}/messages/${messageId}`, { content: guarded });
   }
 
   async typing(channelId: string): Promise<void> {
@@ -100,22 +142,44 @@ export class Discord {
     const title = guardText(name).slice(0, 100);
     const text = opts.text === undefined ? undefined : guardText(opts.text);
     if (isForumType(channel.type)) {
+      // The starter message holds the first part; longer text continues as messages in the new post.
+      const [starter = "", ...more] = splitForDiscord(text ?? name);
       const thread = await this.call<{ id: string; message?: { id: string } }>(
         "POST",
         `/channels/${channel.id}/threads`,
         {
           name: title,
-          message: { content: text ?? name, allowed_mentions: { parse: [] } },
+          message: { content: starter, allowed_mentions: { parse: [] } },
           ...(opts.appliedTags !== undefined ? { applied_tags: opts.appliedTags } : {}),
         },
       );
+      if (more.length > 0)
+        await this.post(thread.id, more, undefined, thread.message === undefined ? [] : [thread.message.id]);
       return { id: thread.id, ...(thread.message === undefined ? {} : { messageId: thread.message.id }) };
     }
     const thread = await this.call<{ id: string }>("POST", `/channels/${channel.id}/threads`, {
       name: title,
       type: 11,
     });
-    return text === undefined ? { id: thread.id } : { id: thread.id, messageId: await this.send(thread.id, text) };
+    return text === undefined ? { id: thread.id } : { id: thread.id, ...(await this.firstOf(thread.id, text)) };
+  }
+
+  /** A thread on an existing message, then optional text inside it. */
+  async threadOnMessage(
+    channelId: string,
+    messageId: string,
+    name: string,
+    text?: string,
+  ): Promise<{ readonly id: string; readonly messageId?: string }> {
+    const guarded = text === undefined ? undefined : guardText(text);
+    const id = await this.startThread(channelId, messageId, name);
+    return guarded === undefined ? { id } : { id, ...(await this.firstOf(id, guarded)) };
+  }
+
+  /** Sends text into a new thread and names its first message, the one a `mid=` refers to. */
+  private async firstOf(threadId: string, text: string): Promise<{ readonly messageId?: string }> {
+    const [first] = await this.send(threadId, text);
+    return first === undefined ? {} : { messageId: first };
   }
 
   /** Add or remove the bot's own reaction, using Discord's URL-encoded emoji route. */

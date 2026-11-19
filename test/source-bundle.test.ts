@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isOmpArgv } from "../src/runtime/omp.ts";
+import { isOmpArgv } from "../src/runtime/omp-argv.ts";
 import { assertNativeSource, nativeDirectory } from "../src/release/native.ts";
 import { assertSourceBundle, readSourceBundle } from "../src/release/source-bundle.ts";
 import { provisionSourceOverlay } from "../src/release/source-checkout.ts";
@@ -158,6 +158,40 @@ test("postimage assertions also reject a changed index even when the working byt
   expect(() => assertSourceBundle(f.checkout, readSourceBundle(f.source), f.root)).toThrow();
 });
 
+test("concurrent guards leave the shared index alone and still reject real content changes", async () => {
+  const f = fixture();
+  const index = join(f.checkout, ".git/index");
+  const before = readFileSync(index);
+  // Hold a writer's lock so the regression fails deterministically, not just when children race.
+  const lock = join(f.checkout, ".git/index.lock");
+  writeFileSync(lock, "another writer\n", { flag: "wx" });
+  const code = `
+    const { assertSourceBundle, readSourceBundle } = await import(${JSON.stringify(
+      join(import.meta.dir, "../src/release/source-bundle.ts"),
+    )});
+    assertSourceBundle(process.argv[1], readSourceBundle(process.argv[2]), process.argv[3]);
+  `;
+  const children = Array.from({ length: 4 }, () =>
+    Bun.spawn([process.execPath, "-e", code, f.checkout, f.source, f.root], { stdout: "pipe", stderr: "pipe" }),
+  );
+  const results = await Promise.all(
+    children.map(async (child) => ({ code: await child.exited, stderr: await new Response(child.stderr).text() })),
+  );
+  expect(results).toEqual(Array.from({ length: 4 }, () => ({ code: 0, stderr: "" })));
+  expect(readFileSync(index)).toEqual(before);
+  expect(readFileSync(lock, "utf8")).toBe("another writer\n");
+  f.put("presets.ts", "owner edit\n");
+  expect(() => assertSourceBundle(f.checkout, readSourceBundle(f.source), f.root)).toThrow("source checkout differs");
+});
+
+test("Git failures name the command, exit code and stderr", () => {
+  const f = fixture();
+  writeFileSync(join(f.checkout, ".git/HEAD"), "ref: refs/heads/missing\n");
+  expect(() => assertSourceBundle(f.checkout, readSourceBundle(f.source), f.root)).toThrow(
+    /git rev-parse HEAD exited 128: fatal: ambiguous argument 'HEAD'/,
+  );
+});
+
 test("a Dori-only port carries native and ULW payloads as frozen source dependencies", () => {
   const f = fixture(true);
   overlayFixture(f.source, join(f.root, "ulw-upstream"));
@@ -181,4 +215,35 @@ test("ignored untracked source is not admitted as an arbitrary dirty overlay", (
   const f = fixture();
   f.put("shadow.node", "unexpected ignored bytes\n");
   expect(() => assertSourceBundle(f.checkout, readSourceBundle(f.source), f.root)).toThrow("unexpected untracked");
+});
+
+test("batched content hashes preserve path order and reject hidden drift in a later batch", () => {
+  const f = fixture();
+  for (let at = 0; at < 1024; at++)
+    f.put(`bulk/${String(at).padStart(4, "0")}.cmd`, `@echo off\r\nrem unique content ${at}\r\n`);
+  f.put(".gitattributes", "*.cmd text eol=crlf\nbulk/0000.cmd filter=slow\n");
+  // Delay the first batch's real clean filter so later batches can finish first.
+  fixtureGit(f.checkout, "config", "filter.slow.clean", "sleep 0.1; cat");
+  fixtureGit(f.checkout, "add", ".");
+  const bundle = {
+    ...readSourceBundle(f.source),
+    lock: { ...f.lock, resultTree: fixtureGit(f.checkout, "write-tree") },
+  };
+  // Every file has a distinct blob; concatenating completion order would reject this clean tree.
+  expect(() => assertSourceBundle(f.checkout, bundle, f.root)).not.toThrow();
+  const later = "bulk/1023.cmd";
+  for (const flag of ["--assume-unchanged", "--skip-worktree"]) {
+    fixtureGit(f.checkout, "update-index", flag, later);
+    f.put(later, `@echo off\r\nrem hidden edit under ${flag}\r\n`);
+    expect(fixtureGit(f.checkout, "diff-files", "--ignore-submodules=none", "--name-only")).toBe("");
+    expect(fixtureGit(f.checkout, "write-tree")).toBe(bundle.lock.resultTree);
+    expect(() => assertSourceBundle(f.checkout, bundle, f.root)).toThrow("tracked content differs");
+    fixtureGit(f.checkout, "update-index", "--no-assume-unchanged", later);
+    fixtureGit(f.checkout, "update-index", "--no-skip-worktree", later);
+    fixtureGit(f.checkout, "restore", "--worktree", later);
+  }
+  fixtureGit(f.checkout, "update-index", "--assume-unchanged", "bulk/0000.cmd");
+  fixtureGit(f.checkout, "config", "filter.slow.required", "true");
+  fixtureGit(f.checkout, "config", "filter.slow.clean", "exit 1");
+  expect(() => assertSourceBundle(f.checkout, bundle, f.root)).toThrow(/hash-object --stdin-paths exited 128: error:/);
 });

@@ -1,0 +1,172 @@
+import { expect, test } from "bun:test";
+import { chmodSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { script, setup } from "./install-setup.ts";
+
+// A side home next to another Dori, so the installer takes the side path that generates omp.yml.
+function withOtherDori(home: string) {
+  mkdirSync(join(home, ".dori"));
+  writeFileSync(join(home, ".dori/config.json"), '{"owner":"another Dori"}\n');
+  mkdirSync(join(home, "skills"));
+  symlinkSync("/elsewhere/dori-mode", join(home, "skills/dori-mode"));
+  mkdirSync(join(home, "global-bin"));
+  symlinkSync("/elsewhere/cli.ts", join(home, "global-bin/dori"));
+}
+
+test("a fresh side install writes exactly the block this script generates, with no owner keys added", () => {
+  // Given another Dori's ~/.dori and no omp.yml in the side home yet.
+  const { home, install } = setup();
+  withOtherDori(home);
+  // When scripts/install-source.sh runs in side mode.
+  const r = install({ DORI_INSTALL_MODE: "side" });
+  // Then the file is the script's own generated block verbatim: with nothing to preserve, nothing is added.
+  expect(r.code).toBe(0);
+  const generated = readFileSync(script, "utf8").match(/cat > "\$generated_omp_yml" <<EOF\n([\s\S]*?)\nEOF\n/)?.[1];
+  expect(generated).toBeDefined();
+  expect(readFileSync(join(home, ".omp-dori/omp.yml"), "utf8")).toBe(
+    `${generated?.replace("$quoted_skills", JSON.stringify(join(home, ".omp-dori/skills")))}\n`,
+  );
+  expect(Bun.YAML.parse(readFileSync(join(home, ".omp-dori/omp.yml"), "utf8"))).toEqual({
+    skills: { ignoredSkills: ["dori-mode"], customDirectories: [join(home, ".omp-dori/skills")] },
+    update: { auto: false },
+  });
+});
+
+test("a reinstall refreshes the managed keys and keeps every key the owner added", () => {
+  // Given a side install whose owner then added roles, a thinking level and an unrelated skills key.
+  const { home, install } = setup();
+  withOtherDori(home);
+  expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
+  const path = join(home, ".omp-dori/omp.yml");
+  const owner = {
+    modelRoles: { default: "anthropic/claude-opus-5-5:medium", task: "deploy/deepseek-v4.1-flash-1017:max" },
+    defaultThinkingLevel: "auto",
+    update: { auto: true, channel: "canary", interval: 0 },
+    "0": { kept: "index-looking owner key" },
+    owner: { enabled: false, empty: "", nothing: null, nested: [0, false, null, { custom: "value" }] },
+  };
+  const before = Bun.YAML.parse(readFileSync(path, "utf8")) as { skills: object };
+  writeFileSync(
+    path,
+    Bun.YAML.stringify(
+      {
+        ...before,
+        ...owner,
+        skills: { ignoredSkills: ["stale"], customDirectories: ["/stale"], extra: ["x"], enabled: false },
+      },
+      null,
+      2,
+    ),
+  );
+  chmodSync(path, 0o640);
+  const mode = statSync(path).mode & 0o777;
+  // When the same side install runs again.
+  const r = install({ DORI_INSTALL_MODE: "side" });
+  // Then the owner's keys survive, the unrelated skills key survives, and only the managed keys are refreshed.
+  expect(r.code).toBe(0);
+  expect(Bun.YAML.parse(readFileSync(path, "utf8"))).toEqual({
+    ...owner,
+    skills: {
+      extra: ["x"],
+      enabled: false,
+      ignoredSkills: ["dori-mode"],
+      customDirectories: [join(home, ".omp-dori/skills")],
+    },
+    update: { ...owner.update, auto: false },
+  });
+  expect(statSync(path).mode & 0o777).toBe(mode);
+});
+
+test("a reinstall leaves the owner configuration visible until the merged file is ready", () => {
+  const { root, home, install } = setup();
+  withOtherDori(home);
+  expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
+  const path = join(home, ".omp-dori/omp.yml");
+  const previous = "modelRoles:\n  default: owner/model\nupdate:\n  auto: true\n";
+  writeFileSync(path, previous);
+  const inode = statSync(path).ino;
+  const observed = join(root, "observed-omp.yml");
+  const bun = join(root, "bin/bun");
+  writeFileSync(
+    bun,
+    readFileSync(bun, "utf8").replace(
+      "#!/bin/sh\n",
+      `#!/bin/sh\nif [ -n "\${OMP_YML:-}" ]; then cp "$OMP_YML" ${JSON.stringify(observed)}; fi\n`,
+    ),
+  );
+  const result = install({ DORI_INSTALL_MODE: "side" });
+  expect(result.code).toBe(0);
+  expect(readFileSync(observed, "utf8")).toBe(previous);
+  expect(statSync(path).ino).not.toBe(inode);
+  expect(Bun.YAML.parse(readFileSync(path, "utf8"))).toEqual({
+    modelRoles: { default: "owner/model" },
+    skills: { ignoredSkills: ["dori-mode"], customDirectories: [join(home, ".omp-dori/skills")] },
+    update: { auto: false },
+  });
+});
+
+test.each([
+  "- retained\n",
+  "retained\n",
+  "skills: [retained]\n",
+  "skills: retained\n",
+  "skills: [\n",
+  "null\n",
+  "",
+  "update: [retained]\n",
+  "update: retained\n",
+])("a reinstall preserves an invalid owner configuration: %j", (previous) => {
+  const { home, install } = setup();
+  withOtherDori(home);
+  expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
+  const path = join(home, ".omp-dori/omp.yml");
+  writeFileSync(path, previous);
+  chmodSync(path, 0o640);
+  const before = statSync(path);
+  const result = install({ DORI_INSTALL_MODE: "side" });
+  expect(result.code).toBe(1);
+  expect(result.err).toContain(`kept ${path} as it was`);
+  expect(readFileSync(path, "utf8")).toBe(previous);
+  expect(statSync(path).mode).toBe(before.mode);
+  expect(statSync(path).ino).toBe(before.ino);
+  expect(readdirSync(join(home, ".omp-dori")).filter((name) => name.startsWith(".omp.yml."))).toEqual([]);
+});
+
+test("a merge process failure preserves the owner file and removes only its unpublished replacement", () => {
+  const { root, home, install } = setup();
+  withOtherDori(home);
+  expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
+  const path = join(home, ".omp-dori/omp.yml");
+  const previous = "owner: retained\n";
+  writeFileSync(path, previous);
+  chmodSync(path, 0o640);
+  const before = statSync(path);
+  const bun = join(root, "bin/bun");
+  writeFileSync(
+    bun,
+    readFileSync(bun, "utf8").replace(
+      "#!/bin/sh\n",
+      `#!/bin/sh\nif [ -n "\${OMP_YML:-}" ]; then echo "fixture merge failure" >&2; exit 23; fi\n`,
+    ),
+  );
+  const result = install({ DORI_INSTALL_MODE: "side" });
+  expect(result.code).toBe(1);
+  expect(result.err).toContain("fixture merge failure");
+  expect(result.err).toContain(`kept ${path} as it was`);
+  expect(readFileSync(path, "utf8")).toBe(previous);
+  expect(statSync(path).mode).toBe(before.mode);
+  expect(statSync(path).ino).toBe(before.ino);
+  expect(readdirSync(join(home, ".omp-dori")).filter((name) => name.startsWith(".omp.yml."))).toEqual([]);
+});
+
+test("primary installation leaves primary and side owner YAML untouched", () => {
+  const { home, install } = setup();
+  for (const directory of [".dori", ".omp-dori"]) {
+    mkdirSync(join(home, directory));
+    writeFileSync(join(home, directory, "omp.yml"), "owner: [retained]\n");
+  }
+  expect(install({ DORI_INSTALL_MODE: "primary" }).code).toBe(0);
+  for (const directory of [".dori", ".omp-dori"]) {
+    expect(readFileSync(join(home, directory, "omp.yml"), "utf8")).toBe("owner: [retained]\n");
+  }
+});

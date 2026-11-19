@@ -75,6 +75,8 @@ Before you type into a pane:
 
 Exit code 0 and echoed input are not proof the agent got the message. A reply from the session, or its record of handling the message, is.
 
+For a registered lane, `dori tell <key> --text TEXT` does steps 1, 3 and 4 through `sendVerified`; the runtime's delivery holds on an open OMP approval or an unknown status. `TOLD` (exit 0) means the agent moved to working. `TELL_UNCONFIRMED` (exit 3) means the text may be in the session but no status change was seen, which is always the case for an agent that was already working: do not send it again; wait for the lane to answer, or read the pane (step 2) and, if the text still sits in the input, press Enter only. `TELL_FAILED` (exit 2) means nothing was sent: a shell, a stopped agent, an approval prompt, an unreadable status, on hc a `blocked` or `error` agent (answer its question in the pane), a paused lane (resume it first), a lane without a session, or text with a backtick or `$(`; a refusal by the runtime ends with the status read after it. An unknown or closed key exits 1.
+
 ## Watching
 
 - Sessions that turn blocked or ask a question: answer them or bring them to the owner.

@@ -8,6 +8,8 @@ const routes = JSON.parse(readFileSync(process.env["DORI_TEST_DISCORD_ROUTES"] ?
   DiscordRoute
 >;
 
+const calls = new Map<string, number>();
+
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(String(input));
   const key = `${init?.method ?? "GET"} ${url.pathname.replace(/^\/api\/v10/, "")}${url.search}`;
@@ -15,7 +17,11 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     log,
     `${JSON.stringify({ key, body: typeof init?.body === "string" ? JSON.parse(init.body) : null })}\n`,
   );
-  const route = routes[key];
+  const listed = routes[key];
+  // A sequence answers successive requests in order and repeats its last answer.
+  const served = calls.get(key) ?? 0;
+  calls.set(key, served + 1);
+  const route = listed?.sequence ? listed.sequence[Math.min(served, listed.sequence.length - 1)] : listed;
   if (route === undefined) return new Response(JSON.stringify({ message: "Unknown" }), { status: 404 });
   if (route.failure === "fetch") throw new Error("synthetic transport failure");
   if (route.failure === "body") {
