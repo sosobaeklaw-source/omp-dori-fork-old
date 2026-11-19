@@ -39,7 +39,12 @@ export function setup(answers: AgyRun[], account = SEAT_MAIL, others = { forbidd
     seatAccount: SEAT_MAIL,
     usage: () => ({ ...others }),
     logDir: home,
-    runLog: () => `I Print mode: starting\nI applyAuthResult: email=${account}, x\n`,
+    runLog: (path) => {
+      const logged = calls.find((c) => c.args[c.args.indexOf("--log-file") + 1] === path);
+      if (calls.length > 0 && logged === undefined)
+        throw new Error(`run log read at ${path}, no call logged that path`);
+      return `I Print mode: starting\nI applyAuthResult: email=${account}, x\n`;
+    },
     run: async (args, cwd) => {
       calls.push({ at: t, args, request: readFileSync(join(cwd, "request.md"), "utf8") });
       return answers.shift() ?? ok("");

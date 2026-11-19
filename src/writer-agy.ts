@@ -107,7 +107,11 @@ async function callOnce(env: AgyEnv, o: AgyOpts, kind: string) {
   const dir = mkdtempSync("/tmp/agy-w-");
   writeFileSync(join(dir, "request.md"), readFileSync(o.prompt));
   const startedAt = env.now();
-  const stamp = new Date(startedAt).toISOString().replace(/\D/g, "").slice(0, 14);
+  // agy names its own run logs `cli-YYYYMMDD_HHMMSS.log` in local time, and the 403 scan matches exactly that shape,
+  // so the stamp has to be built the same way: a UTC stamp sorts nine hours off against outside runs and the scan skips it.
+  const t = new Date(startedAt);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}_${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}`;
   const logFile = join(env.logDir, `cli-${stamp}-${basename(dir)}.log`);
   let r: AgyRun;
   try {

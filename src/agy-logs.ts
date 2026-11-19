@@ -43,18 +43,13 @@ export function usageFromLogs(logDir: string, account: string): AgyUsage {
 }
 
 /**
- * The run log of the call made in `workDir`: the seat passes agy `--log-file` with the work folder's name on the end
- * (`cli-<stamp>-<folder>.log`), because agy's own name is only precise to the second and two calls that start
- * together would otherwise share one file. A log written by an agy call made outside the seat keeps the plain name
- * and is still found by its `workspaceDirs` line.
+ * The run log of the call the seat made: the seat passes agy `--log-file` and reads that file back by its path, so a
+ * call is bound to the log it wrote even when another call started in the same second. A log written by an agy call
+ * made outside the seat keeps agy's plain name and is still found by its `workspaceDirs` line.
  */
-export function runLogFor(logDir: string, workDir: string): string | undefined {
-  const tail = basename(workDir);
-  if (workDir.startsWith(logDir) && existsSync(workDir)) return readFileSync(workDir, "utf8");
-  const own = existsSync(logDir)
-    ? readdirSync(logDir).find((name) => name.startsWith("cli-") && name.endsWith(`-${tail}.log`))
-    : undefined;
-  if (own !== undefined) return readFileSync(join(logDir, own), "utf8");
+export function runLogFor(logDir: string, logPath: string): string | undefined {
+  if (logPath.startsWith(logDir) && existsSync(logPath)) return readFileSync(logPath, "utf8");
+  const tail = basename(logPath);
   const mark = `/${tail}]`;
   for (const name of existsSync(logDir) ? readdirSync(logDir) : []) {
     if (!/^cli-\d{8}_\d{6}(-.+)?\.log$/.test(name)) continue;

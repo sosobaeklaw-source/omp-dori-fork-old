@@ -35,6 +35,36 @@ describe("agy log reading binds each run to its account, day and call", () => {
     expect(runLogFor(dir, "/tmp/agy-w-AbC123")).toContain("mine");
     expect(runLogFor(dir, "/tmp/agy-w-none")).toBeUndefined();
   });
+  test("the name the seat writes is the name the 403 scan reads, and a later clean seat run clears it", async () => {
+    const { dir, run } = logs();
+    const { env, opts, calls } = setup([ok("")]);
+    env.logDir = dir;
+    env.usage = () => usageFromLogs(dir, S4);
+    env.run = async (args) => {
+      const logFile = args[args.indexOf("--log-file") + 1] ?? "";
+      run(logFile.slice(dir.length + 1), [S4], ERR);
+      calls.push({ at: env.now(), args, request: "" });
+      return { code: 1, stdout: JSON.stringify({ status: "ERROR", response: "", error: "code 403" }), stderr: "" };
+    };
+    await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.forbidden });
+    const written = calls[0]?.args[calls[0].args.indexOf("--log-file") + 1] ?? "";
+    expect(written.slice(dir.length + 1)).toMatch(/^cli-\d{8}_\d{6}-agy-w-.+\.log$/);
+    expect(usageFromLogs(dir, S4).forbidden).toBe(true);
+    const stamp = written.slice(dir.length + 5, dir.length + 20);
+    const [day, time] = [stamp.slice(0, 8), stamp.slice(9)];
+    const bumped = String(Number(time) + 1).padStart(6, "0");
+    run(`cli-${day}_${bumped}-agy-w-ZzZ999.log`, [S4]);
+    expect(usageFromLogs(dir, S4).forbidden).toBe(false);
+  });
+
+  test("a clean seat run clears a 403 an outside call left in a plain log", () => {
+    const { dir, run } = logs();
+    run("cli-20261118_163623.log", [S4], ERR);
+    expect(usageFromLogs(dir, S4).forbidden).toBe(true);
+    run("cli-20261118_163724-agy-w-AbC123.log", [S4]);
+    expect(usageFromLogs(dir, S4).forbidden).toBe(false);
+  });
+
   test("two runs that share one timestamped log name each keep their own text", () => {
     const { dir, run } = logs();
     run("cli-20261118_163623-agy-w-AbC123.log", [S4], "first", "/tmp/agy-w-AbC123");
@@ -42,12 +72,6 @@ describe("agy log reading binds each run to its account, day and call", () => {
     expect(runLogFor(dir, "/tmp/agy-w-AbC123")).toContain("first");
     expect(runLogFor(dir, "/tmp/agy-w-ZzZ999")).toContain("second");
     expect(runLogFor(dir, "/tmp/agy-w-AbC123")).not.toContain("second");
-  });
-
-  test("a 403 in a suffixed log name still forbids the seat", () => {
-    const { dir, run } = logs();
-    run("cli-20261118_163623-agy-w-AbC123.log", [S4], ERR);
-    expect(usageFromLogs(dir, S4).forbidden).toBe(true);
   });
   test("two calls that start in the same second each get their own log and both pass", async () => {
     const { dir, run } = logs();
