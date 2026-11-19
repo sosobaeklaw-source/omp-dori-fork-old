@@ -21,7 +21,7 @@ node ~/sobaegi-lead/results/gpt-web/run.js \
 | 칸 | 값 |
 | --- | --- |
 | `status` | 성공일 때만 `ok`. 한도·모델 불일치·빈 답·전송 실패는 다른 값(예: `limit`, `fail_model`, `fail_empty`)으로 쓰고 `reason`에 이유를 적는다. |
-| `model_shown` | 화면 모델 선택기에 실제로 보인 라벨. `6 Pro`가 들어가야 한다(예: `GPT-6 Pro`). 모델만 적힌 `GPT-6`이나 사고수준만 적힌 `추론 수준 Pro`는 GPT 6 Pro로 세지 않는다. |
+| `model_shown` | 화면 모델 선택기에 실제로 보인 라벨. `GPT-6 Pro` 또는 `GPT 6 Pro`만 인정하며 대소문자와 앞뒤 공백은 무시한다. 다른 버전이나 `mini` 같은 접미사가 붙은 모델은 인정하지 않는다. |
 | `finished_at` | 끝난 시각, ISO 8601(예: `2026-11-19T05:12:33.000Z`). |
 | `answer_path` | 답 파일 경로. `--out`과 같으면 생략해도 된다. 상대 경로면 meta.json이 있는 폴더 기준이다. |
 
@@ -31,7 +31,7 @@ node ~/sobaegi-lead/results/gpt-web/run.js \
 
 기존 `carbon-lock.sh`는 별도 구현으로, 죽은 부모의 `cmd` 생존 여부나 claim을 확인하지 않는다. 따라서 셸 잠금과 섞어 쓰는 경우의 경쟁은 이 변경만으로 해결되지 않는다.
 
-받음으로 세는 조건은 셋 다 맞을 때뿐이다. `status == "ok"`, `model_shown`에 `6 Pro`가 들어 있음(대소문자 무시), 답 파일이 비어 있지 않음. 하나라도 어긋나면 '못 받음'으로 남기고 그 이유를 `gpt6pro_web.md` 머리에 적는다. 한도에 걸려 낮은 모델이 답한 경우(`model_shown`이 `GPT-6`뿐)도 '못 받음'이다.
+받음으로 세는 조건은 셋 다 맞을 때뿐이다. `status == "ok"`, `model_shown`이 위 모델명과 일치함, 답 파일이 비어 있지 않음. 하나라도 어긋나면 '못 받음'으로 남기고 그 이유를 `gpt6pro_web.md` 머리에 적는다. 한도에 걸려 낮은 모델이 답한 경우(`model_shown`이 `GPT-6`뿐)도 '못 받음'이다.
 
 ## 시험
 

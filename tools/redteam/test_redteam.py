@@ -182,6 +182,15 @@ class RedteamTest(unittest.TestCase):
         self.use_runner({"status": "ok", "model_shown": "gpt-6 pro"})
         self.assertEqual(self.gpt()["status"], redteam.GOT)
 
+    def test_gpt_rejects_near_miss_model_labels(self):
+        fake = self.use_runner({"status": "ok", "model_shown": "GPT-6 Pro"})
+        for label in ("GPT-5.6 Pro", "GPT-16 Pro", "GPT-6 Pro mini", "GPT-6.1 Pro"):
+            with self.subTest(label=label):
+                fake.meta = {"status": "ok", "model_shown": label}
+                result = self.gpt()
+                self.assertEqual(result["status"], redteam.NOT_GOT)
+                self.assertEqual(result["chars"], 0)
+
     def test_gpt_rejects_legacy_model_key_without_contract_field(self):
         self.use_runner({"status": "ok", "modelShown": "GPT-6 Pro"})
         self.assertEqual(self.gpt()["status"], redteam.NOT_GOT)

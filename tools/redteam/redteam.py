@@ -204,7 +204,7 @@ def release_lock(acct: str, owner: str) -> None:
 
 
 # ---------- (c) web GPT 6 Pro ----------
-GPT_MODEL_MARK = "6 pro"
+GPT_MODEL_MARK = re.compile(r"\s*GPT[- ]6\s+Pro\s*", re.I)
 
 
 def read_gpt_answer(meta: dict, meta_path: Path, raw: Path) -> tuple[str, str]:
@@ -214,7 +214,7 @@ def read_gpt_answer(meta: dict, meta_path: Path, raw: Path) -> tuple[str, str]:
         reason = f"status={meta.get('status') or '없음'}"
         return "", reason + (f" ({meta['reason']})" if meta.get("reason") else "")
     model = str(meta.get("model_shown") or "")
-    if GPT_MODEL_MARK not in model.lower():
+    if not GPT_MODEL_MARK.fullmatch(model):
         return "", f"model_shown={model or '없음'} — GPT 6 Pro가 아니다"
     answer = raw
     if meta.get("answer_path"):
