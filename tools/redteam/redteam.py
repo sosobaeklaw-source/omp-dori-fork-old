@@ -48,6 +48,7 @@ UA = "omp-dori-redteam/1.0"
 KIND_FOCUS = {
     "card": "카드뉴스(장마다 제목·정보 칸)다. 법령·판결과 어긋난 문구, 과장·단정, 독자가 오해할 표현, 장끼리 모순, 빠진 조건을 찾아라.",
     "blog": "블로그 본문이다. 법령·판결과 어긋난 주장, 근거 없는 단정, 논리 비약, 독자가 오해할 표현, 빠진 조건·예외를 찾아라.",
+    "legal": "신청인을 위해 제출하는 산재 재해경위서다. 불승인하려는 조사관과 제출 사무소의 선임 전문가로 각각 읽고 사실·법률 오류, 조사관에게 불필요한 삭제 후보 문장, 빠진 결정적 주장, 실제 사무소 서식과 다른 형식만 지적하며 추가 출처·유보 표현·미확보 증거 공개는 요구하지 마라.",
 }
 
 
@@ -490,14 +491,14 @@ def main() -> int:
     with cf.ThreadPoolExecutor(3) as ex:
         fc = ex.submit(run_carbon, out, pf, a.carbon_account, a.lane, a.carbon_blocked) if "carbon" in only else None
         fg = ex.submit(run_gpt, out, pf, a.gpt_account, a.lane, a.gpt_blocked) if "gpt" in only else None
-        fp = ex.submit(run_pirates, out, prompt, a.material) if "pirates" in only else None
+        fp = ex.submit(run_pirates, out, prompt, "client" if a.kind == "legal" else a.material) if "pirates" in only else None
         carbon = settle(fc, "carbon_web") if fc else read_back(out / "carbon_web.md")
         gpt = settle(fg, "gpt6pro_web") if fg else read_back(out / "gpt6pro_web.md")
         if fp:
             pirates = settle(fp, "pirates_error")
             pirates = pirates if isinstance(pirates, list) else [pirates]
         else:
-            pirates = [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
+            pirates = [] if a.kind == "legal" else [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
     results = [carbon, gpt, *pirates]
     code, merged = 0, None
     try:

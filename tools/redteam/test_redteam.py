@@ -104,6 +104,17 @@ class RedteamTest(unittest.TestCase):
         self.assertEqual(fake.calls, [])
         self.assertTrue((self.out / "pirates_skipped.md").exists())
 
+    def test_legal_public_pirates_are_skipped_without_network(self):
+        target = self.out / "target.txt"
+        target.write_text("한 줄로 답해: 1+1은?\n")
+        argv = ["redteam.py", "--target", str(target), "--kind", "legal", "--material", "public",
+                "--out", str(self.out), "--only", "pirates"]
+        fake = FakeHttp({})
+        with mock.patch.object(redteam.sys, "argv", argv), mock.patch.object(redteam, "http_json", fake):
+            self.assertEqual(redteam.main(), 0)
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(json.loads((self.out / "summary.json").read_text())[2]["status"], "skipped")
+
     def test_timeout_retries_once_one_effort_lower(self):
         def reply(body):
             if body["model"] == "slow" and body["reasoning_effort"] == "high":
