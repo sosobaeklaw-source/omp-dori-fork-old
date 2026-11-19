@@ -65,6 +65,7 @@ export function setup(
   const opts = {
     home,
     lane: "t",
+    model: "argon" as const,
     prompt,
     out: join(home, "o.txt"),
     meta: join(home, "o.meta.json"),
