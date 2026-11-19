@@ -72,9 +72,38 @@ NOT_GOT = "못 받음"
 GPT_RUN = HOME / "sobaegi-lead/results/gpt-web/run.js"
 
 
-def account_lock_held(acct: str) -> bool:
-    """carbon-lock.sh holds ~/.omp-dori/state/carbon-<prefix>.lock while a job runs there."""
-    return (HOME / ".omp-dori/state" / f"carbon-{acct.split(':')[0]}.lock").exists()
+def lock_dir(acct: str) -> Path:
+    return HOME / ".omp-dori/state" / f"carbon-{acct.split(':')[0]}.lock"
+
+
+def try_lock(acct: str, lane: str) -> bool:
+    """Take the account lock without waiting. False when a live job holds it.
+
+    A lock whose owner process is dead, or that has no owner, is cleared first, the same
+    way carbon-lock.sh does, so a crashed job cannot make this branch say '못 받음' forever.
+    """
+    import os
+    d = lock_dir(acct)
+    if d.exists():
+        owner = (d / "owner").read_text() if (d / "owner").exists() else ""
+        pid = owner.split("pid=")[-1].strip() if "pid=" in owner else ""
+        dead = False
+        if pid.isdigit():
+            try:
+                os.kill(int(pid), 0)
+            except ProcessLookupError:
+                dead = True
+            except PermissionError:
+                dead = False
+        if dead or not owner:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+    try:
+        d.mkdir(parents=True)
+    except FileExistsError:
+        return False
+    (d / "owner").write_text(f"{lane} pid={os.getpid()}\n")
+    return True
 
 
 def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
@@ -86,13 +115,14 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: 
         write_model_file(out / "gpt6pro_web.md", {"branch": "gpt6pro_web", "status": NOT_GOT, "reason": blocked},
                          "돌리지 않았다. 다른 모델로 대신하지 않았다.")
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
-    if account_lock_held(acct):
+    if not try_lock(acct, lane):
         reason = "같은 Aside 계정을 카본이 쓰는 중이라 기다리지 않고 넘김"
         write_model_file(out / "gpt6pro_web.md",
                          {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
-    if not GPT_RUN.exists():
-        reason = f"runner missing: {GPT_RUN}"
+    gpt_run = HOME / "sobaegi-lead/results/gpt-web/run.js"
+    if not gpt_run.exists():
+        reason = f"runner missing: {gpt_run}"
         write_model_file(out / "gpt6pro_web.md",
                          {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
@@ -101,7 +131,7 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: 
     raw.unlink(missing_ok=True)  # an earlier run's answer must never read as this run's
     meta.unlink(missing_ok=True)
     t0 = time.time()
-    proc = subprocess.run([str(LOCK), acct.split(":")[0], lane, "--", "node", str(GPT_RUN), "--prompt", str(prompt_file),
+    proc = subprocess.run([str(HOME / ".omp-dori/bin/carbon-lock.sh"), acct.split(":")[0], lane, "--", "node", str(gpt_run), "--prompt", str(prompt_file),
                            "--out", str(raw), "--account", acct, "--meta", str(meta), "--timeout", "1800"],
                           capture_output=True, text=True)
     m = json.loads(meta.read_text()) if meta.exists() else {}
@@ -114,6 +144,8 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: 
         head["reason"] = m.get("reason") or f"exit {proc.returncode}"
     write_model_file(out / "gpt6pro_web.md", head,
                      text or (m.get("reason", "") + "\n" + proc.stdout[-3000:] + proc.stderr[-2000:]))
+    import shutil
+    shutil.rmtree(lock_dir(acct), ignore_errors=True)
     return {"branch": "gpt6pro_web", "status": head["status"], "model": head["model_shown"],
             "chars": len(text), "text": text}
 

@@ -120,8 +120,9 @@ class RedteamTest(unittest.TestCase):
         self.assertIn("돌리지 않았다", (self.out / "gpt6pro_web.md").read_text())
 
     def test_gpt_branch_records_received_and_not_received(self):
-        redteam.GPT_RUN.write_text("// fake runner")
-        self.addCleanup(redteam.GPT_RUN.unlink)
+        runner = self.out / "home/sobaegi-lead/results/gpt-web/run.js"
+        runner.parent.mkdir(parents=True)
+        runner.write_text("// fake runner")
         def fake_run(cmd, capture_output, text):
             meta = Path(cmd[cmd.index("--meta") + 1])
             raw = Path(cmd[cmd.index("--out") + 1])
@@ -181,18 +182,22 @@ class RedteamTest(unittest.TestCase):
             self.assertIn(missed, head.split("못 받음: ")[1])
 
     def test_gpt_does_not_wait_when_account_lock_is_held(self):
-        lock = redteam.HOME / ".omp-dori/state/carbon-u0.lock"
-        lock.mkdir(parents=True)
         def boom(*a, **k):
             raise AssertionError("runner must not be called while the account lock is held")
         with mock.patch.object(redteam.subprocess, "run", boom):
-            r = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
-        self.assertEqual(r["status"], redteam.NOT_GOT)
+            first = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+            second = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        self.assertEqual(first["status"], redteam.NOT_GOT)
+        self.assertEqual(second["status"], redteam.NOT_GOT)
         self.assertIn("기다리지 않고", (self.out / "gpt6pro_web.md").read_text())
-        lock.rmdir()
-        r2 = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        # a lock held by a dead process is cleared, then the missing runner is reported
+        owner = redteam.lock_dir("u9") / "owner"
+        owner.parent.mkdir(parents=True)
+        owner.write_text("old-lane pid=999999999\n")
+        with mock.patch.object(redteam.subprocess, "run", boom):
+            third = redteam.run_gpt(self.out, self.out / "p.txt", "u9:p", "lane", "-")
+        self.assertEqual(third["status"], redteam.NOT_GOT)
         self.assertIn("runner missing", (self.out / "gpt6pro_web.md").read_text())
-        self.assertEqual(r2["status"], redteam.NOT_GOT)
 
     def test_unparseable_merge_reply_raises(self):
         fake = FakeHttp({redteam.OCX: {"choices": [{"message": {"content": "no json"}}]}})
