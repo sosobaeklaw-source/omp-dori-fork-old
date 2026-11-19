@@ -9,26 +9,38 @@ import { fillSheet, markLeadAfter, readSheet } from "../src/writer-sheet.ts";
 import { CASE_1, CASE_2, KIND_ONLY, NOTES, setup } from "./writer-request-setup.ts";
 
 describe("writer request", () => {
+  test("incident includes legal corrections without unrelated chains while seo keeps its existing selection", () => {
+    const { home, lane, task } = setup();
+    const incident = buildRequest({ home, kind: "incident", model: "argon", laneDir: lane, tasks: [task] });
+    const seo = buildRequest({ home, kind: "seo", model: "argon", laneDir: lane, tasks: [task] });
+    const incidentBody = readFileSync(incident.path, "utf8");
+    const seoBody = readFileSync(seo.path, "utf8");
+    expect(incidentBody).toContain(KIND_ONLY.legal);
+    expect(incidentBody).not.toContain(KIND_ONLY.seo);
+    expect(incidentBody).not.toContain(KIND_ONLY.card);
+    expect(incidentBody).not.toContain("second time said");
+    expect(seoBody).toContain(KIND_ONLY.seo);
+    expect(seoBody).toContain("second time said");
+  });
+
   test("each kind gets its own rejections, the all-kind ones and every repeat pair, then the task", () => {
     const { home, lane, task, notes } = setup();
     for (const kind of Object.keys(KIND_ONLY) as Kind[]) {
       const built = buildRequest({ home, kind, model: "argon", laneDir: lane, tasks: [task] });
       const body = readFileSync(built.path, "utf8");
-      for (const [other, words] of Object.entries(KIND_ONLY)) expect(body.includes(words)).toBe(other === kind);
+      for (const [other, words] of Object.entries(KIND_ONLY))
+        expect(body.includes(words)).toBe(other === kind || (kind === "incident" && other === "legal"));
       expect(body).toContain("every kind rejection");
       // The repeat pair reaches every kind, the seo-only first saying included, with the fixed sentences.
       // The 후 sentence is not in the owner's 원문, so it goes in as the lead's proposal.
-      for (const words of [
-        "first time said",
-        "second time said",
-        '전: "before sentence"',
-        '후(리드 제안): "after sentence"',
-      ])
+      for (const words of kind === "incident"
+        ? []
+        : ["first time said", "second time said", '전: "before sentence"', '후(리드 제안): "after sentence"'])
         expect(body).toContain(words);
       expect(body).toContain(`[${notes}:1-5]\n${NOTES.split("\n").slice(0, 5).join("\n")}\n`);
       expect(body).not.toContain("a line outside the range");
       expect(body.indexOf(CASE_1)).toBeLessThan(body.indexOf("Write section 2."));
-      expect(built).toMatchObject({ dok: 2, reject: 2, repeat: 2 });
+      expect(built).toMatchObject({ dok: 2, reject: kind === "incident" ? 3 : 2, repeat: kind === "incident" ? 0 : 2 });
     }
   });
 

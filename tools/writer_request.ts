@@ -44,7 +44,7 @@ function recallPassages(home: string, texts: readonly string[]): Recalled & { of
 }
 
 const USAGE = `usage:
-  writer_request build --kind seo|card|video|legal --model argon|hydrogen --lane-dir DIR --task FILE [--task FILE]
+  writer_request build --kind seo|card|video|legal|incident --model argon|hydrogen --lane-dir DIR --task FILE [--task FILE]
                        [--sheet FILE] [--cases PATH:START-END] [--cases PATH:START-END] [--label NAME] [--no-recall]
       -> DIR/requests/NN_<model>[_NAME].txt and .count; DORI_HOME/독후감/소화본/<kind>.md, when there, opens the body
          whole (first line "소화: YYYY-MM-DD HH:MM", else exit 1) and the .count head ends digest=DATE; --sheet adds a word sheet's [key] slots (figure, table,
@@ -53,7 +53,7 @@ const USAGE = `usage:
          as [PATH:LINE] for the delivery review. --no-recall keeps only the kind's list and --cases
   writer_request fill --sheet FILE --answer FILE --out FILE.json
       -> the writer's words per [key] of the sheet, as JSON for the renderer; exit 1 if a key is missing or empty
-  writer_request count FILE --kind seo|card|video|legal [--cases PATH:START-END] [--cases PATH:START-END]
+  writer_request count FILE --kind seo|card|video|legal|incident [--cases PATH:START-END] [--cases PATH:START-END]
       -> exit 1 unless every case line of those passages sits above the task line of FILE
   writer_request add --kind KIND[,KIND]|all --msg ID --text TEXT [--post ID] [--repeat ID]
                      [--before TEXT --after TEXT] [--date "YYYY-MM-DD HH:MM"]

@@ -16,6 +16,13 @@ function tool(home: string, ...args: string[]) {
 const DIGEST_HEAD = "=== 0. 지금의 이해 (소화본), verbatim. ===";
 
 describe("writer_request as run: the digest body and the change receipts", () => {
+  test("build accepts incident as a request kind", () => {
+    const { home, lane, task } = setup();
+    const built = tool(home, "build", "--kind", "incident", "--model", "hydrogen", "--lane-dir", lane, "--task", task);
+    expect(built.code).toBe(0);
+    expect(existsSync(join(lane, "requests", "01_hydrogen.txt"))).toBe(true);
+  });
+
   test("build opens the written file with that kind's digest whole and never another kind's, and says which file it wrote", () => {
     const { home, lane, task } = setup();
     mkdirSync(join(home, "독후감", "소화본"), { recursive: true });
