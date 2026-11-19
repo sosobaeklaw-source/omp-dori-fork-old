@@ -1,21 +1,4 @@
-/**
- * The Antigravity writing seat: one Argon body request sent through the `agy` CLI the seat's account is logged into.
- *
- * An earlier account was suspended (403 "disabled … for violation of Terms of Service") for being driven like a tool,
- * so this seat keeps the shape of one person typing into `agy`:
- *   - one call at a time on this machine: this seat's `state/agy-s4.lock`, and no `agy -p` running outside it (one
- *     stuck past `--timeout` ends the send with exit 27 and the lock freed);
- *   - at least {@link GAP_MS} from the end of the last seat-account run to the next start, read from agy's own run
- *     logs, so runs other lanes made without this seat count too. There is no daily count of our own: the only limit
- *     is Google's, and a quota error (429 / RESOURCE_EXHAUSTED) holds every lane until the reset Google named;
- *   - only the configured mail ({@link AgyEnv.seatAccount}, local config, never in this repo), compared whole: from
- *     the CLI's own log before each call, and after it from that call's own run log (found by its work folder);
- *   - the request body goes into a fresh empty folder as `request.md`, and the prompt is one short line naming it;
- *   - an answer that links a file (`implementation_plan.md` and the like) is dropped and asked once more;
- *   - a 403 stops the seat for good (`state/agy-stopped.json`) until a person removes that file. The stop file, the
- *     quota hold and the account are read again right before every call.
- * Every call adds one line, account `agy-s4`, to the call log (`gemini-calls.tsv`) the web runner writes.
- */
+/** Antigravity writing seat: serialized calls, account and quota checks, and a permanent stop on 403. */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AgyRun, errorText, isForbidden, isQuota, linksFile } from "./agy-errors.ts";
@@ -76,16 +59,16 @@ function seatAccount(env: AgyEnv): string {
   throw new AgyStop(EXIT.account, "ESCALATE no agy account set (agyAccount in config.json or DORI_AGY_ACCOUNT)");
 }
 
-function checkAccount(env: AgyEnv, home: string, when: string): void {
+function checkAccount(env: AgyEnv, home: string, when: string, afterSend = false): void {
   const mail = env.account();
   if (mail === seatAccount(env)) return;
-  refuseAccount(home, when, mail ? [mail] : []);
+  refuseAccount(home, when, mail ? [mail] : [], afterSend);
 }
 
-function refuseAccount(home: string, when: string, mails: string[]): never {
+function refuseAccount(home: string, when: string, mails: string[], afterSend = false): never {
   const who = mails.map((m) => `${m.split("@")[0]}@…`).join(", ") || "nobody known";
   stop(home, `agy ${when}: logged in as ${who}, not the seat's account`);
-  throw new AgyStop(EXIT.account, `ESCALATE agy account is not the seat's (${when}); seat stopped`);
+  throw new AgyStop(EXIT.account, `ESCALATE agy account is not the seat's (${when}); seat stopped`, afterSend);
 }
 
 function stop(home: string, why: string): void {
@@ -101,11 +84,19 @@ function refuseIfForbidden(u: AgyUsage, home: string): void {
 }
 
 export class AgyStop extends Error {
+  /**
+   * True when the stop was raised after this request already went out (a 403 on the call, a call missing from agy's run
+   * log, an account that is not the seat's on that call's log). The request must not go to a web seat as well; only a
+   * stop raised before anything was sent lets the next seat have it.
+   */
+  readonly afterSend: boolean;
   constructor(
     readonly code: number,
     message: string,
+    afterSend = false,
   ) {
     super(message);
+    this.afterSend = afterSend;
   }
 }
 
@@ -163,7 +154,7 @@ async function callOnce(env: AgyEnv, o: AgyOpts, kind: string, onPid: (pid: numb
   }
   const mails = mailsIn(log);
   if (mails.length === 0 || mails.some((m) => m !== seatAccount(env)))
-    refuseAccount(o.home, "on this call's run log", mails);
+    refuseAccount(o.home, "on this call's run log", mails, true);
   return { answer, linked, status: json.status, error, usage: json.usage, runCode: r.code };
 }
 
@@ -206,11 +197,16 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
       const c = await callOnce(env, o, kind, onPid);
       (meta["calls"] as unknown[]).push({ kind, at: new Date(env.now()).toISOString(), ...c, answer: undefined });
       if ("forbidden" in c)
-        throw new AgyStop(EXIT.forbidden, `ESCALATE agy-s4 got 403 (${c.error}); seat stopped, no more calls`);
-      if ("quota" in c) throw new AgyStop(EXIT.quota, `agy-s4 hit Google's quota (429); see ${own.quotaPath(o.home)}`);
+        throw new AgyStop(EXIT.forbidden, `ESCALATE agy-s4 got 403 (${c.error}); seat stopped, no more calls`, true);
+      if ("quota" in c)
+        throw new AgyStop(
+          EXIT.quota,
+          `agy-s4 hit Google's quota (429) on this call; see ${own.quotaPath(o.home)}`,
+          true,
+        );
       if ("unlogged" in c)
-        throw new AgyStop(EXIT.unlogged, "ESCALATE agy's run logs did not record this call; seat stopped");
-      checkAccount(env, o.home, "after the call");
+        throw new AgyStop(EXIT.unlogged, "ESCALATE agy's run logs did not record this call; seat stopped", true);
+      checkAccount(env, o.home, "after the call", true);
       if (c.linked) {
         env.log(`DROP agy-s4 answer links a file${kind === "new" ? "; asking once more" : ""}`);
         continue;

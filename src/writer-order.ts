@@ -5,6 +5,10 @@
  * same files both already share: the agy stop and quota hold, and each web seat's call log, screen-limit rest and
  * disconnection mark. A seat resting or disconnected is not called, and the reason is logged. Nothing here sends a
  * request twice: agy hands back whatever it got, and the web seat moves a request on only when nothing was sent.
+ *
+ * The web seats get the request only for an agy stop raised before anything went out (stopped, busy, under quota, an
+ * account checked before the call). A stop raised after a call (403 on it, a call missing from agy's run log, another
+ * account on that call's log) is rethrown as it stands: the request already went out and must not be sent again.
  */
 import { existsSync } from "node:fs";
 import { type AgyEnv, AgyStop, sendOnAgy, stopPath } from "./writer-agy.ts";
@@ -39,6 +43,7 @@ export async function sendBody(agy: AgyEnv, web: SeatEnv, o: OrderOpts): Promise
       return { code, seat: "agy-s4" };
     } catch (e) {
       if (!(e instanceof AgyStop)) throw e;
+      if (e.afterSend) throw e;
       agy.log(`SKIP agy-s4: ${e.message.split("\n")[0]}`);
     }
   }

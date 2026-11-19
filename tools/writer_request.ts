@@ -21,7 +21,7 @@ import { fillSheet, readSheet } from "../src/writer-sheet.ts";
 import { accountFromLog, machineUsage, runLogFor } from "../src/agy-logs.ts";
 import { readConfig } from "../src/hooks.ts";
 import { AgyStop, sendOnAgy } from "../src/writer-agy.ts";
-import { sendOnSeat } from "../src/writer-seat.ts";
+import { sendOnSeat, SeatGone } from "../src/writer-seat.ts";
 import { sendBody } from "../src/writer-order.ts";
 
 /**
@@ -63,11 +63,15 @@ const USAGE = `usage:
   writer_request send --model argon|hydrogen --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
                       [--runner gemini_web_runner.mjs]
       -> runs the runner on the first free seat of DORI_HOME/writer-seats.txt, waits only while all are busy or
-         resting after an on-screen limit; exits with the runner's code, the seat written into the meta
+         resting after an on-screen limit; exits with the runner's code, the seat written into the meta. A seat whose
+         screen shows another Google account (exit 15) is marked in state/writer-seat-<u>.json and skipped by every
+         lane; when every seat is disconnected it exits 15 with an ESCALATE naming those files, and sends nothing
   writer_request body --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
                       [--runner gemini_web_runner.mjs]
       -> one body, antigravity first and the web seats after it: a stopped, unsigned or quota-held agy seat, and a
-         web seat that is disconnected or resting after lost answers, is logged and skipped. Exits with the seat's code
+         web seat that is disconnected or resting after lost answers, is logged and skipped. Exits with the seat's code.
+         The web seats get the body only when nothing went out on agy; a 403, an unlogged call or another account on
+         that call's log ends the send as it stands (21, 25, 24) and never resends
   writer_request agy --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
       -> one Argon body request through the agy CLI, logged into the one mail set as agyAccount in DORI_HOME/config.json
          (or DORI_AGY_ACCOUNT): one at a time, 60 s apart; Google's quota error (429) exits 26 and no lane calls until
@@ -87,6 +91,17 @@ function secondsOf(v: string | undefined): number {
   if (v === undefined) return 1800;
   if (!/^[1-9]\d*$/.test(v)) throw new Refusal(`--timeout must be a positive whole number of seconds, not ${v}`);
   return Number(v);
+}
+
+/** Every seat disconnected is the lane's exit 15: the message names the state files a person clears, and nothing sent. */
+async function withSeatGone<T>(send: () => Promise<T>): Promise<T> {
+  try {
+    return await send();
+  } catch (e) {
+    if (!(e instanceof SeatGone)) throw e;
+    console.error(e.message);
+    process.exit(e.code);
+  }
 }
 
 try {
@@ -155,38 +170,40 @@ try {
   } else if (cmd === "send") {
     const out = need(one(a, "out"), "--out");
     const runner = one(a, "runner") ?? join(homedir(), "sanjai-agent", "scripts", "gemini_web_runner.mjs");
-    const { code, seat } = await sendOnSeat(
-      {
-        root: home,
-        pid: process.pid,
-        now: Date.now,
-        alive,
-        sleep: (ms) => Bun.sleep(ms),
-        log: (line) => console.error(line),
-        // The runner is named on the lock (onSpawn) and gets this process's SIGTERM/SIGINT, so killing `send`
-        // stops the runner too instead of leaving it on an account whose lock looks free.
-        run: async (args, onSpawn) => {
-          const child = Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] });
-          onSpawn(child.pid);
-          const term = () => child.kill("SIGTERM");
-          const int = () => child.kill("SIGINT");
-          process.on("SIGTERM", term).on("SIGINT", int);
-          try {
-            return await child.exited;
-          } finally {
-            process.off("SIGTERM", term).off("SIGINT", int);
-          }
+    const { code, seat } = await withSeatGone(() =>
+      sendOnSeat(
+        {
+          root: home,
+          pid: process.pid,
+          now: Date.now,
+          alive,
+          sleep: (ms) => Bun.sleep(ms),
+          log: (line) => console.error(line),
+          // The runner is named on the lock (onSpawn) and gets this process's SIGTERM/SIGINT, so killing `send`
+          // stops the runner too instead of leaving it on an account whose lock looks free.
+          run: async (args, onSpawn) => {
+            const child = Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] });
+            onSpawn(child.pid);
+            const term = () => child.kill("SIGTERM");
+            const int = () => child.kill("SIGINT");
+            process.on("SIGTERM", term).on("SIGINT", int);
+            try {
+              return await child.exited;
+            } finally {
+              process.off("SIGTERM", term).off("SIGINT", int);
+            }
+          },
         },
-      },
-      {
-        home,
-        lane: need(one(a, "lane"), "--lane"),
-        model: writerOf(one(a, "model")),
-        prompt: need(one(a, "prompt"), "--prompt"),
-        out,
-        meta: one(a, "meta") ?? `${out.replace(/\.txt$/, "")}.meta.json`,
-        timeout: secondsOf(one(a, "timeout")),
-      },
+        {
+          home,
+          lane: need(one(a, "lane"), "--lane"),
+          model: writerOf(one(a, "model")),
+          prompt: need(one(a, "prompt"), "--prompt"),
+          out,
+          meta: one(a, "meta") ?? `${out.replace(/\.txt$/, "")}.meta.json`,
+          timeout: secondsOf(one(a, "timeout")),
+        },
+      ),
     );
     console.log(`SENT_ON ${seat.account} ${seat.expect} exit=${code}`);
     process.exit(code);
@@ -197,65 +214,67 @@ try {
     const agyLog = join(agyDir, "cli.log");
     const seatAccount = process.env["DORI_AGY_ACCOUNT"] || agyAccountIn(readConfig(home));
     const meta = one(a, "meta") ?? `${out.replace(/\.txt$/, "")}.meta.json`;
-    const sent = await sendBody(
-      {
-        root: home,
-        pid: process.pid,
-        now: Date.now,
-        alive,
-        sleep: (ms) => Bun.sleep(ms),
-        log: (line) => console.error(line),
-        account: () => accountFromLog(agyLog),
-        seatAccount,
-        usage: () => machineUsage(join(agyDir, "log"), seatAccount ?? ""),
-        runLog: (workDir) => runLogFor(join(agyDir, "log"), workDir),
-        run: async (args, cwd, onSpawn) => {
-          const child = Bun.spawn(["agy", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
-          onSpawn(child.pid);
-          const term = () => child.kill("SIGTERM");
-          process.on("SIGTERM", term).on("SIGINT", term);
-          try {
-            const [stdout, stderr, exit] = await Promise.all([
-              new Response(child.stdout).text(),
-              new Response(child.stderr).text(),
-              child.exited,
-            ]);
-            return { code: exit, stdout, stderr };
-          } finally {
-            process.off("SIGTERM", term).off("SIGINT", term);
-          }
+    const sent = await withSeatGone(() =>
+      sendBody(
+        {
+          root: home,
+          pid: process.pid,
+          now: Date.now,
+          alive,
+          sleep: (ms) => Bun.sleep(ms),
+          log: (line) => console.error(line),
+          account: () => accountFromLog(agyLog),
+          seatAccount,
+          usage: () => machineUsage(join(agyDir, "log"), seatAccount ?? ""),
+          runLog: (workDir) => runLogFor(join(agyDir, "log"), workDir),
+          run: async (args, cwd, onSpawn) => {
+            const child = Bun.spawn(["agy", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+            onSpawn(child.pid);
+            const term = () => child.kill("SIGTERM");
+            process.on("SIGTERM", term).on("SIGINT", term);
+            try {
+              const [stdout, stderr, exit] = await Promise.all([
+                new Response(child.stdout).text(),
+                new Response(child.stderr).text(),
+                child.exited,
+              ]);
+              return { code: exit, stdout, stderr };
+            } finally {
+              process.off("SIGTERM", term).off("SIGINT", term);
+            }
+          },
         },
-      },
-      {
-        root: home,
-        pid: process.pid,
-        now: Date.now,
-        alive,
-        sleep: (ms) => Bun.sleep(ms),
-        log: (line) => console.error(line),
-        run: async (args, onSpawn) => {
-          const child = Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] });
-          onSpawn(child.pid);
-          const term = () => child.kill("SIGTERM");
-          const int = () => child.kill("SIGINT");
-          process.on("SIGTERM", term).on("SIGINT", int);
-          try {
-            return await child.exited;
-          } finally {
-            process.off("SIGTERM", term).off("SIGINT", int);
-          }
+        {
+          root: home,
+          pid: process.pid,
+          now: Date.now,
+          alive,
+          sleep: (ms) => Bun.sleep(ms),
+          log: (line) => console.error(line),
+          run: async (args, onSpawn) => {
+            const child = Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] });
+            onSpawn(child.pid);
+            const term = () => child.kill("SIGTERM");
+            const int = () => child.kill("SIGINT");
+            process.on("SIGTERM", term).on("SIGINT", int);
+            try {
+              return await child.exited;
+            } finally {
+              process.off("SIGTERM", term).off("SIGINT", int);
+            }
+          },
         },
-      },
-      {
-        home,
-        lane: need(one(a, "lane"), "--lane"),
-        model: "argon",
-        prompt: need(one(a, "prompt"), "--prompt"),
-        out,
-        meta,
-        timeout: secondsOf(one(a, "timeout")),
-        calls: process.env["GEMINI_CALLS_TSV"] || join(home, "state", "gemini-calls.tsv"),
-      },
+        {
+          home,
+          lane: need(one(a, "lane"), "--lane"),
+          model: "argon",
+          prompt: need(one(a, "prompt"), "--prompt"),
+          out,
+          meta,
+          timeout: secondsOf(one(a, "timeout")),
+          calls: process.env["GEMINI_CALLS_TSV"] || join(home, "state", "gemini-calls.tsv"),
+        },
+      ),
     );
     console.log(`SENT_ON ${sent.seat} exit=${sent.code}`);
     process.exit(sent.code);
@@ -314,6 +333,10 @@ try {
     process.exit(code);
   } else throw new Refusal(USAGE);
 } catch (e) {
+  if (e instanceof AgyStop) {
+    console.error(e.message);
+    process.exit(e.code);
+  }
   if (!(e instanceof Refusal)) throw e;
   console.error(e.message);
   process.exit(1);

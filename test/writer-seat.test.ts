@@ -162,9 +162,10 @@ describe("writer seat", () => {
     const loud = { ...failing, log: (l: string) => lines.push(l) };
     for (let i = 0; i < 3; i++) await sendOnSeat(i < 2 ? failing : loud, opts);
     expect(calls).toEqual(["u0", "u0", "u0", "u0", "u0", "u0"]);
+    // The second window runs from the sixth loss (30 min after the third, plus the six calls' time), not from now.
     const doubled = lines.find((l) => l.startsWith("REST u0"));
     expect(doubled).toBe(
-      `REST u0 until ${new Date(NOW + 6_000 + 150 * 60_000).toISOString()}: 6 lost answers in a row`,
+      `REST u0 until ${new Date(NOW + 1_806_000 + 60 * 60_000).toISOString()}: 6 lost answers in a row`,
     );
   });
 });
