@@ -440,12 +440,15 @@ cat > "$generated_omp_yml" <<EOF
 skills:
   ignoredSkills:
     - dori-mode
-${ignored_skills:+$ignored_skills
-}  customDirectories:
+  customDirectories:
     - $quoted_skills
 update:
   auto: false
 EOF
+# Extra ignored skills are inserted after the fixed entry, so an empty list leaves the block exactly as generated.
+[ -n "$ignored_skills" ] && sed -i '' "/^    - dori-mode$/r /dev/stdin" "$generated_omp_yml" <<SKILLS
+$ignored_skills
+SKILLS
 OMP_YML="$base/omp.yml" OMP_YML_GENERATED="$generated_omp_yml" bun -e '
   import { chmodSync, renameSync, statSync, writeFileSync } from "node:fs";
   const path = process.env.OMP_YML;

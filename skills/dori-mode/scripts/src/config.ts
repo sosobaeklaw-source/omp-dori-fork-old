@@ -1,4 +1,3 @@
-import { checkPrAutoTrack } from "./config-pr.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -192,7 +191,8 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
   const raw = (await file.exists()) ? ((await file.json()) as Partial<DoriConfig>) : {};
   checkRuntime(raw.runtime);
   checkSupervision(raw.supervision);
-  checkPrAutoTrack(raw.prAutoTrack);
+  if (raw.prAutoTrack !== undefined && typeof raw.prAutoTrack !== "boolean")
+    throw new ConfigError("invalid prAutoTrack: expected true or false");
   const merged: DoriConfig = {
     ...base,
     ...raw,

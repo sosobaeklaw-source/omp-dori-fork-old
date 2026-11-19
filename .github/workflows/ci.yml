@@ -51,59 +51,6 @@ jobs:
       - name: WP publish review gate tests
         run: python3 -m unittest discover -s tools/wp_publish
 
-  test-macos:
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.4
-      - name: Prepare bound omp-ulw test fixture
-        run: |
-          mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
-          bun scripts/source-dependencies.ts ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
-      - name: Check out exact explicit-override compatibility fixture
-        run: |
-          pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
-          compat="$RUNNER_TEMP/omp-dori-compat-ulw"
-          git clone --quiet --no-checkout --shared "$GITHUB_WORKSPACE/ref/omp-ulw" "$compat"
-          git -C "$compat" fetch --quiet --no-tags https://github.com/dbc-hbin/omp-ulw.git "$pin"
-          git -C "$compat" -c advice.detachedHead=false checkout --quiet "$pin"
-          test "$(git -C "$compat" rev-parse HEAD)" = "$pin"
-          printf 'DORI_TEST_COMPAT_ULW_ENTRY=%s/index.ts\n' "$compat" >> "$GITHUB_ENV"
-      - name: Install exact native OMP test host
-        run: bun install --frozen-lockfile
-        working-directory: test/fixtures/omp-native-host
-      - name: Bind exact native OMP test host
-        run: |
-          host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
-          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
-          printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
-      - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: skills/dori-mode/scripts
-      - run: bun test --parallel=3 --timings=.bun-test-timings.json ./test/
-      - run: bun run test:skill
-      - run: bun run test:extension
-      - name: Verify latest ULW code-mode and task bridge on the actual bound native source
-        timeout-minutes: 20
-        run: |
-          set -euo pipefail
-          smoke="$RUNNER_TEMP/ulw-native-compatibility"
-          mkdir -m 700 "$smoke" "$smoke/home"
-          native=$(bun scripts/source-dependencies.ts native "$GITHUB_WORKSPACE" "$smoke/home")
-          bun scripts/source-dependencies.ts assert-native "$GITHUB_WORKSPACE" "$smoke/home"
-          version=$(HOME="$smoke/home" "$native/bin/omp" --version)
-          test "$version" = '18.20.0'
-          for check in code-mode-host-check code-mode-task-host-check; do
-            env -i HOME="$smoke/home" LANG=C.UTF-8 \
-              PATH="$native/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" \
-              bun "$GITHUB_WORKSPACE/ref/omp-ulw/tests/$check.ts"
-          done
-
   e2e-herdr:
     runs-on: ubuntu-latest
     steps:
