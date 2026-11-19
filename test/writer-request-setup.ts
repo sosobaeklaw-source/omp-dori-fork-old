@@ -19,6 +19,9 @@ export const LEDGER = `# ledger
 ## 2026-01-01 09:03 · legal · msg 104 · post -
 원문: "legal only rejection"
 
+## 2026-01-01 09:03 · incident · msg 199 · post -
+원문: "incident only rejection"
+
 ## 2026-01-01 09:04 · all · msg 105 · post -
 원문: "every kind rejection"
 
@@ -36,6 +39,7 @@ export const KIND_ONLY: Record<Kind, string> = {
   card: "card only rejection",
   video: "video only rejection",
   legal: "legal only rejection",
+  incident: "incident only rejection",
 };
 
 export const CASE_1 = '전: "the first sentence before it was fixed"';

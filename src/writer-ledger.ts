@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } f
 import { join } from "node:path";
 import { Refusal } from "./refusal.ts";
 
-export const KINDS = ["seo", "card", "video", "legal"] as const;
+export const KINDS = ["seo", "card", "video", "legal", "incident"] as const;
 export type Kind = (typeof KINDS)[number];
 
 export const ledgerPath = (home: string): string => join(home, "반복지적.md");

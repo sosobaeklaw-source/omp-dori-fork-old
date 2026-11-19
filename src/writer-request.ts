@@ -192,7 +192,18 @@ export function buildRequest(input: BuildInput): Built {
     if (caseLines(r).length === 0) throw new Refusal(`${r.label} holds no case line`);
     if (r.lines.includes(END)) throw new Refusal(`${r.label} holds the line "${END}", which would end the case block`);
   }
-  const { reject, repeat } = selectEntries(readLedger(input.home), input.kind);
+  const entries = readLedger(input.home);
+  const relevant =
+    input.kind === "incident"
+      ? entries.filter((entry) =>
+          entry.kinds.every((kind) => kind === "legal" || kind === "incident" || kind === "all"),
+        )
+      : entries;
+  const { reject, repeat } = selectEntries(relevant, input.kind);
+  if (input.kind === "incident") {
+    const legal = selectEntries(relevant, "legal").reject;
+    reject.push(...legal.filter((entry) => !reject.includes(entry)));
+  }
   const body = [
     ...(digest ? [`=== 0. 지금의 이해 (소화본), verbatim. ===`, "", digest.text.trimEnd(), ""] : []),
     "=== 1. Case notes (독후감), verbatim. Each passage is under its source path:lines. ===",
