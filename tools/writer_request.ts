@@ -22,6 +22,7 @@ import { accountFromLog, machineUsage, runLogFor } from "../src/agy-logs.ts";
 import { readConfig } from "../src/hooks.ts";
 import { AgyStop, sendOnAgy } from "../src/writer-agy.ts";
 import { sendOnSeat } from "../src/writer-seat.ts";
+import { sendBody } from "../src/writer-order.ts";
 
 /**
  * The 독후감 passages this request's own task and sheet text calls for, widened by the ontology concepts
@@ -63,6 +64,10 @@ const USAGE = `usage:
                       [--runner gemini_web_runner.mjs]
       -> runs the runner on the first free seat of DORI_HOME/writer-seats.txt, waits only while all are busy or
          resting after an on-screen limit; exits with the runner's code, the seat written into the meta
+  writer_request body --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
+                      [--runner gemini_web_runner.mjs]
+      -> one body, antigravity first and the web seats after it: a stopped, unsigned or quota-held agy seat, and a
+         web seat that is disconnected or resting after lost answers, is logged and skipped. Exits with the seat's code
   writer_request agy --lane KEY --prompt FILE --out FILE [--meta FILE] [--timeout S]
       -> one Argon body request through the agy CLI, logged into the one mail set as agyAccount in DORI_HOME/config.json
          (or DORI_AGY_ACCOUNT): one at a time, 60 s apart; Google's quota error (429) exits 26 and no lane calls until
@@ -185,6 +190,75 @@ try {
     );
     console.log(`SENT_ON ${seat.account} ${seat.expect} exit=${code}`);
     process.exit(code);
+  } else if (cmd === "body") {
+    const out = need(one(a, "out"), "--out");
+    const runner = one(a, "runner") ?? join(homedir(), "sanjai-agent", "scripts", "gemini_web_runner.mjs");
+    const agyDir = join(homedir(), ".gemini", "antigravity-cli");
+    const agyLog = join(agyDir, "cli.log");
+    const seatAccount = process.env["DORI_AGY_ACCOUNT"] || agyAccountIn(readConfig(home));
+    const meta = one(a, "meta") ?? `${out.replace(/\.txt$/, "")}.meta.json`;
+    const sent = await sendBody(
+      {
+        root: home,
+        pid: process.pid,
+        now: Date.now,
+        alive,
+        sleep: (ms) => Bun.sleep(ms),
+        log: (line) => console.error(line),
+        account: () => accountFromLog(agyLog),
+        seatAccount,
+        usage: () => machineUsage(join(agyDir, "log"), seatAccount ?? ""),
+        runLog: (workDir) => runLogFor(join(agyDir, "log"), workDir),
+        run: async (args, cwd, onSpawn) => {
+          const child = Bun.spawn(["agy", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+          onSpawn(child.pid);
+          const term = () => child.kill("SIGTERM");
+          process.on("SIGTERM", term).on("SIGINT", term);
+          try {
+            const [stdout, stderr, exit] = await Promise.all([
+              new Response(child.stdout).text(),
+              new Response(child.stderr).text(),
+              child.exited,
+            ]);
+            return { code: exit, stdout, stderr };
+          } finally {
+            process.off("SIGTERM", term).off("SIGINT", term);
+          }
+        },
+      },
+      {
+        root: home,
+        pid: process.pid,
+        now: Date.now,
+        alive,
+        sleep: (ms) => Bun.sleep(ms),
+        log: (line) => console.error(line),
+        run: async (args, onSpawn) => {
+          const child = Bun.spawn(["node", runner, ...args], { stdio: ["ignore", "inherit", "inherit"] });
+          onSpawn(child.pid);
+          const term = () => child.kill("SIGTERM");
+          const int = () => child.kill("SIGINT");
+          process.on("SIGTERM", term).on("SIGINT", int);
+          try {
+            return await child.exited;
+          } finally {
+            process.off("SIGTERM", term).off("SIGINT", int);
+          }
+        },
+      },
+      {
+        home,
+        lane: need(one(a, "lane"), "--lane"),
+        model: "argon",
+        prompt: need(one(a, "prompt"), "--prompt"),
+        out,
+        meta,
+        timeout: secondsOf(one(a, "timeout")),
+        calls: process.env["GEMINI_CALLS_TSV"] || join(home, "state", "gemini-calls.tsv"),
+      },
+    );
+    console.log(`SENT_ON ${sent.seat} exit=${sent.code}`);
+    process.exit(sent.code);
   } else if (cmd === "agy") {
     const out = need(one(a, "out"), "--out");
     const agyDir = join(homedir(), ".gemini", "antigravity-cli");

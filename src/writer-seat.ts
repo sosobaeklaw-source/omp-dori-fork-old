@@ -1,17 +1,20 @@
 /**
- * Picks the writing seat for one Argon/Hydrogen request: whichever web-Gemini account is free right now.
+ * Picks the writing seat for one Argon/Hydrogen request.
  *
  * Seats are the lines of `<home>/writer-seats.txt`, `<aside account> <google mail prefix>` (e.g. `u0 sosobaeklaw`),
  * tried in that order. A seat is busy while its `state/carbon-<account>.lock` is held (the lock carbon-lock.sh and
- * every lane already use), and resting only after the runner saw a limit notice on the screen: the notice text and
- * the reset time it shows go to `state/writer-rest-<account>.json`, and the seat is tried again from that time.
- * Slowness without a notice never rests a seat. Only when every seat is busy or resting does the request wait.
+ * every lane already use). It rests in two ways, and every lane reads the same files before taking it:
+ *   - a limit notice the runner saw on the screen (`state/writer-rest-<account>.json`, until the time the notice shows);
+ *   - three lost answers in a row (exit 14) in `state/writer-calls-<account>.tsv`, for 30 minutes, doubling each
+ *     further three. Slowness or any other failure never rests a seat, and a sent request is never sent again.
+ * Only when every seat is busy or resting does the request wait.
  *
  * The runner (gemini_web_runner.mjs) exits 16 when a limit notice kept it from picking `<model> 높음` before sending:
- * nothing was sent, so the same request goes to the next seat. Any other exit is the request's result as it stands;
- * a sent request is never sent again.
+ * nothing was sent, so the same request goes to the next seat. Any other exit is the request's result as it stands.
+ * It exits 15 when the Google account on the screen is not the one the seat names: nothing was sent, the seat is
+ * marked disconnected (`state/writer-seat-<account>.json`, read by every lane) and the request moves on.
  */
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { holder, nameCommand, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
 import { Refusal } from "./refusal.ts";
@@ -43,6 +46,58 @@ export const UNDATED_REST_MS = 30 * 60_000;
 export const BUSY_POLL_MS = 20_000;
 /** The runner's exit code for a limit notice seen before sending (nothing sent). */
 export const LIMIT_PRESEND = 16;
+/** The runner's exit code when the Google account on screen is not the seat's (nothing sent). */
+export const ACCOUNT_MISMATCH = 15;
+/** The runner's exit code when a sent turn vanished from the chat. */
+export const LOST_TURN = 14;
+/** Three lost answers in a row rest the seat this long; every further three doubles it. */
+export const CALL_REST_MS = 30 * 60_000;
+
+const callLogPath = (home: string, account: string): string => join(home, "state", `writer-calls-${account}.tsv`);
+export const seatStatePath = (home: string, account: string): string =>
+  join(home, "state", `writer-seat-${account}.json`);
+
+export type SeatState = { connected: boolean; why: string; seenAt: string };
+
+/** Why a seat is not connected, or undefined when it is (or was never marked). Every lane reads this before trying it. */
+export function disconnectedWhy(home: string, account: string): string | undefined {
+  const path = seatStatePath(home, account);
+  if (!existsSync(path)) return undefined;
+  const s = JSON.parse(readFileSync(path, "utf8")) as Partial<SeatState>;
+  return s.connected === false ? (s.why ?? "disconnected") : undefined;
+}
+
+function markSeat(home: string, account: string, connected: boolean, why: string, now: number): void {
+  const dir = join(home, "state");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const state: SeatState = { connected, why, seenAt: new Date(now).toISOString() };
+  writeFileSync(seatStatePath(home, account), `${JSON.stringify(state, null, 1)}\n`);
+}
+
+/**
+ * Lost answers in a row, and the time the seat rests until. The window opens when the third (or sixth, ...) lost
+ * answer is logged, so it holds however old the earlier rows are, and every further three doubles it.
+ */
+function lostRun(home: string, account: string): { streak: number; until: number } {
+  const path = callLogPath(home, account);
+  if (!existsSync(path)) return { streak: 0, until: 0 };
+  const rows = readFileSync(path, "utf8").trim().split("\n").filter(Boolean);
+  let streak = 0;
+  let last = 0;
+  for (const row of rows) {
+    const [timestamp, , result] = row.split("\t");
+    if (result === "success") {
+      streak = 0;
+      continue;
+    }
+    if (result !== "lost") continue;
+    streak++;
+    last = Date.parse(timestamp ?? "");
+  }
+  const runs = Math.floor(streak / 3);
+  if (runs < 1) return { streak, until: 0 };
+  return { streak, until: last + CALL_REST_MS * 2 ** (runs - 1) };
+}
 
 export const seatsPath = (home: string): string => join(home, "writer-seats.txt");
 export const restPath = (home: string, account: string): string => join(home, "state", `writer-rest-${account}.json`);
@@ -73,7 +128,8 @@ export function readRest(home: string, account: string): Rest | undefined {
 export function restingUntil(home: string, account: string, now: number): number | undefined {
   const rest = readRest(home, account);
   const until = rest ? Date.parse(rest.until) : Number.NaN;
-  return until > now ? until : undefined;
+  const callUntil = lostRun(home, account).until;
+  return Math.max(until > now ? until : 0, callUntil > now ? callUntil : 0) || undefined;
 }
 
 /** Rests the seat when the runner's meta carries a limit notice from the screen; returns the rest written, if any. */
@@ -107,9 +163,18 @@ function stampMeta(metaPath: string, seat: Seat, pickedAt: number, waitedMs: num
   writeFileSync(metaPath, `${JSON.stringify(meta, null, 1)}\n`);
 }
 
+/** One line of the per-seat call log, written before the lock is released so the next lane reads it. */
+function recordCall(home: string, account: string, at: number, code: number): void {
+  const dir = join(home, "state");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const result = code === 0 ? "success" : code === LOST_TURN ? "lost" : "other";
+  appendFileSync(callLogPath(home, account), `${new Date(at).toISOString()}\t${account}\t${result}\t${code}\n`);
+}
+
 /**
- * Sends the request on the first free, unrested seat, waiting only while none is. Returns the runner's exit code and
- * the seat it ran on. A presend limit (exit 16) rests that seat and moves the same request to the next one.
+ * Sends the request on the first free, unrested, connected seat, waiting only while none is. Returns the runner's
+ * exit code and the seat it ran on. A presend limit (exit 16) rests that seat, and an account mismatch (exit 15)
+ * marks it disconnected; both sent nothing, so the same request moves to the next seat.
  */
 export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: number; seat: Seat }> {
   const seats = readSeats(o.home);
@@ -118,11 +183,20 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
   let waitNoted = "";
   for (;;) {
     const now = env.now();
-    const open = seats.filter((s) => restingUntil(o.home, s.account, now) === undefined);
+    const open = seats.filter(
+      (s) => restingUntil(o.home, s.account, now) === undefined && disconnectedWhy(o.home, s.account) === undefined,
+    );
     for (const seat of open) {
       const got = tryTake(env, lockName(seat.account), o.lane, env.log);
       if ("busy" in got) continue;
-      let code: number;
+      // Read again under the lock: another lane may have rested or disconnected this seat while we waited for it.
+      const restNow = restingUntil(o.home, seat.account, env.now());
+      const whyNow = disconnectedWhy(o.home, seat.account);
+      if (restNow !== undefined || whyNow !== undefined) {
+        release(env.root, lockName(seat.account), got.owner);
+        continue;
+      }
+      let code: number | undefined;
       const pickedAt = env.now();
       env.log(
         `SEAT ${seat.account} (${seat.expect}) for ${o.model}${tried.length ? `, after ${tried.join(", ")}` : ""}`,
@@ -142,18 +216,44 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
           owner = nameCommand(env.root, lockName(seat.account), got.owner, pid);
         });
       } finally {
-        release(env.root, lockName(seat.account), owner);
+        try {
+          if (code !== undefined) {
+            recordCall(o.home, seat.account, env.now(), code);
+            if (code === ACCOUNT_MISMATCH) {
+              markSeat(o.home, seat.account, false, "screen account differs from the seat (exit 15)", env.now());
+            } else if (code === 0) {
+              markSeat(o.home, seat.account, true, "answered", env.now());
+            }
+          }
+          noteLimit(o.home, seat.account, o.meta, env.now());
+        } finally {
+          release(env.root, lockName(seat.account), owner);
+        }
       }
+      if (code === undefined) throw new Refusal("runner exited without a status");
       tried.push(seat.account);
       stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
-      const rest = noteLimit(o.home, seat.account, o.meta, env.now());
-      if (rest) env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);
-      if (code === LIMIT_PRESEND && rest) break;
+      const rest = readRest(o.home, seat.account);
+      if (rest && Date.parse(rest.seenAt) >= pickedAt)
+        env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);
+      const lost = lostRun(o.home, seat.account);
+      if (code === LOST_TURN && lost.streak >= 3 && lost.streak % 3 === 0) {
+        env.log(
+          `REST ${seat.account} until ${new Date(lost.until).toISOString()}: ${lost.streak} lost answers in a row`,
+        );
+      }
+      if (code === ACCOUNT_MISMATCH) {
+        env.log(`SKIP ${seat.account}: ${disconnectedWhy(o.home, seat.account)}`);
+      }
+      // Nothing was sent, so the same request may go to the next seat. Anything else already went out.
+      if ((code === LIMIT_PRESEND && rest && Date.parse(rest.seenAt) >= pickedAt) || code === ACCOUNT_MISMATCH) break;
       return { code, seat };
     }
     const next = Math.min(...seats.map((s) => restingUntil(o.home, s.account, env.now()) ?? env.now() + BUSY_POLL_MS));
     const why = seats
       .map((s) => {
+        const d = disconnectedWhy(o.home, s.account);
+        if (d) return `${s.account} disconnected (${d})`;
         const r = restingUntil(o.home, s.account, env.now());
         return r
           ? `${s.account} resting until ${new Date(r).toISOString()}`
