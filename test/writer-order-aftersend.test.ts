@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { holdForQuota } from "../src/agy-own.ts";
 import { AgyStop, EXIT } from "../src/writer-agy.ts";
 import { sendBody } from "../src/writer-order.ts";
 import { type SeatEnv, seatsPath } from "../src/writer-seat.ts";
-import { FORBIDDEN, OTHER_MAIL, ok, setup as agySetup } from "./agy-fake.ts";
+import { FORBIDDEN, LINKED, OTHER_MAIL, ok, setup as agySetup } from "./agy-fake.ts";
 
 function web(home: string) {
   const calls: string[] = [];
@@ -30,6 +31,21 @@ function web(home: string) {
 }
 
 describe("order: a stop after the request went out is not sent again", () => {
+  test("a quota hold during the retry gap does not send the body to the web", async () => {
+    const { env, opts, calls } = agySetup([LINKED]);
+    const sleep = env.sleep;
+    env.sleep = async (ms) => {
+      holdForQuota(opts.home, env.now() + ms + 60_000);
+      await sleep(ms);
+    };
+    writeFileSync(seatsPath(opts.home), "u0 alpha\n");
+    const w = web(opts.home);
+    const err = await sendBody(env, w.env, opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgyStop);
+    expect((err as AgyStop).code).toBe(EXIT.quota);
+    expect([calls.length, w.calls]).toEqual([1, []]);
+  });
+
   test("a 403 on the agy call is rethrown as 21 and no web seat gets the body", async () => {
     const { env, opts } = agySetup([FORBIDDEN]);
     writeFileSync(seatsPath(opts.home), "u0 alpha\n");

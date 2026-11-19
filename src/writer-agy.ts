@@ -178,6 +178,7 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
     owner = nameCommand(env.root, LOCK, got.owner, pid);
   };
   const meta: Record<string, unknown> = { seat: SEAT, model: AGY_MODEL, lane: o.lane, calls: [] as unknown[] };
+  let sent = false;
   try {
     for (const kind of ["new", "retry"]) {
       // An `agy -p` another lane started without this lock still counts as busy, and the gap runs from its end; one
@@ -195,6 +196,7 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
       refuseIfQuota(env, o.home);
       checkAccount(env, o.home, "before the call");
       const c = await callOnce(env, o, kind, onPid);
+      sent = true;
       (meta["calls"] as unknown[]).push({ kind, at: new Date(env.now()).toISOString(), ...c, answer: undefined });
       if ("forbidden" in c)
         throw new AgyStop(EXIT.forbidden, `ESCALATE agy-s4 got 403 (${c.error}); seat stopped, no more calls`, true);
@@ -217,12 +219,14 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
       return finish(meta, o, EXIT.ok);
     }
     return finish(meta, o, EXIT.linked);
+  } catch (e) {
+    if (sent && e instanceof AgyStop && !e.afterSend) throw new AgyStop(e.code, e.message, true);
+    throw e;
   } finally {
     release(env.root, LOCK, owner);
   }
 }
 
-/** Google's quota holds every lane until the reset it named; no call goes out before it. */
 function refuseIfQuota(env: AgyEnv, home: string): void {
   const until = own.readQuotaUntil(home);
   if (until <= env.now()) return;
