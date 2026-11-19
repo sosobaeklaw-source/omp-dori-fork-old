@@ -113,7 +113,7 @@ echo "SENT 9"
   expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
 });
 
-test("the reply says 끝냈어 only for the attachment the desk passed", () => {
+test("untrusted delivery manifest stops the reply and records failure", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-passed-"));
   const sender = join(dir, "send.sh");
   const body = [
@@ -139,20 +139,12 @@ test("the reply says 끝냈어 only for the attachment the desk passed", () => {
   writeFileSync(join(home, "results", "k1", "ready-delivery.json"), JSON.stringify({ round, attachment: "결과.txt" }));
   const refused = Bun.spawnSync(["bun", tool, "k1"], { env });
   expect(refused.exitCode).toBe(1);
-  expect(refused.stderr.toString()).toContain("검수 기능");
+  expect(refused.stderr.toString()).toContain("untrusted review");
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).not.toContain("REPLIED");
-  rmSync(join(home, "state", "ready-reply.log"));
-  writeFileSync(sender, body, { mode: 0o755 });
-  const passed = Bun.spawnSync(["bun", tool, "k1"], {
-    env,
-  });
-  expect(passed.exitCode).toBe(0);
-  expect(readFileSync(join(dir, "argv"), "utf8")).toBe(
-    `--passed\n${round}\n끝냈어\n\n바뀐 것.\n${realpathSync(attachment)}\n`,
-  );
+  expect(existsSync(join(dir, "argv"))).toBe(false);
 });
 
-test("lane delivery manifest binds the reviewed file and keeps the result paragraph", () => {
+test("a delivery manifest never sends without a trusted desk", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-manifest-"));
   const sender = join(dir, "send.sh");
   writeFileSync(
@@ -171,10 +163,9 @@ echo "SENT 3"
   writeFileSync(attachment, "reviewed");
   writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round, attachment: "결과.txt" }));
   const run = Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(run.exitCode).toBe(0);
-  expect(readFileSync(join(dir, "argv"), "utf8")).toBe(
-    `--passed\n${round}\n끝냈어\n\n바뀐 것.\n${realpathSync(attachment)}\n`,
-  );
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toContain("untrusted review");
+  expect(existsSync(join(dir, "argv"))).toBe(false);
 });
 
 test("the capability probe runs from an empty folder, so a file named passed in the working dir can never be posted", () => {

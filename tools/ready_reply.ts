@@ -9,11 +9,8 @@
  * --detach starts the same command in its own process and returns at once: the harness kills a hook still running two
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
- * `SENT <id>`. For a reviewed reply, results/<key>/ready-delivery.json names {"round": "...", "attachment": "..."}.
- * The attachment must resolve inside that lane's results folder; the sender checks its bytes against the round.
- * Only UTF-8 .txt/.md and OCR-readable .png/.jpg/.jpeg are accepted; other types need manual delivery.
- * The result paragraph remains in the reply. A comparison picture is omitted on this path and logged because it has
- * not been reviewed; include it as the reviewed attachment if it should be sent. A comparison picture, which the desk
+ * `SENT <id>`. A ready-delivery.json manifest stops automatic delivery: a lane can forge its own verdict, and no
+ * independently protected desk exists here. The lead is notified and must verify and deliver manually. A comparison picture, which the desk
  * never reads, still goes with `--send-without-desk-review` and the posted text says so. Before
  * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
@@ -30,15 +27,15 @@
  * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
  * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.
  */
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join } from "node:path";
 import { recordSent } from "../skills/dori-mode/scripts/src/messenger/discord-sent.ts";
 import { need, parse } from "../src/cli-args.ts";
 import { type Deps, defaultDeps } from "../src/harness.ts";
 import { send } from "../src/inbox.ts";
 import { homeStateDir } from "../src/lane-model.ts";
-import { caseReason, loadNameHashes, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
+import { loadNameHashes, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
 
 function note(stateDir: string, line: string): void {
   appendFileSync(join(stateDir, "ready-reply.log"), `${new Date().toISOString()} ${line}\n`);
@@ -48,18 +45,12 @@ function note(stateDir: string, line: string): void {
 const SENDER_SRC = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-file.sh");
 
 /** Runs the sender; a spawn that throws (missing or non-executable file) comes back as a failure, not an exception. */
-function post(
-  sender: string,
-  text: string,
-  image: string | undefined,
-  env: Record<string, string>,
-  delivery?: { round: string; attachment: string },
-) {
+function post(sender: string, text: string, image: string | undefined, env: Record<string, string>) {
   try {
     // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
     // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
     // fresh empty folder: an old copy reads the next argument as a file to attach, and no file can be found there.
-    if (image || delivery) {
+    if (image) {
       const probe = Bun.spawnSync([sender, "--supports", "passed"], {
         cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
         env: { ...process.env, ...env },
@@ -69,11 +60,7 @@ function post(
           why: `검수 기능을 아는 센더가 필요합니다. ${SENDER_SRC} 와 같은 폴더의 passed-check.sh 를 ${sender} 옆에 설치하세요`,
         };
     }
-    const argv = delivery
-      ? [sender, "--passed", delivery.round, text, delivery.attachment]
-      : image
-        ? [sender, "--send-without-desk-review", text, image]
-        : [sender, text];
+    const argv = image ? [sender, "--send-without-desk-review", text, image] : [sender, text];
     const r = Bun.spawnSync(argv, { env: { ...process.env, ...env } });
     const out = r.stdout.toString().trim();
     const id = /^SENT (\d+)$/m.exec(out)?.[1];
@@ -163,50 +150,20 @@ async function main(argv: readonly string[]): Promise<number> {
   const { owner, image } = plan;
   const results = join(home, "results", key);
   const manifest = join(results, "ready-delivery.json");
-  let delivery: { round: string; attachment: string } | undefined;
   if (existsSync(manifest)) {
-    const data: unknown = JSON.parse(readFileSync(manifest, "utf8"));
-    if (
-      typeof data !== "object" ||
-      data === null ||
-      !("round" in data) ||
-      !("attachment" in data) ||
-      typeof data.round !== "string" ||
-      !data.round ||
-      typeof data.attachment !== "string" ||
-      !data.attachment
-    ) {
-      throw new Error("invalid ready-delivery.json: round and attachment required");
-    }
-    const root = realpathSync(results);
-    const attachment = realpathSync(resolve(results, data.attachment));
-    const rel = relative(root, attachment);
-    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
-      throw new Error("attachment outside lane results");
-    const names = loadNameHashes(
-      process.env["DORI_NAME_HASHES"] ?? join(stateDir, "case-name-hashes.json"),
-      process.env["DORI_NAME_HASH_SALT_FILE"] ?? join(stateDir, "name_hash_salt"),
-    );
-    if (!names) throw new Error("no readable client-name hashes and salt");
-    const ext = extname(attachment).toLowerCase();
-    const content = [".txt", ".md"].includes(ext)
-      ? readFileSync(attachment, "utf8")
-      : [".png", ".jpg", ".jpeg"].includes(ext)
-        ? ocrPicture(attachment)
-        : undefined;
-    if (content === undefined) throw new Error("attachment type cannot be checked for client names");
-    const reason = caseReason("attachment", content, names);
-    if (reason) throw new Error(`case material: ${reason}`);
-    delivery = { round: resolve(results, data.round), attachment };
+    const why = "untrusted review: automatic reviewed delivery disabled; lead must verify and deliver";
+    const told = a.flags.has("dry-run") ? "dry-run" : await tell(d, `[READY ${key}] ${why}`, key);
+    if (!a.flags.has("dry-run")) note(stateDir, `FAIL ${key} ${owner.id}: ${why} (lead: ${told})`);
+    console.error(`FAIL ${why}`);
+    return 1;
   }
-  const text = delivery ? `끝냈어\n\n${plan.text}` : plan.text;
+  const text = plan.text;
   if (a.flags.has("dry-run")) {
     console.log(`REPLY_TO ${owner.id} channel ${owner.channel}\nIMAGE ${image ?? "-"}\nTEXT\n${text}`);
     return 0;
   }
   const sender = process.env["DORI_SEND_FILE"] ?? join(home, "bin", "dori-send-file.sh");
-  if (delivery && image) note(stateDir, `NOTE ${key}: comparison image omitted from reviewed reply (not reviewed)`);
-  const r = post(sender, text, image, { REPLY_TO: owner.id, DISCORD_CHANNEL: owner.channel }, delivery);
+  const r = post(sender, text, image, { REPLY_TO: owner.id, DISCORD_CHANNEL: owner.channel });
   if (!("id" in r)) {
     const told = await tell(d, `[REPLY ${key}] 회장님 원글 ${owner.id} 답글 실패: ${r.why}`, key);
     note(stateDir, `FAIL ${key} ${owner.id}: ${r.why} (lead: ${told})`);
@@ -226,7 +183,7 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   const told = await tell(
     d,
-    `[REPLY ${key}] 회장님 원글 ${owner.id}에 결과 답글 ${id}${image && !delivery ? " (그림 1)" : ""}`,
+    `[REPLY ${key}] 회장님 원글 ${owner.id}에 결과 답글 ${id}${image ? " (그림 1)" : ""}`,
     key,
   );
   if (told.startsWith("not told")) note(stateDir, `NOTE ${key}: reply ${id}, lead ${told}`);
