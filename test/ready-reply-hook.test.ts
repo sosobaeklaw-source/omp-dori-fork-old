@@ -19,9 +19,13 @@ test("the onReady hook argv (KEY --detach) returns at once and the detached copy
   const sent = join(dir, "sent.txt");
   expect(Bun.spawnSync(["mkfifo", sent]).exitCode).toBe(0);
   const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`, {
-    mode: 0o755,
-  });
+  writeFileSync(
+    sender,
+    `#!/bin/sh\n[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }\nshift\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`,
+    {
+      mode: 0o755,
+    },
+  );
   const { env, tool } = hookHome(sender);
   const reader = Bun.spawn(["cat", sent], { stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => reader.kill(), 8000);
@@ -49,7 +53,11 @@ test("a sender that does not exist is a recorded failure, with what became of te
 test("a reply that went up is a success even when the lead cannot be told, and a lane is answered once", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-once-"));
   const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\necho x >> "${dir}/posts"\necho "SENT 42"\n`, { mode: 0o755 });
+  writeFileSync(
+    sender,
+    `#!/bin/sh\n[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }\necho x >> "${dir}/posts"\necho "SENT 42"\n`,
+    { mode: 0o755 },
+  );
   const { home, env, tool } = hookHome(sender);
   const run = () => Bun.spawnSync(["bun", tool, "k1"], { env });
   expect(run().exitCode).toBe(0);
@@ -103,6 +111,7 @@ echo "SENT 9"
   expect(run.exitCode).toBe(0);
   expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual([
     "--send-without-desk-review",
+    "--",
     "바뀐 것.",
     picture,
     "",
@@ -110,7 +119,7 @@ echo "SENT 9"
   rmSync(picture);
   rmSync(join(home, "state", "ready-reply.log"));
   expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
-  expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
+  expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["--", "바뀐 것.", ""]);
 });
 
 test("untrusted delivery manifest stops the reply and records failure", () => {
@@ -137,10 +146,11 @@ test("untrusted delivery manifest stops the reply and records failure", () => {
   ].join("\n");
   writeFileSync(sender, refuse, { mode: 0o755 });
   writeFileSync(join(home, "results", "k1", "ready-delivery.json"), JSON.stringify({ round, attachment: "결과.txt" }));
-  const refused = Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(refused.exitCode).toBe(1);
-  expect(refused.stderr.toString()).toContain("untrusted review");
-  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).not.toContain("REPLIED");
+  const lead = join(dir, "lead.sh");
+  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
+  const refused = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TO_MACMINI: lead } });
+  expect(refused.exitCode).toBe(0);
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
   expect(existsSync(join(dir, "argv"))).toBe(false);
 });
 
@@ -162,9 +172,11 @@ echo "SENT 3"
   const round = join(dir, "round");
   writeFileSync(attachment, "reviewed");
   writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round, attachment: "결과.txt" }));
-  const run = Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toContain("untrusted review");
+  const lead = join(dir, "lead.sh");
+  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
+  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TO_MACMINI: lead } });
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
   expect(existsSync(join(dir, "argv"))).toBe(false);
 });
 
@@ -193,7 +205,7 @@ exit 65
   expect(run.exitCode).toBe(1);
   expect(run.stderr.toString()).toContain("examples/sobaek/dori-send-file.sh");
   const [probePwd, probeArgs] = readFileSync(calls, "utf8").split("\n");
-  expect(probeArgs).toBe("--supports passed"); // the only call the old sender ever saw
+  expect(probeArgs).toBe("--supports end-of-options"); // the only call the old sender ever saw
   expect(probePwd && probePwd !== realpathSync(work)).toBe(true); // a fresh folder, not the working dir
   expect(probePwd ? readdirSync(probePwd) : ["not empty"]).toEqual([]); // empty: nothing an old sender could attach
   expect(existsSync(join(work, "passed"))).toBe(true); // never read, never posted
@@ -222,5 +234,5 @@ exit 65
   expect(run.exitCode).toBe(1);
   expect(run.stderr.toString()).toContain("examples/sobaek/dori-send-file.sh");
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain(`FAIL k1 ${OWNER_MSG}:`);
-  expect(readFileSync(calls, "utf8").split("\n")).toEqual(["--supports passed", ""]);
+  expect(readFileSync(calls, "utf8").split("\n")).toEqual(["--supports end-of-options", ""]);
 });

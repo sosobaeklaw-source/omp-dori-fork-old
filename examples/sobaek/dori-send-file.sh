@@ -21,7 +21,7 @@ set -euo pipefail
 if [ "${1:-}" = "--supports" ]; then
   case "${2:-}" in
     passed) [ -r "$(dirname "$0")/passed-check.sh" ] || { echo "UNSUPPORTED missing passed-check.sh" >&2; exit 64; }; echo "SUPPORTED $2"; exit 0 ;;
-    send-without-desk-review) echo "SUPPORTED $2"; exit 0 ;;
+    send-without-desk-review|end-of-options) echo "SUPPORTED $2"; exit 0 ;;
     *) echo "UNSUPPORTED ${2:-}" >&2; exit 64 ;;
   esac
 fi

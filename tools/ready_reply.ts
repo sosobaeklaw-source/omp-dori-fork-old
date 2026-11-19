@@ -27,6 +27,7 @@
  * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
  * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.
  */
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,8 +52,8 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
     // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
     // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
     // fresh empty folder: an old copy reads the next argument as a file to attach, and no file can be found there.
-    if (image) {
-      const probe = Bun.spawnSync([sender, "--supports", "passed"], {
+    {
+      const probe = Bun.spawnSync([sender, "--supports", "end-of-options"], {
         cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
         env: { ...process.env, ...env },
       });
@@ -61,7 +62,7 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
           why: `검수 기능을 아는 센더가 필요합니다. ${SENDER_SRC} 와 같은 폴더의 passed-check.sh 를 ${sender} 옆에 설치하세요`,
         };
     }
-    const argv = image ? [sender, "--send-without-desk-review", text, image] : [sender, text];
+    const argv = image ? [sender, "--send-without-desk-review", "--", text, image] : [sender, "--", text];
     const r = Bun.spawnSync(argv, { env: { ...process.env, ...env } });
     const out = r.stdout.toString().trim();
     const id = /^SENT (\d+)$/m.exec(out)?.[1];
@@ -154,13 +155,17 @@ async function main(argv: readonly string[]): Promise<number> {
   if (existsSync(manifest)) {
     const why = "untrusted review: automatic reviewed delivery disabled; lead must verify and deliver";
     const log = join(stateDir, "ready-reply.log");
+    const file = join(results, "결과.md");
+    const hash = createHash("sha256").update(readFileSync(file)).digest("hex");
+    const receipt = ` HANDED ${key} owner=${owner.id} sha256=${hash} `;
     if (
       existsSync(log) &&
       readFileSync(log, "utf8")
         .split("\n")
-        .some((line) => line.includes(` HANDED ${key} `))
+        .some((line) => line.includes(receipt))
     ) {
       console.log(`SKIP ${key}: already handed to lead`);
+      if (!a.flags.has("dry-run")) note(stateDir, `SKIP ${key} ${owner.id}: already handed sha256=${hash}`);
       return 0;
     }
     if (a.flags.has("dry-run")) {
@@ -174,7 +179,7 @@ async function main(argv: readonly string[]): Promise<number> {
     const r = hand(sender, key, results, orders, why);
     const ids = orders.join(",") || "-";
     if ("ok" in r) {
-      note(stateDir, `HANDED ${key} ${ids}: ${why}, to the lead (${r.ok})`);
+      note(stateDir, `HANDED ${key} owner=${owner.id} sha256=${hash} ${ids}: ${why}, to the lead (${r.ok})`);
       return 0;
     }
     const told = await tell(d, `[READY ${key}] 리드 검수 넘김 실패: ${r.why}`, key);

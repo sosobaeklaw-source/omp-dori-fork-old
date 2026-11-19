@@ -68,7 +68,7 @@ test("a public lane with an untrusted manifest hands the result and order to the
   expect(body).toContain(`원 글번호: ${OWNER_MSG}`);
   expect(body).toContain("바뀐 것.");
   expect(body).toContain("검수");
-  expect(h.log()).toContain(`HANDED k1 ${OWNER_MSG}:`);
+  expect(h.log()).toContain(`HANDED k1 owner=${OWNER_MSG} sha256=`);
   expect(existsSync(join(h.dir, "posts"))).toBe(false);
   const again = Bun.spawnSync(["bun", h.tool, "k1"], { env: h.env });
   expect(again.exitCode).toBe(0);
@@ -83,4 +83,27 @@ test("a failed untrusted-manifest handoff records the failure without posting", 
   expect(run.exitCode).toBe(1);
   expect(h.log()).toContain("not handed to the lead: BAD_HANDOFF");
   expect(existsSync(join(h.dir, "posts"))).toBe(false);
+});
+
+test("the same lane hands a new order and a changed result to the lead", () => {
+  const h = handHome(`#!/bin/sh\ncat >> "$DIR/lead"\necho DELIVERED\n`);
+  const brief = join(h.home, "briefs", "k1.md");
+  const result = join(h.home, "results", "k1", "결과.md");
+  const inbound = join(h.home, "state", "inbound.log");
+  const second = "1571675313379737673";
+  writeFileSync(join(h.home, "results", "k1", "ready-delivery.json"), "{}");
+  writeFileSync(brief, `# k1\n원글: ${OWNER_MSG}\npublic: true\n`);
+  const run = () => Bun.spawnSync(["bun", h.tool, "k1"], { env: h.env });
+  expect(run().exitCode).toBe(0);
+  writeFileSync(brief, `# k1\n원글: ${second}\npublic: true\n`);
+  writeFileSync(inbound, `INBOUND discord ${ROOM} ${second} from=owner ref=- "x"\n`);
+  writeFileSync(result, "# 두번째\n\n새 결과.\n");
+  expect(run().exitCode).toBe(0);
+  expect(readFileSync(join(h.dir, "lead"), "utf8")).toContain(`원 글번호: ${second}`);
+  writeFileSync(result, "# 두번째\n\n고친 결과.\n");
+  expect(run().exitCode).toBe(0);
+  expect(readFileSync(join(h.dir, "lead"), "utf8")).toContain("고친 결과.");
+  expect(run().exitCode).toBe(0);
+  expect(h.log()).toContain(`SKIP k1 ${second}: already handed`);
+  expect(h.log().split("HANDED k1")).toHaveLength(4);
 });

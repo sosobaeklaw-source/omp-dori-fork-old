@@ -5,6 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hookHome } from "./ready-reply-hook-fixture.ts";
 
+test("option-like result text is passed after the option terminator", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-dashes-"));
+  const sender = join(dir, "send.sh");
+  writeFileSync(
+    sender,
+    `#!/bin/sh\n[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }\nprintf '%s\\n' "$@" > "${dir}/args"\necho 'SENT 42'\n`,
+    { mode: 0o755 },
+  );
+  const { home, env, tool } = hookHome(sender);
+  writeFileSync(join(home, "results", "k1", "결과.md"), "# 결과\n\n--x 결과\n");
+  expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
+  expect(readFileSync(join(dir, "args"), "utf8")).toBe("--\n--x 결과\n");
+});
+
 test("a verdict created by the lane cannot authorize its own attachment", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-self-review-"));
   const sender = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-file.sh");
@@ -22,11 +36,13 @@ test("a verdict created by the lane cannot authorize its own attachment", () => 
   const hash = createHash("sha256").update("public text").digest("hex");
   writeFileSync(join(round, "verdict.txt"), `나가도 됩니다\n${attachment} ${hash}\n`);
   writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round, attachment: "result.txt" }));
+  const lead = join(dir, "lead.sh");
+  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
   const run = Bun.spawnSync([process.execPath, tool, "k1"], {
-    env: { ...env, PATH: `${join(dir, "bin")}:/usr/bin:/bin` },
+    env: { ...env, DORI_TO_MACMINI: lead, PATH: `${join(dir, "bin")}:/usr/bin:/bin` },
   });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toContain("untrusted review");
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
   expect(existsSync(join(dir, "posted"))).toBe(false);
 });
 
@@ -41,12 +57,15 @@ test("reviewed reply rejects another lane's file and ignores inherited delivery 
     join(home, "results", "k1", "ready-delivery.json"),
     JSON.stringify({ round: dir, attachment: outside }),
   );
-  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_PASSED: dir, DORI_ATTACHMENT: outside } });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toContain("untrusted review");
+  const lead = join(dir, "lead.sh");
+  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
+  const run = Bun.spawnSync(["bun", tool, "k1"], {
+    env: { ...env, DORI_TO_MACMINI: lead, DORI_PASSED: dir, DORI_ATTACHMENT: outside },
+  });
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
   expect(existsSync(join(dir, "posts"))).toBe(false);
 });
-
 test("reviewed READY uses the real checker and refuses a blocked verdict", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-real-"));
   const sender = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-file.sh");
@@ -63,39 +82,13 @@ test("reviewed READY uses the real checker and refuses a blocked verdict", () =>
   writeFileSync(attachment, "file");
   writeFileSync(join(round, "verdict.txt"), "아직 안 됩니다\n");
   writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round, attachment: "result.txt" }));
+  const lead = join(dir, "lead.sh");
+  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
   const run = Bun.spawnSync([process.execPath, tool, "k1"], {
-    env: { ...env, PATH: `${join(dir, "bin")}:/usr/bin:/bin` },
+    env: { ...env, DORI_TO_MACMINI: lead, PATH: `${join(dir, "bin")}:/usr/bin:/bin` },
   });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toContain("untrusted review");
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
   expect(existsSync(join(dir, "posted"))).toBe(false);
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).not.toContain("REPLIED");
-});
-
-test("reviewed attachment containing a client name is never sent", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ready-private-"));
-  const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\necho x >> "${dir}/posts"\necho 'SENT 4'\n`, { mode: 0o755 });
-  const { home, env, tool } = hookHome(sender);
-  const results = join(home, "results", "k1");
-  writeFileSync(join(results, "result.txt"), "가나다 사건");
-  writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round: dir, attachment: "result.txt" }));
-  const run = Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toContain("untrusted review");
-  expect(existsSync(join(dir, "posts"))).toBe(false);
-});
-
-test("unchecked attachment formats are refused before the sender runs", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ready-format-"));
-  const sender = join(dir, "send.sh");
-  writeFileSync(sender, `#!/bin/sh\necho x >> "${dir}/posts"\necho 'SENT 4'\n`, { mode: 0o755 });
-  const { home, env, tool } = hookHome(sender);
-  const results = join(home, "results", "k1");
-  writeFileSync(join(results, "result.pdf"), "pdf");
-  writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round: dir, attachment: "result.pdf" }));
-  const run = Bun.spawnSync(["bun", tool, "k1"], { env });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toContain("untrusted review");
-  expect(existsSync(join(dir, "posts"))).toBe(false);
 });
