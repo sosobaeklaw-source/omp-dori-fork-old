@@ -447,7 +447,7 @@ update:
 EOF
 # Extra ignored skills are inserted after the fixed entry, so an empty list leaves the block exactly as generated.
 # bun, not sed: macOS and Linux sed disagree on -i and /dev/stdin.
-[ -n "$ignored_skills" ] && IGNORED_SKILLS="$ignored_skills" OMP_YML_GENERATED="$generated_omp_yml" bun -e '
+if [ -n "$ignored_skills" ]; then IGNORED_SKILLS="$ignored_skills" OMP_YML_GENERATED="$generated_omp_yml" bun -e '
   const path = process.env.OMP_YML_GENERATED;
   const extra = process.env.IGNORED_SKILLS.replace(/\n$/, "");
   const text = await Bun.file(path).text();
@@ -455,7 +455,8 @@ EOF
   const at = text.indexOf(needle);
   if (at < 0) throw new Error("generated omp.yml has no dori-mode entry");
   await Bun.write(path, text.slice(0, at + needle.length) + extra + "\n" + text.slice(at + needle.length));
-'
+' || { rm -f "$generated_omp_yml"; fail "could not add laneIgnoredSkills to omp.yml"; }
+fi
 OMP_YML="$base/omp.yml" OMP_YML_GENERATED="$generated_omp_yml" bun -e '
   import { chmodSync, renameSync, statSync, writeFileSync } from "node:fs";
   const path = process.env.OMP_YML;

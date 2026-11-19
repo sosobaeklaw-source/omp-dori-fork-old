@@ -46,6 +46,22 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: skills/dori-mode/scripts
       - run: bun run ci
+      - name: Verify latest ULW code-mode and task bridge on the actual bound native source
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/ulw-native-compatibility"
+          mkdir -m 700 "$smoke" "$smoke/home"
+          native=$(bun scripts/source-dependencies.ts native "$GITHUB_WORKSPACE" "$smoke/home")
+          bun scripts/source-dependencies.ts assert-native "$GITHUB_WORKSPACE" "$smoke/home"
+          version=$(HOME="$smoke/home" "$native/bin/omp" --version)
+          test "$version" = '18.20.0'
+          for check in code-mode-host-check code-mode-task-host-check; do
+            env -i HOME="$smoke/home" LANG=C.UTF-8 \
+              PATH="$native/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+              bun "$GITHUB_WORKSPACE/ref/omp-ulw/tests/$check.ts"
+          done
+
       - name: Red-team runner tests
         run: python3 -m unittest discover -s tools/redteam
       - name: WP publish review gate tests
