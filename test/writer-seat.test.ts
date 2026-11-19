@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { lockDir } from "../src/lock-owner.ts";
-import { disconnectedWhy, readRest, type SeatEnv, seatsPath, sendOnSeat } from "../src/writer-seat.ts";
+import { disconnectedWhy } from "../src/writer-seat-log.ts";
+import { readRest, type SeatEnv, seatsPath, sendOnSeat } from "../src/writer-seat.ts";
 
 const NOW = Date.parse("2026-11-16T05:00:00Z");
 

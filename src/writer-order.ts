@@ -9,7 +9,8 @@
 import { existsSync } from "node:fs";
 import { type AgyEnv, AgyStop, sendOnAgy, stopPath } from "./writer-agy.ts";
 import { readQuotaUntil } from "./agy-own.ts";
-import { disconnectedWhy, readSeats, restingUntil, type SeatEnv, type SendOpts, sendOnSeat } from "./writer-seat.ts";
+import { disconnectedWhy } from "./writer-seat-log.ts";
+import { readSeats, restingUntil, type SeatEnv, type SendOpts, sendOnSeat } from "./writer-seat.ts";
 
 export type OrderOpts = SendOpts & { calls: string };
 
