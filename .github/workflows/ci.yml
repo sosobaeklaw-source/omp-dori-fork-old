@@ -51,6 +51,69 @@ jobs:
       - name: WP publish review gate tests
         run: python3 -m unittest discover -s tools/wp_publish
 
+  test-macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - name: Prepare bound omp-ulw test fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
+          bun scripts/source-dependencies.ts ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
+      - name: Check out exact explicit-override compatibility fixture
+        run: |
+          pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
+          compat="$RUNNER_TEMP/omp-dori-compat-ulw"
+          git clone --quiet --no-checkout --shared "$GITHUB_WORKSPACE/ref/omp-ulw" "$compat"
+          git -C "$compat" fetch --quiet --no-tags https://github.com/dbc-hbin/omp-ulw.git "$pin"
+          git -C "$compat" -c advice.detachedHead=false checkout --quiet "$pin"
+          test "$(git -C "$compat" rev-parse HEAD)" = "$pin"
+          printf 'DORI_TEST_COMPAT_ULW_ENTRY=%s/index.ts\n' "$compat" >> "$GITHUB_ENV"
+      - name: Install exact native OMP test host
+        run: bun install --frozen-lockfile
+        working-directory: test/fixtures/omp-native-host
+      - name: Bind exact native OMP test host
+        run: |
+          host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
+          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
+          printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: skills/dori-mode/scripts
+      - run: bun test --parallel=3 --timings=.bun-test-timings.json ./test/
+      - run: bun run test:skill
+      - run: bun run test:extension
+      - name: Genuine Darwin arm64 hc consumer release smoke
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          bun -e 'if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Darwin arm64 is required")'
+          gtar="$(command -v gtar)"
+          "$gtar" --version
+          runtime="$RUNNER_TEMP/consumer-hc"
+          mkdir -m 700 "$runtime" "$runtime/home" "$runtime/s" "$runtime/r" "$runtime/c"
+          curl --proto '=https' --tlsv1.2 -fL https://releases.herdr.dev/core/install.sh -o "$runtime/install-hc.sh"
+          printf '%s  %s\n' '9d29a920d796d11b00fde9ab0958b616179d88acc25edf0fde8b574bde0227d2' "$runtime/install-hc.sh" | shasum -a 256 -c -
+          env -i HOME="$runtime/home" PATH=/usr/bin:/bin HC_VERSION=0.1.20 sh "$runtime/install-hc.sh"
+          hc="$runtime/home/.local/bin/hc"
+          env -i HOME="$runtime/home" PATH="$runtime/home/.local/bin:/usr/bin:/bin" \
+            XDG_STATE_HOME="$runtime/s" XDG_RUNTIME_DIR="$runtime/r" XDG_CONFIG_HOME="$runtime/c" \
+            HC_SESSION=consumer-installer hc update --version 0.1.20
+          baseline=74870017f361dad437ba5e4dd97c90698823a1f3
+          git merge-base --is-ancestor "$baseline" HEAD
+          git worktree add --detach "$RUNNER_TEMP/consumer-baseline" "$baseline"
+          git worktree add --detach "$RUNNER_TEMP/consumer-candidate" HEAD
+          bun "$RUNNER_TEMP/consumer-candidate/scripts/verify-consumer-release.ts" \
+            --source-a "$RUNNER_TEMP/consumer-baseline" --source-b "$RUNNER_TEMP/consumer-candidate" \
+            --runtime-bin "$hc" --tar-bin "$gtar" \
+            --out "/private/tmp/odcr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
   e2e-herdr:
     runs-on: ubuntu-latest
     steps:

@@ -23,7 +23,7 @@ test("a long Discord send is split, replies only with its first part, and prints
     expect([r.code, r.err, r.out]).toEqual([0, "", "SENT 71 72 73"]);
     expect(r.keys).toEqual(Array(3).fill(`POST /channels/${ids.thread}/messages`));
     expect(r.requests.map((q) => q.body?.["message_reference"])).toEqual([
-      { message_id: ids.message, fail_if_not_exists: false },
+      { message_id: ids.message, fail_if_not_exists: true },
       undefined,
       undefined,
     ]);
@@ -47,7 +47,7 @@ test("a long Discord send is split, replies only with its first part, and prints
       {
         content: "hi",
         allowed_mentions: { parse: [] },
-        message_reference: { message_id: ids.message, fail_if_not_exists: false },
+        message_reference: { message_id: ids.message, fail_if_not_exists: true },
       },
     ]);
   });

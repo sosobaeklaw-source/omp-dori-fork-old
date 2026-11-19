@@ -46,7 +46,7 @@
 
 - The skill CLI loads command implementations on demand, avoiding updater, messenger and lane graphs for successful journal commands and all configuration/command graphs for `--version`. Ordinary commands retain configuration and consumer-native admission before execution; usage, exit codes and original error classes remain unchanged.
 
-- Automatic CI keeps the Linux `check`, `e2e-herdr` and `e2e-hc` jobs. This fork's macOS `test-macos` job was removed: upstream dropped its automatic macOS job (f4be5ca) and the release gate accepts exactly those three Linux jobs, while `test-macos` was the only place the upstream native-cache removal tests failed. The `check` job also verifies the latest ULW code-mode and task bridge against the bound native source.
+- Automatic CI keeps the Linux `check`, `e2e-herdr` and `e2e-hc` jobs and this fork's macOS `test-macos` job. Upstream dropped its automatic macOS job (f4be5ca); this fork keeps it because both machines run macOS. The native-cache removal tests that need `rm` to refuse an unreadable directory run on macOS only: GNU `rm` deletes that directory silently, so they cannot pass under Linux. The release gate still requires the three Linux jobs. The `check` job also verifies the latest ULW code-mode and task bridge against the bound native source.
 
 - Monitor stdout/stderr use bounded incremental line framing and 64 KiB delivery batches. Oversized lines or rendered messages are preserved in private temporary files with explicit path/size notices instead of being truncated or accumulated in memory; storage/read failures stop the child and report potentially incomplete output. Normal filters, UTF-8, EOF, stop and session ownership behavior remain intact.
 

@@ -55,7 +55,7 @@ export class Discord {
 
   /**
    * Posts the text as consecutive messages of at most 2000 characters (`splitForDiscord`) and returns their IDs in
-   * order. `replyTo` makes the first message a reply that pings nobody; a deleted target still posts, unlinked. A failed
+   * order. `replyTo` makes the first message a reply that pings nobody; a deleted target is refused by Discord and nothing is posted. A failed
    * part stops the rest; its error names the parts already posted, which stay.
    */
   async send(channelId: string, content: string, opts: { readonly replyTo?: string } = {}): Promise<string[]> {

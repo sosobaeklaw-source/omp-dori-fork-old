@@ -21,6 +21,9 @@ import { nativeCacheFixture, ownProcessCwds, ownProcessFiles } from "./source-bu
 
 afterEach(removePruneFixtures);
 const nonRoot = test.skipIf(process.getuid?.() === 0);
+// GNU rm removes an unreadable directory silently; macOS rm refuses it with EACCES. These tests assert that
+// refusal, so they run on darwin only. Linux coverage stays in the e2e jobs, which use GNU rm.
+const macRefusal = test.skipIf(process.platform !== "darwin" || process.getuid?.() === 0);
 
 // All inputs use the original public prune/fixture APIs, including the fresh files callback. No rm implementation is
 // replaced: a real owned, nonempty, unreadable subtree makes native recursive removal fail after unlinking files.
@@ -82,7 +85,7 @@ function partialRemoval() {
   return { c, x, backup, cache, remainder, blocker };
 }
 
-nonRoot("partial removal never returns to live; explicit cleanup preserves a newly prepared image", () => {
+macRefusal("partial removal never returns to live; explicit cleanup preserves a newly prepared image", () => {
   const f = partialRemoval();
   const ordinary = f.c.prune({ now: 2 });
   expect(ordinary.removed).toEqual([]);
@@ -142,7 +145,7 @@ nonRoot("a committed retry uses fresh unknown-file holds and never restores the 
 });
 
 for (const prefix of ["", ".pruning", ".deleting-", ".removing-"]) {
-  nonRoot(`a fresh ${prefix || "live"} reference keeps the committed copy terminal`, () => {
+  macRefusal(`a fresh ${prefix || "live"} reference keeps the committed copy terminal`, () => {
     const f = partialRemoval();
     const suffix = prefix.endsWith("-") ? `${prefix}${f.remainder.slice(-16)}` : prefix;
     const reference = join(f.c.refs, "late-reference");

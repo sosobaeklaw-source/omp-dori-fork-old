@@ -61,11 +61,9 @@ const USAGE = `dori <command> [options]
   orders [--since 3d] [--mine] [--json]   owner orders still open, from both Macs' records (tools/open_orders.ts)
   orders close <id>... --why LINE      close orders that need no result
   lead-pulse                           is the lead's pane there? writes state/lead-alive.json; the second dead check in a row starts the lead
-  send <slack|telegram|discord> --to TARGET --text TEXT [--thread ID] [--edit ID]
-                                       Discord also [--reply ID] (as a reply) [--closes ID] (result for that message)
-  send <slack|telegram|discord> --to TARGET (--text TEXT | --text-file PATH|-) [--thread ID] [--edit ID] [--reply ID]
+  send <slack|telegram|discord> --to TARGET (--text TEXT | --text-file PATH|-) [--thread ID] [--edit ID] [--reply ID] [--closes ID]
                                        Discord accepts channel names with DORI_DISCORD_GUILD_ID; --thread needs no --to and also targets edits
-                                       Discord splits text past 2000 characters (SENT lists every id); --reply is Discord only
+                                       Discord splits text past 2000 characters (SENT lists every id); --reply posts as a reply and --closes records the result for that message, both Discord only
   thread discord create --to CHANNEL --title T [--text T] [--tag NAME]... [--message ID]
                                        --message opens the thread on that message of a text channel
   thread discord set <thread> [--title T] [--tag NAME]... [--archive|--unarchive]

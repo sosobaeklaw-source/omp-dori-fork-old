@@ -13,9 +13,10 @@ test("release validation follows exactly the three automatic Linux CI jobs", asy
   if (!object(workflow) || !object(workflow["jobs"])) throw new Error("CI workflow jobs must be a mapping");
   const jobs = workflow["jobs"];
   const names = Object.keys(jobs);
-  expect(names).toEqual(["check", "e2e-herdr", "e2e-hc"]);
-  expect(githubFixture().jobs.map((job) => job["name"])).toEqual(names);
-  for (const name of names) expect(jobs[name]).toHaveProperty("runs-on", "ubuntu-latest");
+  expect(names).toEqual(["check", "test-macos", "e2e-herdr", "e2e-hc"]);
+  expect(githubFixture().jobs.map((job) => job["name"])).toEqual(["check", "e2e-herdr", "e2e-hc"]);
+  for (const name of ["check", "e2e-herdr", "e2e-hc"]) expect(jobs[name]).toHaveProperty("runs-on", "ubuntu-latest");
+  expect(jobs["test-macos"]).toHaveProperty("runs-on", "macos-15");
 });
 
 test.each(["application", "suite", "head"])("holds a successful-looking check with a different %s", async (kind) => {
