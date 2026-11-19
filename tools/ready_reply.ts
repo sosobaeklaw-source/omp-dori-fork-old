@@ -153,11 +153,23 @@ async function main(argv: readonly string[]): Promise<number> {
   const manifest = join(results, "ready-delivery.json");
   if (existsSync(manifest)) {
     const why = "untrusted review: automatic reviewed delivery disabled; lead must verify and deliver";
+    const log = join(stateDir, "ready-reply.log");
+    if (
+      existsSync(log) &&
+      readFileSync(log, "utf8")
+        .split("\n")
+        .some((line) => line.includes(` HANDED ${key} `))
+    ) {
+      console.log(`SKIP ${key}: already handed to lead`);
+      return 0;
+    }
     if (a.flags.has("dry-run")) {
       console.log(`HAND ${key}: ${why}`);
       return 0;
     }
-    const orders = briefOrders(existsSync(briefPath) ? readFileSync(briefPath, "utf8") : "");
+    const orders = [
+      ...new Set([...briefOrders(existsSync(briefPath) ? readFileSync(briefPath, "utf8") : ""), owner.id]),
+    ];
     const sender = process.env["DORI_TO_MACMINI"] ?? join(home, "bin", "to-macmini.sh");
     const r = hand(sender, key, results, orders, why);
     const ids = orders.join(",") || "-";

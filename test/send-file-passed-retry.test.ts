@@ -115,3 +115,39 @@ test("a failed send is not recorded and can be retried", () => {
   const retry = run(dir, ["--passed", folder, "결과", card], { REPLY_TO: "12345" });
   expect([failed.code, retry.code, retry.out.trim()]).toEqual([1, 0, "SENT 777"]);
 });
+
+test("simultaneous sends of the same order and file post only once", async () => {
+  const dir = rig();
+  const card = piece(dir, "card.png", "그림");
+  const folder = round(dir, "r1", "나가도 됩니다", { [card]: "그림" });
+  const fifo = join(dir, "gate");
+  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+  writeFileSync(
+    join(dir, "bin", "curl"),
+    `#!/bin/sh\necho x >> "$RIG/posts"\nread x < "$RIG/gate"\necho '{"id":"777"}'\n`,
+    { mode: 0o755 },
+  );
+  const env = {
+    ...process.env,
+    PATH: `${join(dir, "bin")}:${process.env["PATH"]}`,
+    DORI_HOME: join(dir, "home"),
+    RIG: dir,
+    REPLY_TO: "12345",
+  };
+  const args = ["bash", SCRIPT, "--passed", folder, "결과", card];
+  const one = Bun.spawn(args, { env, stdout: "pipe", stderr: "pipe" });
+  const two = Bun.spawn(args, { env, stdout: "pipe", stderr: "pipe" });
+  const gate = Bun.spawn(["sh", "-c", 'printf "go\\n" > "$1"', "sh", fifo], { env });
+  const timer = setTimeout(() => {
+    one.kill();
+    two.kill();
+    gate.kill();
+  }, 10000);
+  try {
+    const codes = await Promise.all([one.exited, two.exited, gate.exited]);
+    expect(codes.slice(0, 2).sort()).toEqual([0, 65]);
+    expect(readFileSync(join(dir, "posts"), "utf8")).toBe("x\n");
+  } finally {
+    clearTimeout(timer);
+  }
+}, 15000);

@@ -60,7 +60,7 @@ test("a hand-off that fails is a recorded failure the lead is told about; --dry-
 
 test("a public lane with an untrusted manifest hands the result and order to the lead", () => {
   const h = handHome(`#!/bin/sh\n{ echo "$@"; cat; } > "$DIR/lead"\necho "DELIVERED lead file x 10 bytes"\n`);
-  writeFileSync(join(h.home, "briefs", "k1.md"), `# k1\n회장님 원문(${OWNER_MSG})\npublic: true\n`);
+  writeFileSync(join(h.home, "briefs", "k1.md"), `# k1\n원글: ${OWNER_MSG}\npublic: true\n`);
   writeFileSync(join(h.home, "results", "k1", "ready-delivery.json"), "{}");
   const run = Bun.spawnSync(["bun", h.tool, "k1"], { env: h.env });
   expect(run.exitCode).toBe(0);
@@ -70,6 +70,9 @@ test("a public lane with an untrusted manifest hands the result and order to the
   expect(body).toContain("검수");
   expect(h.log()).toContain(`HANDED k1 ${OWNER_MSG}:`);
   expect(existsSync(join(h.dir, "posts"))).toBe(false);
+  const again = Bun.spawnSync(["bun", h.tool, "k1"], { env: h.env });
+  expect(again.exitCode).toBe(0);
+  expect(h.log().split("HANDED k1")).toHaveLength(2);
 });
 
 test("a failed untrusted-manifest handoff records the failure without posting", () => {

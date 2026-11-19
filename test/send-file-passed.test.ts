@@ -151,6 +151,12 @@ test("a result with no files is posted as before, with or without the flags, and
   expect([flagged.code, flagged.payload.content, flagged.log]).toEqual([0, "글만 보냅니다", undefined]);
 });
 
+test("the end-of-options marker allows text beginning with dashes", () => {
+  const dir = rig();
+  const r = run(dir, ["--", "--- 결과"]);
+  expect([r.code, r.posts, r.payload?.content]).toEqual([0, 1, "--- 결과"]);
+});
+
 test("the explicit unreviewed path sends the file, says so in the posted text and logs it with the message id", () => {
   const dir = rig();
   const shot = piece(dir, "캡처 1.png", "화면");

@@ -35,7 +35,8 @@ while :; do
   case "${1:-}" in
     --passed) [ -n "${2:-}" ] && [ -z "$passed" ] || { echo "REFUSED --passed needs one review round folder" >&2; exit 64; }; passed="$2"; shift 2 ;;
     --send-without-desk-review) unreviewed=1; shift ;;
-    --*) echo "REFUSED unknown option $1" >&2; exit 64 ;;
+    --) shift; break ;;
+    --[a-zA-Z]*) echo "REFUSED unknown option $1" >&2; exit 64 ;;
     *) break ;;
   esac
 done
@@ -56,6 +57,8 @@ hashes=()
 if [ $# -gt 0 ] && [ -n "$order" ]; then
   [[ "$order" =~ ^[0-9]+$ ]] || { echo 'REFUSED invalid order id' >&2; exit 64; }
   mkdir -p "$home/state"
+  exec 9<> "$home/state/sent-files.lock"
+  python3 -c 'import fcntl; fcntl.flock(9,fcntl.LOCK_EX)'
   for ((i=0; i<$#; i++)); do
     hash=$(shasum -a 256 "$tmp/f$i"); hash="${hash%% *}"; hashes+=("$hash")
     if [ -f "$receipt" ] && grep -Fxq "$order $hash" "$receipt"; then
