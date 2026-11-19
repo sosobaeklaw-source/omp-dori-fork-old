@@ -9,8 +9,9 @@
  * --detach starts the same command in its own process and returns at once: the harness kills a hook still running two
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
- * `SENT <id>`. The picture is a comparison picture of a public lane, which the proofreading desk never reads, so it
- * goes with `--send-without-desk-review` and the posted text says so; a reply without a picture goes as before. Before
+ * `SENT <id>`. The reply says "끝냈어" only when the lane's attachment is the copy the desk passed: DORI_PASSED
+ * names that review round folder and DORI_ATTACHMENT names the file, and both go with `--passed`. A comparison picture, which the desk
+ * never reads, still goes with `--send-without-desk-review` and the posted text says so. Before
  * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
  * that gets no reply prints `SKIP <why>`, except a lane not marked public: its
@@ -44,7 +45,7 @@ function note(stateDir: string, line: string): void {
 const SENDER_SRC = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-file.sh");
 
 /** Runs the sender; a spawn that throws (missing or non-executable file) comes back as a failure, not an exception. */
-function post(sender: string, text: string, image: string | undefined, env: Record<string, string>) {
+function post(sender: string, text: string, image: string | undefined, env: Record<string, string>, passed?: string) {
   try {
     // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
     // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
@@ -59,7 +60,12 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
           why: `그림을 함께 보내려면 --send-without-desk-review 를 아는 센더가 필요한데 ${sender} 가 그걸 모릅니다. ${SENDER_SRC} 를 ${sender} 로 설치한 뒤 다시 시도하세요`,
         };
     }
-    const argv = image ? [sender, "--send-without-desk-review", text, image] : [sender, text];
+    const attachment = process.env["DORI_ATTACHMENT"];
+    const argv = passed
+      ? [sender, "--passed", passed, text, ...(attachment ? [attachment] : [])]
+      : image
+        ? [sender, "--send-without-desk-review", text, image]
+        : [sender, text];
     const r = Bun.spawnSync(argv, { env: { ...process.env, ...env } });
     const out = r.stdout.toString().trim();
     const id = /^SENT (\d+)$/m.exec(out)?.[1];
@@ -146,13 +152,15 @@ async function main(argv: readonly string[]): Promise<number> {
     console.error(`FAIL ${r.why}`);
     return 1;
   }
-  const { owner, text, image } = plan;
+  const { owner, image } = plan;
+  const passed = process.env["DORI_PASSED"];
+  const text = passed ? "끝냈어" : plan.text;
   if (a.flags.has("dry-run")) {
     console.log(`REPLY_TO ${owner.id} channel ${owner.channel}\nIMAGE ${image ?? "-"}\nTEXT\n${text}`);
     return 0;
   }
   const sender = process.env["DORI_SEND_FILE"] ?? join(home, "bin", "dori-send-file.sh");
-  const r = post(sender, text, image, { REPLY_TO: owner.id, DISCORD_CHANNEL: owner.channel });
+  const r = post(sender, text, image, { REPLY_TO: owner.id, DISCORD_CHANNEL: owner.channel }, passed);
   if (!("id" in r)) {
     const told = await tell(d, `[REPLY ${key}] 회장님 원글 ${owner.id} 답글 실패: ${r.why}`, key);
     note(stateDir, `FAIL ${key} ${owner.id}: ${r.why} (lead: ${told})`);
