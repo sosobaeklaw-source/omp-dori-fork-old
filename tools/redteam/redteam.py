@@ -120,29 +120,32 @@ def claim_path(d: Path, seen: str) -> Path:
     return d.parent / f".lock-claim-{hashlib.sha256((d.name + chr(0) + seen).encode()).hexdigest()}"
 
 
-def take_claim(path: Path) -> bool:
-    """One claim file per observed owner line (src/lock-claim.ts takeFile), so two takers cannot both clear."""
-    mine = f"pid={os.getpid()}"
+def take_claim(path: Path) -> str | None:
+    """One claim file per observed owner line (src/lock-claim.ts takeFile), so two takers cannot both clear.
+
+    Returns the claim text this process wrote, or None when another live taker holds it."""
+    mine = f"pid={os.getpid()} {uuid.uuid4().hex}"
     for _ in range(2):
         try:
             with path.open("x") as claim_file:
                 claim_file.write(mine)
-            return True
+            return mine
         except OSError:
             seen = path.read_text().strip() if path.exists() else None
             if seen is None:
                 continue
             pid = re.search(r"pid=(\d+)", seen)
             if pid is None or alive(int(pid.group(1))):
-                return False
+                return None
             path.unlink(missing_ok=True)
-    return False
+    return None
 
 
 def clear_stale(d: Path, seen: str | None) -> bool:
     """Remove the lock only while it still reads as `seen` and is still left behind (src/lock-owner.ts clear)."""
     claim = claim_path(d, seen or "")
-    if not take_claim(claim):
+    mine = take_claim(claim)
+    if mine is None:
         return False
     try:
         now = owner_text(d)
@@ -153,7 +156,11 @@ def clear_stale(d: Path, seen: str | None) -> bool:
     except FileNotFoundError:
         return False
     finally:
-        claim.unlink(missing_ok=True)
+        try:
+            if claim.read_text().strip() == mine:
+                claim.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def try_lock(acct: str, lane: str) -> str | None:
