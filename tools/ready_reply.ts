@@ -9,9 +9,9 @@
  * --detach starts the same command in its own process and returns at once: the harness kills a hook still running two
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
- * `SENT <id>`. The picture is a comparison picture of a public lane, which the proofreading desk never reads, so it
- * goes with `--send-without-desk-review` and the posted text says so; a reply without a picture goes as before. Before
- * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
+ * `SENT <id>`. A comparison picture, which the desk
+ * never reads, still goes with `--send-without-desk-review` and the posted text says so. Before
+ * that call the sender is probed from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
  * that gets no reply prints `SKIP <why>`, except a lane not marked public: its
  * READY goes to the macmini lead for review (`HANDED`), through DORI_TO_MACMINI (default `<home>/bin/to-macmini.sh`,
@@ -46,20 +46,25 @@ const SENDER_SRC = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-
 /** Runs the sender; a spawn that throws (missing or non-executable file) comes back as a failure, not an exception. */
 function post(sender: string, text: string, image: string | undefined, env: Record<string, string>) {
   try {
-    // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
-    // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
-    // fresh empty folder: an old copy reads the next argument as a file to attach, and no file can be found there.
-    if (image) {
-      const probe = Bun.spawnSync([sender, "--supports", "passed"], {
+    // Probe features only when needed, from an empty folder: old senders may treat the probe as post text.
+    if (image || text.startsWith("--")) {
+      const feature = text.startsWith("--") ? "end-of-options" : "send-without-desk-review";
+      const probe = Bun.spawnSync([sender, "--supports", feature], {
         cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
         env: { ...process.env, ...env },
       });
       if (probe.exitCode !== 0 || !probe.stdout.toString().trim().startsWith("SUPPORTED"))
         return {
-          why: `그림을 함께 보내려면 --send-without-desk-review 를 아는 센더가 필요한데 ${sender} 가 그걸 모릅니다. ${SENDER_SRC} 를 ${sender} 로 설치한 뒤 다시 시도하세요`,
+          why: `센더가 ${feature} 기능을 지원하지 않습니다. ${SENDER_SRC} 를 ${sender} 에 설치하세요`,
         };
     }
-    const argv = image ? [sender, "--send-without-desk-review", text, image] : [sender, text];
+    const argv = [
+      sender,
+      ...(image ? ["--send-without-desk-review"] : []),
+      ...(text.startsWith("--") ? ["--"] : []),
+      text,
+      ...(image ? [image] : []),
+    ];
     const r = Bun.spawnSync(argv, { env: { ...process.env, ...env } });
     const out = r.stdout.toString().trim();
     const id = /^SENT (\d+)$/m.exec(out)?.[1];
@@ -146,7 +151,8 @@ async function main(argv: readonly string[]): Promise<number> {
     console.error(`FAIL ${r.why}`);
     return 1;
   }
-  const { owner, text, image } = plan;
+  const { owner, image } = plan;
+  const text = plan.text;
   if (a.flags.has("dry-run")) {
     console.log(`REPLY_TO ${owner.id} channel ${owner.channel}\nIMAGE ${image ?? "-"}\nTEXT\n${text}`);
     return 0;
