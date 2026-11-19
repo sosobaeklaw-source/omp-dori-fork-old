@@ -134,6 +134,13 @@ test("a passed round without an attachment never posts", () => {
   expect(r.err).toContain("attachment");
 });
 
+test("the checker explains a missing passed folder", () => {
+  const checker = join(import.meta.dir, "..", "examples", "sobaek", "passed-check.sh");
+  const r = Bun.spawnSync(["bash", checker, "file", "--passed"]);
+  expect(r.exitCode).toBe(64);
+  expect(r.stderr.toString()).toContain("--passed needs a folder");
+});
+
 test("files announced before any verdict are refused: a round folder without verdict.txt, or no folder named", () => {
   const dir = rig();
   const card = piece(dir, "01.png", "그림");

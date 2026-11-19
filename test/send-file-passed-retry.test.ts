@@ -103,6 +103,20 @@ test("a successful file send cannot be repeated for the same order and bytes", (
   expect(second.err).toContain("already sent");
 });
 
+test("a revised bundle can include previously sent files but an identical reordered bundle cannot", () => {
+  const dir = rig();
+  const a = piece(dir, "a.png", "unchanged");
+  const b = piece(dir, "b.png", "original");
+  const b2 = piece(dir, "b2.png", "corrected");
+  const folder = round(dir, "r1", "나가도 됩니다", { [a]: "unchanged", [b]: "original", [b2]: "corrected" });
+  const first = run(dir, ["--passed", folder, "cards", a, b], { REPLY_TO: "12345" });
+  const revised = run(dir, ["--passed", folder, "fixed", a, b2], { REPLY_TO: "12345" });
+  expect([first.code, revised.code, revised.posts]).toEqual([0, 0, 2]);
+  expect([revised.upload(0), revised.upload(1)]).toEqual(["unchanged", "corrected"]);
+  const duplicate = run(dir, ["--passed", folder, "again", b2, a], { REPLY_TO: "12345" });
+  expect([duplicate.code, duplicate.posts]).toEqual([65, 2]);
+});
+
 test("an unreviewed attachment can be resent with corrected text", () => {
   const dir = rig();
   const card = piece(dir, "screen.png", "화면");

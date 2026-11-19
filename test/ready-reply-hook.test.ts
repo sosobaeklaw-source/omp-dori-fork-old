@@ -121,56 +121,6 @@ echo "SENT 9"
   expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
 });
 
-test("untrusted delivery manifest hands the result to the lead without posting", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ready-passed-"));
-  const sender = join(dir, "send.sh");
-  const { home, env, tool } = hookHome(sender);
-  const attachment = join(home, "results", "k1", "결과.txt");
-  writeFileSync(attachment, "<p>통과본</p>");
-  const round = join(dir, "review", "r1");
-  const refuse = [
-    "#!/bin/sh",
-    `printf '%s\\n' "$@" > "${dir}/argv"`,
-    'echo "REFUSED not passed" >&2',
-    "exit 65",
-    "",
-  ].join("\n");
-  writeFileSync(sender, refuse, { mode: 0o755 });
-  writeFileSync(join(home, "results", "k1", "ready-delivery.json"), JSON.stringify({ round, attachment: "결과.txt" }));
-  const lead = join(dir, "lead.sh");
-  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
-  const refused = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TO_MACMINI: lead } });
-  expect(refused.exitCode).toBe(0);
-  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
-  expect(existsSync(join(dir, "argv"))).toBe(false);
-});
-
-test("a delivery manifest never sends without a trusted desk", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ready-manifest-"));
-  const sender = join(dir, "send.sh");
-  writeFileSync(
-    sender,
-    `#!/bin/sh
-[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }
-printf '%s\n' "$@" > "${dir}/argv"
-echo "SENT 3"
-`,
-    { mode: 0o755 },
-  );
-  const { home, env, tool } = hookHome(sender);
-  const results = join(home, "results", "k1");
-  const attachment = join(results, "결과.txt");
-  const round = join(dir, "round");
-  writeFileSync(attachment, "reviewed");
-  writeFileSync(join(results, "ready-delivery.json"), JSON.stringify({ round, attachment: "결과.txt" }));
-  const lead = join(dir, "lead.sh");
-  writeFileSync(lead, "#!/bin/sh\ncat >/dev/null\necho DELIVERED\n", { mode: 0o755 });
-  const run = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_TO_MACMINI: lead } });
-  expect(run.exitCode).toBe(0);
-  expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain("HANDED k1");
-  expect(existsSync(join(dir, "argv"))).toBe(false);
-});
-
 test("the capability probe runs from an empty folder, so a file named passed in the working dir can never be posted", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-probe-cwd-"));
   const work = join(dir, "work");

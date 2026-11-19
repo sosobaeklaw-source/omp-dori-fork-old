@@ -14,7 +14,7 @@
 #   DORI_HOME/state/send-without-desk-review.log 에 남는다. 파일 없이 글만 보내는 호출은 이 점검과 상관없다.
 # --supports passed|send-without-desk-review: 이 깃발을 아는 판인지 0 으로 돌려준다. tools/ready_reply.ts 가 옛 설치판 감지에 쓴다.
 # 설치: dori-send-file.sh 와 passed-check.sh 를 함께 DORI_HOME/bin/ 에 놓는다.
-# --passed 발송만 ORDER_ID(없으면 REPLY_TO)와 파일 해시로 중복을 막는다. 미검수 첨부는 재발송할 수 있다.
+# --passed 발송만 ORDER_ID(없으면 REPLY_TO)와 정렬된 파일 해시 묶음으로 중복을 막는다. 미검수 첨부는 재발송할 수 있다.
 # 토큰은 DORI_HOME/discord-token(옴프도리 봇). 토큰은 출력하지 않는다.
 set -euo pipefail
 # --supports 는 토큰·채널과 상관없이 먼저 답한다: 옛 판은 이 깃발을 본문으로 오해하니, 호응 못 하는 호출자는 보내기 전에 멈춘다.
@@ -49,11 +49,16 @@ i=0; for f in "$@"; do cp -- "$f" "$tmp/f$i" 2>/dev/null || { echo "FAIL cannot 
 if [ $# -gt 0 ] && [ -z "$unreviewed" ]; then
   copies=(); for ((i=0; i<$#; i++)); do copies+=("$tmp/f$i"); done
   printf '%s\0' "$@" > "$tmp/labels"
-  PASSED_LABELS="$tmp/labels" bash "$(dirname "$0")/passed-check.sh" "${copies[@]}" --passed "$passed"
+  if [ -n "$passed" ]; then
+    PASSED_LABELS="$tmp/labels" bash "$(dirname "$0")/passed-check.sh" "${copies[@]}" --passed "$passed"
+  else
+    PASSED_LABELS="$tmp/labels" bash "$(dirname "$0")/passed-check.sh" "${copies[@]}"
+  fi
 fi
 order="${ORDER_ID:-${REPLY_TO:-}}"
 receipt="$home/state/sent-files.log"
 hashes=()
+bundle=""
 if [ $# -gt 0 ] && [ -n "$order" ] && [ -n "$passed" ]; then
   [[ "$order" =~ ^[0-9]+$ ]] || { echo 'REFUSED invalid order id' >&2; exit 64; }
   mkdir -p "$home/state"
@@ -61,10 +66,11 @@ if [ $# -gt 0 ] && [ -n "$order" ] && [ -n "$passed" ]; then
   python3 -c 'import fcntl; fcntl.flock(9,fcntl.LOCK_EX)'
   for ((i=0; i<$#; i++)); do
     hash=$(shasum -a 256 "$tmp/f$i"); hash="${hash%% *}"; hashes+=("$hash")
-    if [ -f "$receipt" ] && grep -Fxq "$order $hash" "$receipt"; then
-      echo "REFUSED already sent order $order file $hash" >&2; exit 65
-    fi
   done
+  bundle=$(printf '%s\n' "${hashes[@]}" | LC_ALL=C sort | paste -sd ',' -)
+  if [ -f "$receipt" ] && { grep -Fxq "$order bundle:$bundle" "$receipt" || { [ ${#hashes[@]} -eq 1 ] && grep -Fxq "$order ${hashes[0]}" "$receipt"; }; }; then
+    echo "REFUSED already sent order $order bundle $bundle" >&2; exit 65
+  fi
 fi
 [ $# -eq 0 ] || [ -z "$unreviewed" ] || text="$text"$'\n\n'"(첨부한 파일은 교열 데스크를 거치지 않았습니다)"
 # payload_json goes in from a file: with -F "payload_json=<text>" curl reads any ; in the text as a field parameter
@@ -83,8 +89,8 @@ raw=sys.stdin.read()
 try: d=json.loads(raw)
 except ValueError: print('FAIL non-json',raw[:80].replace(chr(10),' ')); sys.exit(1)
 print('SENT',d['id']) if isinstance(d,dict) and 'id' in d else (print('FAIL',d.get('code') if isinstance(d,dict) else '-',d.get('message') if isinstance(d,dict) else raw[:80]),sys.exit(1))" | tee "$tmp/out"
-if [ -n "$order" ] && [ ${#hashes[@]} -gt 0 ]; then
-  for hash in "${hashes[@]}"; do printf '%s %s\n' "$order" "$hash" >> "$receipt"; done
+if [ -n "$bundle" ]; then
+  printf '%s bundle:%s\n' "$order" "$bundle" >> "$receipt"
 fi
 # A post that skipped the desk is logged with the id Discord answered, one line per file; the path is %q-escaped so a
 # newline inside a file name cannot forge an extra log line; a log fault never hides SENT.

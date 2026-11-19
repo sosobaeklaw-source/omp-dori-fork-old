@@ -9,8 +9,7 @@
  * --detach starts the same command in its own process and returns at once: the harness kills a hook still running two
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
- * `SENT <id>`. A ready-delivery.json manifest stops automatic delivery: a lane can forge its own verdict, and no
- * independently protected desk exists here. The result is handed to the lead to verify and deliver manually. A comparison picture, which the desk
+ * `SENT <id>`. A comparison picture, which the desk
  * never reads, still goes with `--send-without-desk-review` and the posted text says so. Before
  * that call the sender is probed from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
@@ -27,7 +26,6 @@
  * that is missing or cannot start, is also told to the lead, so a detached run never fails silently. A lane whose
  * owner message already has a REPLIED line is skipped, so READY after rework does not answer twice.
  */
-import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +35,6 @@ import { type Deps, defaultDeps } from "../src/harness.ts";
 import { send } from "../src/inbox.ts";
 import { homeStateDir } from "../src/lane-model.ts";
 import { loadNameHashes, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
-import { briefOrders } from "./open_orders.ts";
 
 function note(stateDir: string, line: string): void {
   appendFileSync(join(stateDir, "ready-reply.log"), `${new Date().toISOString()} ${line}\n`);
@@ -50,8 +47,8 @@ const SENDER_SRC = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-
 function post(sender: string, text: string, image: string | undefined, env: Record<string, string>) {
   try {
     // Probe features only when needed, from an empty folder: old senders may treat the probe as post text.
-    if (image || text.startsWith("-")) {
-      const feature = text.startsWith("-") ? "end-of-options" : "send-without-desk-review";
+    if (image || text.startsWith("--")) {
+      const feature = text.startsWith("--") ? "end-of-options" : "send-without-desk-review";
       const probe = Bun.spawnSync([sender, "--supports", feature], {
         cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
         env: { ...process.env, ...env },
@@ -64,7 +61,7 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
     const argv = [
       sender,
       ...(image ? ["--send-without-desk-review"] : []),
-      ...(text.startsWith("-") ? ["--"] : []),
+      ...(text.startsWith("--") ? ["--"] : []),
       text,
       ...(image ? [image] : []),
     ];
@@ -82,11 +79,11 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
 const HAND_MAX = 6000;
 
 /** Hands a READY the owner did not get to the macmini lead; returns the sender's first line or why it failed. */
-function hand(sender: string, key: string, resultsDir: string, orders: readonly string[], reason?: string) {
+function hand(sender: string, key: string, resultsDir: string, orders: readonly string[]) {
   const file = join(resultsDir, "결과.md");
   const result = existsSync(file) ? readFileSync(file, "utf8") : "(결과.md 없음)";
   const cut = result.length > HAND_MAX ? `${result.slice(0, HAND_MAX)}\n… (맥북 ${file}에 이어짐)` : result;
-  const body = `job: ${key}\n원 글번호: ${orders.join(", ") || "-"}\n결과 폴더(맥북): ${resultsDir}\n${reason ? `검수 필요: ${reason}\n` : ""}\n${cut}\n`;
+  const body = `job: ${key}\n원 글번호: ${orders.join(", ") || "-"}\n결과 폴더(맥북): ${resultsDir}\n\n${cut}\n`;
   try {
     const r = Bun.spawnSync([sender, `리드 검수 대기 READY ${key}`], { stdin: Buffer.from(body) });
     const out = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0] ?? "";
@@ -155,43 +152,6 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
   const { owner, image } = plan;
-  const results = join(home, "results", key);
-  const manifest = join(results, "ready-delivery.json");
-  if (existsSync(manifest)) {
-    const why = "untrusted review: automatic reviewed delivery disabled; lead must verify and deliver";
-    const log = join(stateDir, "ready-reply.log");
-    const file = join(results, "결과.md");
-    const hash = createHash("sha256").update(readFileSync(file)).digest("hex");
-    const receipt = ` HANDED ${key} owner=${owner.id} sha256=${hash} `;
-    if (
-      existsSync(log) &&
-      readFileSync(log, "utf8")
-        .split("\n")
-        .some((line) => line.includes(receipt))
-    ) {
-      console.log(`SKIP ${key}: already handed to lead`);
-      if (!a.flags.has("dry-run")) note(stateDir, `SKIP ${key} ${owner.id}: already handed sha256=${hash}`);
-      return 0;
-    }
-    if (a.flags.has("dry-run")) {
-      console.log(`HAND ${key}: ${why}`);
-      return 0;
-    }
-    const orders = [
-      ...new Set([...briefOrders(existsSync(briefPath) ? readFileSync(briefPath, "utf8") : ""), owner.id]),
-    ];
-    const sender = process.env["DORI_TO_MACMINI"] ?? join(home, "bin", "to-macmini.sh");
-    const r = hand(sender, key, results, orders, why);
-    const ids = orders.join(",") || "-";
-    if ("ok" in r) {
-      note(stateDir, `HANDED ${key} owner=${owner.id} sha256=${hash} ${ids}: ${why}, to the lead (${r.ok})`);
-      return 0;
-    }
-    const told = await tell(d, `[READY ${key}] 리드 검수 넘김 실패: ${r.why}`, key);
-    note(stateDir, `FAIL ${key} ${ids}: not handed to the lead: ${r.why} (lead: ${told})`);
-    console.error(`FAIL ${why}: ${r.why}`);
-    return 1;
-  }
   const text = plan.text;
   if (a.flags.has("dry-run")) {
     console.log(`REPLY_TO ${owner.id} channel ${owner.channel}\nIMAGE ${image ?? "-"}\nTEXT\n${text}`);

@@ -3,7 +3,7 @@ set -euo pipefail
 files=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --passed) passed="${2:-}"; shift 2 ;;
+    --passed) [ $# -ge 2 ] && [ -n "$2" ] || { echo "REFUSED --passed needs a folder" >&2; exit 64; }; passed="$2"; shift 2 ;;
     *) files+=("$1"); shift ;;
   esac
 done
