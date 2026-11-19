@@ -57,3 +57,27 @@ test("a hand-off that fails is a recorded failure the lead is told about; --dry-
   expect(Bun.spawnSync(["bun", h.tool, "k1"], { env: missing }).exitCode).toBe(1);
   expect(h.log()).toContain(`not handed to the lead: cannot run ${join(h.dir, "nope.sh")}`);
 });
+
+test("a public lane with an untrusted manifest hands the result and order to the lead", () => {
+  const h = handHome(`#!/bin/sh\n{ echo "$@"; cat; } > "$DIR/lead"\necho "DELIVERED lead file x 10 bytes"\n`);
+  writeFileSync(join(h.home, "briefs", "k1.md"), `# k1\n회장님 원문(${OWNER_MSG})\npublic: true\n`);
+  writeFileSync(join(h.home, "results", "k1", "ready-delivery.json"), "{}");
+  const run = Bun.spawnSync(["bun", h.tool, "k1"], { env: h.env });
+  expect(run.exitCode).toBe(0);
+  const body = readFileSync(join(h.dir, "lead"), "utf8");
+  expect(body).toContain(`원 글번호: ${OWNER_MSG}`);
+  expect(body).toContain("바뀐 것.");
+  expect(body).toContain("검수");
+  expect(h.log()).toContain(`HANDED k1 ${OWNER_MSG}:`);
+  expect(existsSync(join(h.dir, "posts"))).toBe(false);
+});
+
+test("a failed untrusted-manifest handoff records the failure without posting", () => {
+  const h = handHome(`#!/bin/sh\ncat > /dev/null\necho BAD_HANDOFF\nexit 2\n`);
+  writeFileSync(join(h.home, "briefs", "k1.md"), `# k1\n회장님 원문(${OWNER_MSG})\npublic: true\n`);
+  writeFileSync(join(h.home, "results", "k1", "ready-delivery.json"), "{}");
+  const run = Bun.spawnSync(["bun", h.tool, "k1"], { env: h.env });
+  expect(run.exitCode).toBe(1);
+  expect(h.log()).toContain("not handed to the lead: BAD_HANDOFF");
+  expect(existsSync(join(h.dir, "posts"))).toBe(false);
+});

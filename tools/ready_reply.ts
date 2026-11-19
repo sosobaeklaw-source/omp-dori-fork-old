@@ -10,7 +10,7 @@
  * seconds after `ready` (HOOK_SETTLE_MS), and an upload with a picture takes longer. --dry-run prints the plan only.
  * The post goes through DORI_SEND_FILE (default `<home>/bin/dori-send-file.sh`, see examples/sobaek/), which prints
  * `SENT <id>`. A ready-delivery.json manifest stops automatic delivery: a lane can forge its own verdict, and no
- * independently protected desk exists here. The lead is notified and must verify and deliver manually. A comparison picture, which the desk
+ * independently protected desk exists here. The result is handed to the lead to verify and deliver manually. A comparison picture, which the desk
  * never reads, still goes with `--send-without-desk-review` and the posted text says so. Before
  * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
@@ -36,6 +36,7 @@ import { type Deps, defaultDeps } from "../src/harness.ts";
 import { send } from "../src/inbox.ts";
 import { homeStateDir } from "../src/lane-model.ts";
 import { loadNameHashes, ocrPicture, ownerMessages, planReply } from "../src/ready-reply.ts";
+import { briefOrders } from "./open_orders.ts";
 
 function note(stateDir: string, line: string): void {
   appendFileSync(join(stateDir, "ready-reply.log"), `${new Date().toISOString()} ${line}\n`);
@@ -75,11 +76,11 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
 const HAND_MAX = 6000;
 
 /** Hands a READY the owner did not get to the macmini lead; returns the sender's first line or why it failed. */
-function hand(sender: string, key: string, resultsDir: string, orders: readonly string[]) {
+function hand(sender: string, key: string, resultsDir: string, orders: readonly string[], reason?: string) {
   const file = join(resultsDir, "결과.md");
   const result = existsSync(file) ? readFileSync(file, "utf8") : "(결과.md 없음)";
   const cut = result.length > HAND_MAX ? `${result.slice(0, HAND_MAX)}\n… (맥북 ${file}에 이어짐)` : result;
-  const body = `job: ${key}\n원 글번호: ${orders.join(", ") || "-"}\n결과 폴더(맥북): ${resultsDir}\n\n${cut}\n`;
+  const body = `job: ${key}\n원 글번호: ${orders.join(", ") || "-"}\n결과 폴더(맥북): ${resultsDir}\n${reason ? `검수 필요: ${reason}\n` : ""}\n${cut}\n`;
   try {
     const r = Bun.spawnSync([sender, `리드 검수 대기 READY ${key}`], { stdin: Buffer.from(body) });
     const out = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0] ?? "";
@@ -152,9 +153,21 @@ async function main(argv: readonly string[]): Promise<number> {
   const manifest = join(results, "ready-delivery.json");
   if (existsSync(manifest)) {
     const why = "untrusted review: automatic reviewed delivery disabled; lead must verify and deliver";
-    const told = a.flags.has("dry-run") ? "dry-run" : await tell(d, `[READY ${key}] ${why}`, key);
-    if (!a.flags.has("dry-run")) note(stateDir, `FAIL ${key} ${owner.id}: ${why} (lead: ${told})`);
-    console.error(`FAIL ${why}`);
+    if (a.flags.has("dry-run")) {
+      console.log(`HAND ${key}: ${why}`);
+      return 0;
+    }
+    const orders = briefOrders(existsSync(briefPath) ? readFileSync(briefPath, "utf8") : "");
+    const sender = process.env["DORI_TO_MACMINI"] ?? join(home, "bin", "to-macmini.sh");
+    const r = hand(sender, key, results, orders, why);
+    const ids = orders.join(",") || "-";
+    if ("ok" in r) {
+      note(stateDir, `HANDED ${key} ${ids}: ${why}, to the lead (${r.ok})`);
+      return 0;
+    }
+    const told = await tell(d, `[READY ${key}] 리드 검수 넘김 실패: ${r.why}`, key);
+    note(stateDir, `FAIL ${key} ${ids}: not handed to the lead: ${r.why} (lead: ${told})`);
+    console.error(`FAIL ${why}: ${r.why}`);
     return 1;
   }
   const text = plan.text;
