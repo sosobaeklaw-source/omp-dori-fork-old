@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { quotaResetMs } from "../src/agy-own.ts";
-import { lockDir } from "../src/lock-owner.ts";
 import { EXIT, sendOnAgy, stopPath } from "../src/writer-agy.ts";
 import { ok, setup } from "./agy-fake.ts";
 
@@ -36,14 +35,6 @@ describe("agy seat, sixth review", () => {
     await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.stopped });
     expect(existsSync(opts.out)).toBe(false);
     expect(existsSync(opts.meta)).toBe(false);
-  });
-
-  test("an agy -p stuck outside the lock: the send gives up after --timeout, frees the lock, makes no call", async () => {
-    const { env, opts, calls, others, home } = setup([ok("본문")]);
-    others.running = true;
-    await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.busy });
-    expect(calls).toHaveLength(0);
-    expect(existsSync(lockDir(home, "agy-s4"))).toBe(false);
   });
 
   test("a GEMINI_CALLS_TSV in the shell is not where the seat writes under a test home", async () => {

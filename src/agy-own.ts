@@ -1,25 +1,9 @@
-/** The agy seat's own record of its last call, kept in the dori home beside the call log. */
+/** The agy seat's own records, kept in the dori home beside the call log. */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** A time as KST `YYYY-MM-DD HH:MM:SS`, the form the call log uses. */
 export const kst = (ms: number): string => new Date(ms + 9 * 3600e3).toISOString().replace("T", " ").slice(0, 19);
-
-/**
- * When this seat last called, kept beside agy's logs as a floor: if those logs go missing or change shape, the gap
- * still holds for the calls this seat made. `lastAt` is set when a call starts and again when it ends, so a wrapper
- * killed mid-call still leaves a start to measure the gap from.
- */
-type Own = { lastAt: number };
-export const ownPath = (home: string): string => join(home, "state", "agy-s4.json");
-export function readOwn(home: string): Own {
-  const o = existsSync(ownPath(home)) ? (JSON.parse(readFileSync(ownPath(home), "utf8")) as Partial<Own>) : undefined;
-  return { lastAt: o?.lastAt ?? 0 };
-}
-export function writeOwn(home: string, o: Own): void {
-  mkdirSync(join(home, "state"), { recursive: true });
-  writeFileSync(ownPath(home), `${JSON.stringify(o)}\n`);
-}
 
 /**
  * Until when Google's quota holds the seat: a 429 sets it from the reset time Google named ("reset after 3h12m",

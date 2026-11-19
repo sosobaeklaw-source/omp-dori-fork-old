@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { lockDir } from "../src/lock-owner.ts";
-import { ownPath, quotaPath } from "../src/agy-own.ts";
-import { AgyStop, EXIT, GAP_MS, sendOnAgy, stopPath } from "../src/writer-agy.ts";
-import { FORBIDDEN, LINKED, NOW, OTHER_MAIL, ok, SEAT_MAIL, setup } from "./agy-fake.ts";
+import { quotaPath } from "../src/agy-own.ts";
+import { AgyStop, EXIT, sendOnAgy, stopPath } from "../src/writer-agy.ts";
+import { FORBIDDEN, LINKED, OTHER_MAIL, ok, setup } from "./agy-fake.ts";
 
 describe("agy writer seat", () => {
   test("a plain answer is written; the request goes as a file with a short prompt; one agy-s4 line is logged", async () => {
-    const { env, opts, calls, tsv, home } = setup([ok("본문입니다.")]);
+    const { env, opts, calls, tsv } = setup([ok("본문입니다.")]);
     expect(await sendOnAgy(env, opts)).toBe(EXIT.ok);
     expect(readFileSync(opts.out, "utf8")).toBe("본문입니다.\n");
     expect(calls[0]!.request).toBe("본문 요청");
@@ -18,15 +17,25 @@ describe("agy writer seat", () => {
     expect(calls[0]!.args[1]!.length).toBeLessThan(60);
     expect(tsv()).toHaveLength(1);
     expect(tsv()[0]!.split("\t").slice(1, 3).concat(tsv()[0]!.split("\t")[5]!)).toEqual(["agy-s4", "new", "답 6자"]);
-    expect(existsSync(lockDir(home, "agy-s4"))).toBe(false);
   });
 
-  test("the next call waits until 60 s after the previous one ended", async () => {
-    const { env, opts, calls, advance } = setup([ok("하나"), ok("둘")]);
-    await sendOnAgy(env, opts);
-    advance(5_000);
-    await sendOnAgy(env, opts);
-    expect(calls[1]!.at - (calls[0]!.at + 30_000)).toBeGreaterThanOrEqual(GAP_MS);
+  test("two sends on one home both enter agy together, even with a recent last run and the old lock files left behind", async () => {
+    const { home, env, opts, calls } = setup([ok("하나"), ok("둘")]);
+    writeFileSync(join(home, "state", "agy-s4.lock"), `${process.pid} ${Date.now()}\n`);
+    writeFileSync(join(home, "state", "agy-s4.json"), JSON.stringify({ lastEndAt: Date.now() }));
+    let entered = 0;
+    const gate = Promise.withResolvers<void>();
+    const real = env.run;
+    env.run = async (args, cwd) => {
+      if (++entered === 2) gate.resolve();
+      await gate.promise;
+      return real(args, cwd);
+    };
+    const b = { ...opts, lane: "b", out: join(home, "b.txt"), meta: join(home, "b.meta.json") };
+    const [ra, rb] = await Promise.all([sendOnAgy(env, opts), sendOnAgy(env, b)]);
+    expect([ra, rb]).toEqual([EXIT.ok, EXIT.ok]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.at).toBe(calls[1]!.at);
   });
 
   test("a file-linked answer is dropped and asked exactly once more", async () => {
@@ -104,102 +113,8 @@ describe("agy writer seat", () => {
     expect(existsSync(stopPath(home))).toBe(true);
   });
 
-  test("with agy's logs reading nothing, the seat's own last call still holds the gap", async () => {
-    const { env, opts, calls, home } = setup([ok("본문")]);
-    env.usage = () => ({ lastEndAt: 0, running: false, forbidden: false });
-    writeFileSync(ownPath(home), JSON.stringify({ lastAt: NOW - 10_000 }));
-    expect(await sendOnAgy(env, opts)).toBe(EXIT.ok);
-    expect(calls[0]!.at).toBeGreaterThanOrEqual(NOW - 10_000 + GAP_MS);
-    expect(calls).toHaveLength(1);
-  });
-
-  test("a held lock makes the send wait instead of running a second agy at once", async () => {
-    const { env, opts, calls, home } = setup([ok("본문")]);
-    mkdirSync(lockDir(home, "agy-s4"));
-    writeFileSync(join(lockDir(home, "agy-s4"), "owner"), `other 2026-11-16 19:00:00 pid=${process.pid}\n`);
-    let slept = 0;
-    const p = sendOnAgy(
-      {
-        ...env,
-        sleep: async (ms) => {
-          slept += ms;
-          if (slept >= 40_000) Bun.spawnSync(["rm", "-rf", lockDir(home, "agy-s4")]);
-          await env.sleep(ms);
-        },
-      },
-      opts,
-    );
-    expect(await p).toBe(EXIT.ok);
-    expect(slept).toBeGreaterThanOrEqual(40_000);
-    expect(calls).toHaveLength(1);
-  });
-
-  test("a lane waiting on the lock sends nothing when the holder got a 403 and stopped the seat", async () => {
-    const { env, opts, calls, home } = setup([ok("본문")]);
-    mkdirSync(lockDir(home, "agy-s4"));
-    writeFileSync(join(lockDir(home, "agy-s4"), "owner"), `other 2026-11-16 19:00:00 pid=${process.pid}\n`);
-    const waiting = {
-      ...env,
-      sleep: async (ms: number) => {
-        // The holder's call ends in a 403: it writes the stop file, then lets the lock go.
-        writeFileSync(stopPath(home), '{"why":"403"}\n');
-        Bun.spawnSync(["rm", "-rf", lockDir(home, "agy-s4")]);
-        await env.sleep(ms);
-      },
-    };
-    await expect(sendOnAgy(waiting, opts)).rejects.toMatchObject({ code: EXIT.stopped });
-    expect(calls).toHaveLength(0);
-  });
-
-  test("agy signed in as another account after the call stops the seat", async () => {
-    let account = SEAT_MAIL;
-    const { env, opts, home } = setup([ok("본문"), ok("다음")]);
-    const env2 = { ...env, account: () => account };
-    const run = env.run;
-    env2.run = async (...args) => {
-      const r = await run(...args);
-      account = OTHER_MAIL;
-      return r;
-    };
-    await expect(sendOnAgy(env2, opts)).rejects.toMatchObject({ code: EXIT.account });
-    expect(existsSync(stopPath(home))).toBe(true);
-  });
-
-  test("runs other lanes made outside this seat count toward the gap", async () => {
-    const recent = setup([ok("본문")], undefined, { lastEndAt: NOW - 10_000, running: false, forbidden: false });
-    expect(await sendOnAgy(recent.env, recent.opts)).toBe(EXIT.ok);
-    expect(recent.calls[0]!.at).toBeGreaterThanOrEqual(NOW - 10_000 + GAP_MS);
-  });
-
-  test("an agy -p running outside this lock makes the send wait until it is gone", async () => {
-    const { env, opts, calls, others } = setup([ok("본문")]);
-    others.running = true;
-    let slept = 0;
-    const p = sendOnAgy(
-      {
-        ...env,
-        sleep: async (ms) => {
-          slept += ms;
-          if (slept >= 40_000 && others.running) {
-            others.running = false;
-            others.lastEndAt = env.now() + ms;
-          }
-          await env.sleep(ms);
-        },
-      },
-      opts,
-    );
-    expect(await p).toBe(EXIT.ok);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.at).toBeGreaterThanOrEqual(NOW + 40_000 + GAP_MS);
-  });
-
   test("a 403 another lane got on s4 outside this seat stops the seat before any call", async () => {
-    const { env, opts, calls, home } = setup([ok("본문")], undefined, {
-      lastEndAt: 0,
-      running: false,
-      forbidden: true,
-    });
+    const { env, opts, calls, home } = setup([ok("본문")], undefined, { forbidden: true });
     await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.forbidden });
     expect(calls).toHaveLength(0);
     expect(existsSync(stopPath(home))).toBe(true);
@@ -216,6 +131,20 @@ describe("agy writer seat", () => {
   test("another account with no state folder yet still stops the seat with an ESCALATE, not a crash", async () => {
     const { env, opts, home } = setup([ok("본문")], OTHER_MAIL);
     rmSync(join(home, "state"), { recursive: true });
+    await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.account });
+    expect(existsSync(stopPath(home))).toBe(true);
+  });
+
+  test("agy signed in as another account after the call stops the seat", async () => {
+    let account = "seat@example.com";
+    const { env, opts, home } = setup([ok("본문"), ok("다음")]);
+    env.account = () => account;
+    const real = env.run;
+    env.run = async (args, cwd) => {
+      const r = await real(args, cwd);
+      account = OTHER_MAIL;
+      return r;
+    };
     await expect(sendOnAgy(env, opts)).rejects.toMatchObject({ code: EXIT.account });
     expect(existsSync(stopPath(home))).toBe(true);
   });
