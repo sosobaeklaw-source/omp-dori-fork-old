@@ -117,6 +117,15 @@ test("a passing verdict without hashes refuses every file", () => {
   expect(r.err).toContain("sha256 is not listed");
 });
 
+test("a verdict accepts a hash before its file path", () => {
+  const dir = rig();
+  const file = piece(dir, "result.txt", "reviewed");
+  const folder = round(dir, "r1", "나가도 됩니다", {});
+  writeFileSync(join(folder, "verdict.txt"), `나가도 됩니다\n${sha("reviewed")} ${file}\n`);
+  const r = run(dir, ["--passed", folder, "결과", file]);
+  expect([r.code, r.posts, r.upload(0)]).toEqual([0, 1, "reviewed"]);
+});
+
 test("a passed round without an attachment never posts", () => {
   const dir = rig();
   const folder = round(dir, "r1", "아직 안 됩니다", {});

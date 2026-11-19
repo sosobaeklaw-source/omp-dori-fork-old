@@ -14,7 +14,7 @@
 #   DORI_HOME/state/send-without-desk-review.log 에 남는다. 파일 없이 글만 보내는 호출은 이 점검과 상관없다.
 # --supports passed|send-without-desk-review: 이 깃발을 아는 판인지 0 으로 돌려준다. tools/ready_reply.ts 가 옛 설치판 감지에 쓴다.
 # 설치: dori-send-file.sh 와 passed-check.sh 를 함께 DORI_HOME/bin/ 에 놓는다.
-# ORDER_ID(없으면 REPLY_TO)와 파일 해시는 state/sent-files.log 에 기록되어 같은 지시의 중복 발송을 막는다.
+# --passed 발송만 ORDER_ID(없으면 REPLY_TO)와 파일 해시로 중복을 막는다. 미검수 첨부는 재발송할 수 있다.
 # 토큰은 DORI_HOME/discord-token(옴프도리 봇). 토큰은 출력하지 않는다.
 set -euo pipefail
 # --supports 는 토큰·채널과 상관없이 먼저 답한다: 옛 판은 이 깃발을 본문으로 오해하니, 호응 못 하는 호출자는 보내기 전에 멈춘다.
@@ -54,7 +54,7 @@ fi
 order="${ORDER_ID:-${REPLY_TO:-}}"
 receipt="$home/state/sent-files.log"
 hashes=()
-if [ $# -gt 0 ] && [ -n "$order" ]; then
+if [ $# -gt 0 ] && [ -n "$order" ] && [ -n "$passed" ]; then
   [[ "$order" =~ ^[0-9]+$ ]] || { echo 'REFUSED invalid order id' >&2; exit 64; }
   mkdir -p "$home/state"
   exec 9<> "$home/state/sent-files.lock"

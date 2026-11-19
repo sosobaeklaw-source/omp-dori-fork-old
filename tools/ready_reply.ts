@@ -12,7 +12,7 @@
  * `SENT <id>`. A ready-delivery.json manifest stops automatic delivery: a lane can forge its own verdict, and no
  * independently protected desk exists here. The result is handed to the lead to verify and deliver manually. A comparison picture, which the desk
  * never reads, still goes with `--send-without-desk-review` and the posted text says so. Before
- * that call the sender is probed with `--supports passed` from a fresh empty folder (so a probe of an old copy can never
+ * that call the sender is probed from a fresh empty folder (so a probe of an old copy can never
  * attach a file), and a sender that does not answer it fails with one line saying which file to install. A lane
  * that gets no reply prints `SKIP <why>`, except a lane not marked public: its
  * READY goes to the macmini lead for review (`HANDED`), through DORI_TO_MACMINI (default `<home>/bin/to-macmini.sh`,
@@ -49,20 +49,25 @@ const SENDER_SRC = join(import.meta.dir, "..", "examples", "sobaek", "dori-send-
 /** Runs the sender; a spawn that throws (missing or non-executable file) comes back as a failure, not an exception. */
 function post(sender: string, text: string, image: string | undefined, env: Record<string, string>) {
   try {
-    // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
-    // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
-    // fresh empty folder: an old copy reads the next argument as a file to attach, and no file can be found there.
-    {
-      const probe = Bun.spawnSync([sender, "--supports", "end-of-options"], {
+    // Probe features only when needed, from an empty folder: old senders may treat the probe as post text.
+    if (image || text.startsWith("-")) {
+      const feature = text.startsWith("-") ? "end-of-options" : "send-without-desk-review";
+      const probe = Bun.spawnSync([sender, "--supports", feature], {
         cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
         env: { ...process.env, ...env },
       });
       if (probe.exitCode !== 0 || !probe.stdout.toString().trim().startsWith("SUPPORTED"))
         return {
-          why: `검수 기능을 아는 센더가 필요합니다. ${SENDER_SRC} 와 같은 폴더의 passed-check.sh 를 ${sender} 옆에 설치하세요`,
+          why: `센더가 ${feature} 기능을 지원하지 않습니다. ${SENDER_SRC} 를 ${sender} 에 설치하세요`,
         };
     }
-    const argv = image ? [sender, "--send-without-desk-review", "--", text, image] : [sender, "--", text];
+    const argv = [
+      sender,
+      ...(image ? ["--send-without-desk-review"] : []),
+      ...(text.startsWith("-") ? ["--"] : []),
+      text,
+      ...(image ? [image] : []),
+    ];
     const r = Bun.spawnSync(argv, { env: { ...process.env, ...env } });
     const out = r.stdout.toString().trim();
     const id = /^SENT (\d+)$/m.exec(out)?.[1];

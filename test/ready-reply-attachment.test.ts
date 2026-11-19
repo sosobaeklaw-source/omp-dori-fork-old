@@ -5,6 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hookHome } from "./ready-reply-hook-fixture.ts";
 
+test("ordinary text uses an old sender without probing or an option terminator", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ready-old-text-"));
+  const sender = join(dir, "send.sh");
+  writeFileSync(
+    sender,
+    `#!/bin/sh\nprintf '%s\\n' "$@" >> "${dir}/args"\n[ "$1" != "--supports" ] || exit 64\necho 'SENT 42'\n`,
+    { mode: 0o755 },
+  );
+  const { env, tool } = hookHome(sender);
+  expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
+  expect(readFileSync(join(dir, "args"), "utf8")).toBe("바뀐 것.\n");
+});
+
 test("option-like result text is passed after the option terminator", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-dashes-"));
   const sender = join(dir, "send.sh");
@@ -46,7 +59,7 @@ test("a verdict created by the lane cannot authorize its own attachment", () => 
   expect(existsSync(join(dir, "posted"))).toBe(false);
 });
 
-test("reviewed reply rejects another lane's file and ignores inherited delivery variables", () => {
+test("a manifest naming another lane's file is handed to the lead without posting", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-boundary-"));
   const sender = join(dir, "send.sh");
   writeFileSync(sender, `#!/bin/sh\necho x >> "${dir}/posts"\necho 'SENT 4'\n`, { mode: 0o755 });

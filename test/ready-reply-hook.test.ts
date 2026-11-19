@@ -21,7 +21,7 @@ test("the onReady hook argv (KEY --detach) returns at once and the detached copy
   const sender = join(dir, "send.sh");
   writeFileSync(
     sender,
-    `#!/bin/sh\n[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }\nshift\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`,
+    `#!/bin/sh\n[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`,
     {
       mode: 0o755,
     },
@@ -111,7 +111,6 @@ echo "SENT 9"
   expect(run.exitCode).toBe(0);
   expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual([
     "--send-without-desk-review",
-    "--",
     "바뀐 것.",
     picture,
     "",
@@ -119,20 +118,12 @@ echo "SENT 9"
   rmSync(picture);
   rmSync(join(home, "state", "ready-reply.log"));
   expect(Bun.spawnSync(["bun", tool, "k1"], { env }).exitCode).toBe(0);
-  expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["--", "바뀐 것.", ""]);
+  expect(readFileSync(join(dir, "argv"), "utf8").split("\n")).toEqual(["바뀐 것.", ""]);
 });
 
-test("untrusted delivery manifest stops the reply and records failure", () => {
+test("untrusted delivery manifest hands the result to the lead without posting", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-passed-"));
   const sender = join(dir, "send.sh");
-  const body = [
-    "#!/bin/sh",
-    '[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }',
-    `printf '%s\\n' "$@" > "${dir}/argv"`,
-    'echo "SENT 3"',
-    "",
-  ].join("\n");
-  writeFileSync(sender, body, { mode: 0o755 });
   const { home, env, tool } = hookHome(sender);
   const attachment = join(home, "results", "k1", "결과.txt");
   writeFileSync(attachment, "<p>통과본</p>");
@@ -205,7 +196,7 @@ exit 65
   expect(run.exitCode).toBe(1);
   expect(run.stderr.toString()).toContain("examples/sobaek/dori-send-file.sh");
   const [probePwd, probeArgs] = readFileSync(calls, "utf8").split("\n");
-  expect(probeArgs).toBe("--supports end-of-options"); // the only call the old sender ever saw
+  expect(probeArgs).toBe("--supports send-without-desk-review"); // the only call the old sender ever saw
   expect(probePwd && probePwd !== realpathSync(work)).toBe(true); // a fresh folder, not the working dir
   expect(probePwd ? readdirSync(probePwd) : ["not empty"]).toEqual([]); // empty: nothing an old sender could attach
   expect(existsSync(join(work, "passed"))).toBe(true); // never read, never posted
@@ -234,5 +225,5 @@ exit 65
   expect(run.exitCode).toBe(1);
   expect(run.stderr.toString()).toContain("examples/sobaek/dori-send-file.sh");
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).toContain(`FAIL k1 ${OWNER_MSG}:`);
-  expect(readFileSync(calls, "utf8").split("\n")).toEqual(["--supports end-of-options", ""]);
+  expect(readFileSync(calls, "utf8").split("\n")).toEqual(["--supports send-without-desk-review", ""]);
 });

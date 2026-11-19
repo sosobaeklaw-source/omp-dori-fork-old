@@ -103,6 +103,15 @@ test("a successful file send cannot be repeated for the same order and bytes", (
   expect(second.err).toContain("already sent");
 });
 
+test("an unreviewed attachment can be resent with corrected text", () => {
+  const dir = rig();
+  const card = piece(dir, "screen.png", "화면");
+  const first = run(dir, ["--send-without-desk-review", "처음", card], { REPLY_TO: "12345" });
+  const second = run(dir, ["--send-without-desk-review", "수정", card], { REPLY_TO: "12345" });
+  expect([first.code, second.code, second.posts]).toEqual([0, 0, 2]);
+  expect(second.payload.content).toContain("수정");
+});
+
 test("a failed send is not recorded and can be retried", () => {
   const dir = rig();
   const card = piece(dir, "card.png", "그림");
