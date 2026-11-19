@@ -55,7 +55,8 @@ class RedteamTest(unittest.TestCase):
     def test_client_material_makes_no_http_call(self):
         fake = FakeHttp({})
         with mock.patch.object(redteam, "http_json", fake):
-            self.assertEqual(redteam.run_pirates(self.out, "p", "client"), [])
+            self.assertEqual(redteam.run_pirates(self.out, "p", "client"),
+                         [{"branch": "pirates", "status": "skipped", "model": "-", "chars": 0}])
         self.assertEqual(fake.calls, [])
         self.assertTrue((self.out / "pirates_skipped.md").exists())
 
@@ -182,22 +183,57 @@ class RedteamTest(unittest.TestCase):
             self.assertIn(missed, head.split("못 받음: ")[1])
 
     def test_gpt_does_not_wait_when_account_lock_is_held(self):
+        import os
         def boom(*a, **k):
             raise AssertionError("runner must not be called while the account lock is held")
-        with mock.patch.object(redteam.subprocess, "run", boom):
-            first = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
-            second = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
-        self.assertEqual(first["status"], redteam.NOT_GOT)
-        self.assertEqual(second["status"], redteam.NOT_GOT)
-        self.assertIn("기다리지 않고", (self.out / "gpt6pro_web.md").read_text())
-        # a lock held by a dead process is cleared, then the missing runner is reported
-        owner = redteam.lock_dir("u9") / "owner"
+        owner = redteam.lock_dir("u0") / "owner"
         owner.parent.mkdir(parents=True)
-        owner.write_text("old-lane pid=999999999\n")
+        owner.write_text(f"live-lane pid={os.getpid()}\n")
         with mock.patch.object(redteam.subprocess, "run", boom):
-            third = redteam.run_gpt(self.out, self.out / "p.txt", "u9:p", "lane", "-")
-        self.assertEqual(third["status"], redteam.NOT_GOT)
+            busy = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        self.assertEqual(busy["status"], redteam.NOT_GOT)
+        self.assertIn("기다리지 않고", (self.out / "gpt6pro_web.md").read_text())
+        self.assertTrue(owner.exists())  # a live owner's lock is left untouched
+
+    def test_gpt_releases_lock_and_clears_dead_one(self):
+        def boom(*a, **k):
+            raise AssertionError("runner must not be called")
+        with mock.patch.object(redteam.subprocess, "run", boom):
+            missing = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        self.assertEqual(missing["status"], redteam.NOT_GOT)
+        self.assertFalse(redteam.lock_dir("u0").exists())  # released even though the runner is missing
+        dead = redteam.lock_dir("u9") / "owner"
+        dead.parent.mkdir(parents=True)
+        dead.write_text("old-lane pid=999999999\n")
+        with mock.patch.object(redteam.subprocess, "run", boom):
+            cleared = redteam.run_gpt(self.out, self.out / "p.txt", "u9:p", "lane", "-")
         self.assertIn("runner missing", (self.out / "gpt6pro_web.md").read_text())
+        self.assertEqual(cleared["status"], redteam.NOT_GOT)
+        self.assertFalse(redteam.lock_dir("u9").exists())
+
+    def test_ownerless_fresh_lock_is_not_stolen(self):
+        d = redteam.lock_dir("u0")
+        d.mkdir(parents=True)  # no owner file, just created: a live job still writing it
+        self.assertFalse(redteam.try_lock("u0", "lane"))
+        self.assertTrue(d.exists())
+
+
+    def test_gpt_runs_the_runner_directly_not_through_the_lock(self):
+        seen = {}
+        def fake_run(cmd, capture_output, text):
+            seen["cmd"] = cmd
+            Path(cmd[cmd.index("--meta") + 1]).write_text(json.dumps({"status": "ok", "modelLabel": "GPT-6 Pro"}))
+            Path(cmd[cmd.index("--out") + 1]).write_text("지적 하나")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        runner = self.out / "home/sobaegi-lead/results/gpt-web/run.js"
+        runner.parent.mkdir(parents=True, exist_ok=True)
+        runner.write_text("// fake")
+        with mock.patch.object(redteam.subprocess, "run", fake_run):
+            r = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        self.assertEqual(r["status"], redteam.GOT)
+        self.assertEqual(seen["cmd"][0], "node")
+        self.assertNotIn("carbon-lock.sh", " ".join(seen["cmd"]))
+        self.assertFalse(redteam.lock_dir("u0").exists())
 
     def test_unparseable_merge_reply_raises(self):
         fake = FakeHttp({redteam.OCX: {"choices": [{"message": {"content": "no json"}}]}})

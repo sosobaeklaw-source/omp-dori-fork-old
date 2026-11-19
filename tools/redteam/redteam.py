@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Red-team one artifact with web Carbon and every pirate-ship model at once.
+"""Red-team one artifact with web Carbon, web GPT 6 Pro and every pirate-ship model at once.
 
 Usage:
   redteam.py --target FILE [--target FILE ...] --kind card|blog --material public|client \
-             --out DIR [--carbon-account u1:<profile>] [--lane KEY]
+             --out DIR [--carbon-account u1:<profile>] [--gpt-account u0:<profile>] [--lane KEY]
 
 Branches (started together, same instruction for every model):
   (a) carbon_web.md  Gemini web Carbon via carbon-web-1114/run.js under carbon-lock <acct>.
@@ -69,8 +69,6 @@ NOT_GOT = "못 받음"
 
 
 # ---------- (c) web GPT 6 Pro ----------
-GPT_RUN = HOME / "sobaegi-lead/results/gpt-web/run.js"
-
 
 def lock_dir(acct: str) -> Path:
     return HOME / ".omp-dori/state" / f"carbon-{acct.split(':')[0]}.lock"
@@ -95,7 +93,8 @@ def try_lock(acct: str, lane: str) -> bool:
                 dead = True
             except PermissionError:
                 dead = False
-        if dead or not owner:
+        stale = not owner and time.time() - d.stat().st_mtime > 60
+        if dead or stale:
             import shutil
             shutil.rmtree(d, ignore_errors=True)
     try:
@@ -109,8 +108,9 @@ def try_lock(acct: str, lane: str) -> bool:
 def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
     """Web GPT 6 Pro, one attempt. No answer is recorded as '못 받음'.
 
-    When Carbon already holds this Aside account, the branch is recorded as '못 받음'
-    at once instead of waiting behind carbon-lock.sh, which sleeps until the lock frees."""
+    The account lock is taken once, here, and never waited on. The runner is called directly,
+    not through carbon-lock.sh, which would wait forever on the lock this function just took.
+    The lock is released on every exit, including a missing runner or a raised error."""
     if not acct:
         write_model_file(out / "gpt6pro_web.md", {"branch": "gpt6pro_web", "status": NOT_GOT, "reason": blocked},
                          "돌리지 않았다. 다른 모델로 대신하지 않았다.")
@@ -120,6 +120,14 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: 
         write_model_file(out / "gpt6pro_web.md",
                          {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
+    try:
+        return _run_gpt_locked(out, prompt_file, acct)
+    finally:
+        import shutil
+        shutil.rmtree(lock_dir(acct), ignore_errors=True)
+
+
+def _run_gpt_locked(out: Path, prompt_file: Path, acct: str) -> dict:
     gpt_run = HOME / "sobaegi-lead/results/gpt-web/run.js"
     if not gpt_run.exists():
         reason = f"runner missing: {gpt_run}"
@@ -131,7 +139,7 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: 
     raw.unlink(missing_ok=True)  # an earlier run's answer must never read as this run's
     meta.unlink(missing_ok=True)
     t0 = time.time()
-    proc = subprocess.run([str(HOME / ".omp-dori/bin/carbon-lock.sh"), acct.split(":")[0], lane, "--", "node", str(gpt_run), "--prompt", str(prompt_file),
+    proc = subprocess.run(["node", str(gpt_run), "--prompt", str(prompt_file),
                            "--out", str(raw), "--account", acct, "--meta", str(meta), "--timeout", "1800"],
                           capture_output=True, text=True)
     m = json.loads(meta.read_text()) if meta.exists() else {}
@@ -144,8 +152,6 @@ def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: 
         head["reason"] = m.get("reason") or f"exit {proc.returncode}"
     write_model_file(out / "gpt6pro_web.md", head,
                      text or (m.get("reason", "") + "\n" + proc.stdout[-3000:] + proc.stderr[-2000:]))
-    import shutil
-    shutil.rmtree(lock_dir(acct), ignore_errors=True)
     return {"branch": "gpt6pro_web", "status": head["status"], "model": head["model_shown"],
             "chars": len(text), "text": text}
 
@@ -260,8 +266,8 @@ def call_pirate(out: Path, prompt: str, m: dict) -> dict:
 
 def run_pirates(out: Path, prompt: str, material: str) -> list[dict]:
     if material == "client":
-        (out / "pirates_skipped.md").write_text("의뢰인·사건 자료가 든 대상이라 해적선 가지(c)를 돌리지 않았다.\n")
-        return []
+        (out / "pirates_skipped.md").write_text("의뢰인·사건 자료가 든 대상이라 해적선 가지를 돌리지 않았다.\n")
+        return [{"branch": "pirates", "status": "skipped", "model": "-", "chars": 0}]
     models, down = pirate_ships()
     skipped = [m for m in models if m["google"]]
     (out / "pirates_order.md").write_text(
@@ -285,8 +291,9 @@ MERGE_INSTR = (
 def merge(out: Path, results: list[dict]) -> int:
     """Group findings; returns the group count. Raises when the merge model's reply cannot be used."""
     got = [r for r in results if r.get("text")]
-    received = [r["branch"] for r in results if r.get("text")]
-    missed = [r["branch"] for r in results if not r.get("text")]
+    counted = [r for r in results if r.get("status") != "skipped"]
+    received = [r["branch"] for r in counted if r.get("text")]
+    missed = [r["branch"] for r in counted if not r.get("text")]
     tally = f" | 받음: {', '.join(received) or '-'} | 못 받음: {', '.join(missed) or '-'}"
     if not got:
         (out / "merged.md").write_text(f"# 병합 지적 0건 (답 0개, 병합하지 않음){tally}\n")
