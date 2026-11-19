@@ -13,13 +13,15 @@
 #   교열이 보지 않는 파일(회장님이 달라 한 화면 캡처나 로그)만 --send-without-desk-review 로 보내고, 올라가는 글에 그 사실이 적히며
 #   DORI_HOME/state/send-without-desk-review.log 에 남는다. 파일 없이 글만 보내는 호출은 이 점검과 상관없다.
 # --supports passed|send-without-desk-review: 이 깃발을 아는 판인지 0 으로 돌려준다. tools/ready_reply.ts 가 옛 설치판 감지에 쓴다.
-# 설치: DORI_HOME/bin/dori-send-file.sh. tools/ready_reply.ts(READY 답글)가 이걸 부른다.
+# 설치: dori-send-file.sh 와 passed-check.sh 를 함께 DORI_HOME/bin/ 에 놓는다.
+# ORDER_ID(없으면 REPLY_TO)와 파일 해시는 state/sent-files.log 에 기록되어 같은 지시의 중복 발송을 막는다.
 # 토큰은 DORI_HOME/discord-token(옴프도리 봇). 토큰은 출력하지 않는다.
 set -euo pipefail
 # --supports 는 토큰·채널과 상관없이 먼저 답한다: 옛 판은 이 깃발을 본문으로 오해하니, 호응 못 하는 호출자는 보내기 전에 멈춘다.
 if [ "${1:-}" = "--supports" ]; then
   case "${2:-}" in
-    passed|send-without-desk-review) echo "SUPPORTED $2"; exit 0 ;;
+    passed) [ -r "$(dirname "$0")/passed-check.sh" ] || { echo "UNSUPPORTED missing passed-check.sh" >&2; exit 64; }; echo "SUPPORTED $2"; exit 0 ;;
+    send-without-desk-review) echo "SUPPORTED $2"; exit 0 ;;
     *) echo "UNSUPPORTED ${2:-}" >&2; exit 64 ;;
   esac
 fi
@@ -39,13 +41,14 @@ while :; do
 done
 text="$1"; shift
 [ -z "$passed" ] || [ -z "$unreviewed" ] || { echo "REFUSED --passed and --send-without-desk-review exclude each other" >&2; exit 64; }
+[ -z "$passed" ] || [ $# -gt 0 ] || { echo "REFUSED --passed requires an attachment" >&2; exit 65; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 # Each file is copied once, and the copy is what is checked and what goes up, so the bytes sent are the bytes compared.
 i=0; for f in "$@"; do cp -- "$f" "$tmp/f$i" 2>/dev/null || { echo "FAIL cannot read $f"; exit 1; }; i=$((i+1)); done
 if [ $# -gt 0 ] && [ -z "$unreviewed" ]; then
   copies=(); for ((i=0; i<$#; i++)); do copies+=("$tmp/f$i"); done
   printf '%s\0' "$@" > "$tmp/labels"
-  PASSED_LABELS="$tmp/labels" bash "${PASSED_CHECK:-$(dirname "$0")/passed-check.sh}" "${copies[@]}" --passed "$passed"
+  PASSED_LABELS="$tmp/labels" bash "$(dirname "$0")/passed-check.sh" "${copies[@]}" --passed "$passed"
 fi
 order="${ORDER_ID:-${REPLY_TO:-}}"
 receipt="$home/state/sent-files.log"

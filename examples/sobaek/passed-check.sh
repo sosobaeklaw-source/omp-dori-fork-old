@@ -53,9 +53,6 @@ for mt,n,q in sorted(cands,reverse=True):
 # 올리므로, 그 상대 경로와 경로 경계(`/`)에서 같은 해시 줄의 sha256 묶음에 드는 바이트는 통과 판이 아니다(--send-without-desk-review 로만 나간다).
 pairs=pairs_of(lines)
 listed={h for _,h in pairs}
-if not listed:
-    print("해시 없음",file=sys.stderr)
-    sys.exit(0)
 unread_hashes=set()
 for l in lines[1:]:
     if l.startswith("읽지 않고 함께 나가는 파일"):

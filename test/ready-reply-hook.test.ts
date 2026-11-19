@@ -7,7 +7,6 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
-  watch,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,29 +35,24 @@ function hookHome(sender: string) {
 test("the onReady hook argv (KEY --detach) returns at once and the detached copy posts the reply", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-sender-"));
   const sent = join(dir, "sent.txt");
+  expect(Bun.spawnSync(["mkfifo", sent]).exitCode).toBe(0);
   const sender = join(dir, "send.sh");
-  writeFileSync(
-    sender,
-    `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}.tmp"\nmv "${sent}.tmp" "${sent}"\necho "SENT 1"\n`,
-    {
-      mode: 0o755,
-    },
-  );
+  writeFileSync(sender, `#!/bin/sh\necho "$REPLY_TO $DISCORD_CHANNEL $1" > "${sent}"\necho "SENT 1"\n`, {
+    mode: 0o755,
+  });
   const { env, tool } = hookHome(sender);
-  const parent = Bun.spawnSync(["bun", tool, "k1", "--detach"], { env });
-  expect(parent.exitCode).toBe(0);
-  // The copy shares the runner's process group, so awaiting the process never returns; its own
-  // write is the signal. The watcher subscribes before the copy can win the race.
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const watcher = watch(dir, () => existsSync(sent) && resolve());
-  if (existsSync(sent)) resolve();
-  const timer = setTimeout(resolve, 8000);
-  await promise;
-  clearTimeout(timer);
-  watcher.close();
-  expect(existsSync(sent)).toBe(true);
-  expect(readFileSync(sent, "utf8").trim()).toBe(`${OWNER_MSG} ${ROOM} 바뀐 것.`);
-});
+  const reader = Bun.spawn(["cat", sent], { stdout: "pipe", stderr: "pipe" });
+  const timer = setTimeout(() => reader.kill(), 8000);
+  try {
+    const parent = Bun.spawn(["bun", tool, "k1", "--detach"], { env, stdout: "ignore", stderr: "ignore" });
+    expect(await parent.exited).toBe(0);
+    const output = await new Response(reader.stdout).text();
+    expect(await reader.exited).toBe(0);
+    expect(output.trim()).toBe(`${OWNER_MSG} ${ROOM} 바뀐 것.`);
+  } finally {
+    clearTimeout(timer);
+  }
+}, 10000);
 
 test("a sender that does not exist is a recorded failure, with what became of telling the lead", () => {
   const missing = join(tmpdir(), "no-such-dir", "dori-send-file.sh");
@@ -140,7 +134,13 @@ echo "SENT 9"
 test("the reply says 끝냈어 only for the attachment the desk passed", () => {
   const dir = mkdtempSync(join(tmpdir(), "ready-passed-"));
   const sender = join(dir, "send.sh");
-  const body = ["#!/bin/sh", `printf '%s\\n' "$@" > "${dir}/argv"`, 'echo "SENT 3"', ""].join("\n");
+  const body = [
+    "#!/bin/sh",
+    '[ "$1" = "--supports" ] && { echo "SUPPORTED $2"; exit 0; }',
+    `printf '%s\\n' "$@" > "${dir}/argv"`,
+    'echo "SENT 3"',
+    "",
+  ].join("\n");
   writeFileSync(sender, body, { mode: 0o755 });
   const { home, env, tool } = hookHome(sender);
   const attachment = join(home, "results", "k1", "결과.html");
@@ -156,6 +156,8 @@ test("the reply says 끝냈어 only for the attachment the desk passed", () => {
   writeFileSync(sender, refuse, { mode: 0o755 });
   const refused = Bun.spawnSync(["bun", tool, "k1"], { env: { ...env, DORI_PASSED: round } });
   expect(refused.exitCode).toBe(1);
+  expect(refused.stderr.toString()).toContain("DORI_ATTACHMENT");
+  expect(existsSync(join(dir, "argv"))).toBe(false);
   expect(readFileSync(join(home, "state", "ready-reply.log"), "utf8")).not.toContain("REPLIED");
   rmSync(join(home, "state", "ready-reply.log"));
   writeFileSync(sender, body, { mode: 0o755 });

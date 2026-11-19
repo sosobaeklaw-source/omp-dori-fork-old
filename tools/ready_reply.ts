@@ -50,14 +50,14 @@ function post(sender: string, text: string, image: string | undefined, env: Reco
     // A picture goes with --send-without-desk-review, which an older hand-installed copy takes as the post text: probe
     // for the flag first, so an outdated sender fails with the fix instead of mangling the reply. The probe runs from a
     // fresh empty folder: an old copy reads the next argument as a file to attach, and no file can be found there.
-    if (image) {
+    if (image || passed) {
       const probe = Bun.spawnSync([sender, "--supports", "passed"], {
         cwd: mkdtempSync(join(tmpdir(), "send-probe-")),
         env: { ...process.env, ...env },
       });
       if (probe.exitCode !== 0 || !probe.stdout.toString().trim().startsWith("SUPPORTED"))
         return {
-          why: `그림을 함께 보내려면 --send-without-desk-review 를 아는 센더가 필요한데 ${sender} 가 그걸 모릅니다. ${SENDER_SRC} 를 ${sender} 로 설치한 뒤 다시 시도하세요`,
+          why: `검수 기능을 아는 센더가 필요합니다. ${SENDER_SRC} 와 같은 폴더의 passed-check.sh 를 ${sender} 옆에 설치하세요`,
         };
     }
     const attachment = process.env["DORI_ATTACHMENT"];
@@ -154,6 +154,12 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   const { owner, image } = plan;
   const passed = process.env["DORI_PASSED"];
+  if (passed && !process.env["DORI_ATTACHMENT"]) {
+    const why = "DORI_PASSED requires DORI_ATTACHMENT";
+    if (!a.flags.has("dry-run")) note(stateDir, `FAIL ${key} ${owner.id}: ${why}`);
+    console.error(`FAIL ${why}`);
+    return 1;
+  }
   const text = passed ? "끝냈어" : plan.text;
   if (a.flags.has("dry-run")) {
     console.log(`REPLY_TO ${owner.id} channel ${owner.channel}\nIMAGE ${image ?? "-"}\nTEXT\n${text}`);

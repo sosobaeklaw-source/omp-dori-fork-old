@@ -108,6 +108,23 @@ test("a block verdict refuses the files even when their hashes are listed", () =
   expect([r.posts, r.payload]).toEqual([0, undefined]);
 });
 
+test("a passing verdict without hashes refuses every file", () => {
+  const dir = rig();
+  const file = piece(dir, "any.pdf", "unreviewed");
+  const folder = round(dir, "r1", "나가도 됩니다", {});
+  const r = run(dir, ["--passed", folder, "결과", file]);
+  expect([r.code, r.posts]).toEqual([65, 0]);
+  expect(r.err).toContain("sha256 is not listed");
+});
+
+test("a passed round without an attachment never posts", () => {
+  const dir = rig();
+  const folder = round(dir, "r1", "아직 안 됩니다", {});
+  const r = run(dir, ["--passed", folder, "끝냈어"]);
+  expect([r.code, r.posts]).toEqual([65, 0]);
+  expect(r.err).toContain("attachment");
+});
+
 test("files announced before any verdict are refused: a round folder without verdict.txt, or no folder named", () => {
   const dir = rig();
   const card = piece(dir, "01.png", "그림");
