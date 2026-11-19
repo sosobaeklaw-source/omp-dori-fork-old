@@ -10,10 +10,13 @@ Branches (started together, same instruction for every model):
   (b) pirate__*.md   every model in the tokenmaxx and OpenCode Go lists, highest reasoning first.
                      Google models are never called (recorded as skipped). With --material client
                      the whole branch is skipped and recorded.
-  (c) gpt6pro_web.md  web GPT 6 Pro via gpt-web/run.js under carbon-lock <acct>.
-                     One attempt. A missing answer is recorded as '못 받음'.
-                     The same Aside account as Carbon is not waited on: while that
-                     account's lock is held the branch is recorded as '못 받음'.
+  (c) gpt6pro_web.md  web GPT 6 Pro via gpt-web/run.js. Takes the account lock without waiting and
+                     calls the runner directly (not through carbon-lock.sh). One attempt. A reply is
+                     received only when meta.json says status 'ok', model_shown names GPT 6 Pro and
+                     the answer file is not empty; anything else is recorded as '못 받음' with the
+                     reason. The runner contract is tools/redteam/README.md. While the same account's
+                     lock is held the branch is recorded as '못 받음' instead of waiting.
+  Carbon and GPT 6 Pro must name different Aside accounts: one account, one lock, no race.
 No GPT API branch: web GPT 6 Pro only (owner decision 2026-11-16 redteam.web_gpt6pro_carbon_plus_all_pirates).
 Then merged.md groups the same finding across models (Opus via local ocx) with a model count.
 """
@@ -21,9 +24,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -68,66 +73,179 @@ GOT = "받음"
 NOT_GOT = "못 받음"
 
 
-# ---------- (c) web GPT 6 Pro ----------
+# ---------- account lock, shared with carbon-lock.sh and dori harness lock ----------
+# Ported from src/lock-owner.ts and src/lock-claim.ts so this tool never invents a third set of rules: the
+# owner line is `<lane> <YYYY-MM-DD HH:MM:SS> pid=<pid>` plus ` cmd=<runner pid>` once the runner starts,
+# and a stale lock is removed only under a claim, after re-reading the owner line.
+OWNERLESS_S = 60  # src/lock-owner.ts OWNERLESS_MS
+
 
 def lock_dir(acct: str) -> Path:
     return HOME / ".omp-dori/state" / f"carbon-{acct.split(':')[0]}.lock"
 
 
-def try_lock(acct: str, lane: str) -> bool:
-    """Take the account lock without waiting. False when a live job holds it.
+def stamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
-    A lock whose owner process is dead, or that has no owner, is cleared first, the same
-    way carbon-lock.sh does, so a crashed job cannot make this branch say '못 받음' forever.
-    """
-    import os
-    d = lock_dir(acct)
-    if d.exists():
-        owner = (d / "owner").read_text() if (d / "owner").exists() else ""
-        pid = owner.split("pid=")[-1].strip() if "pid=" in owner else ""
-        dead = False
-        if pid.isdigit():
-            try:
-                os.kill(int(pid), 0)
-            except ProcessLookupError:
-                dead = True
-            except PermissionError:
-                dead = False
-        stale = not owner and time.time() - d.stat().st_mtime > 60
-        if dead or stale:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
+
+def alive(pid: int) -> bool:
     try:
-        d.mkdir(parents=True)
-    except FileExistsError:
+        os.kill(pid, 0)
+    except ProcessLookupError:
         return False
-    (d / "owner").write_text(f"{lane} pid={os.getpid()}\n")
+    except PermissionError:
+        return True
     return True
+
+
+def owner_text(d: Path) -> str | None:
+    try:
+        return (d / "owner").read_text().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def stale_why(d: Path, owner: str | None) -> str | None:
+    """Why this lock may be cleared, or None while its holder may still run (src/lock-owner.ts staleWhy)."""
+    if owner is None:
+        age = time.time() - d.stat().st_mtime
+        return f"ownerless lock older than {OWNERLESS_S}s" if age > OWNERLESS_S else None
+    pids = [int(m) for m in re.findall(r"(?:^|\s)(?:pid|cmd)=(\d+)", owner)]
+    if not pids or any(alive(p) for p in pids):
+        return None
+    return f"stale lock from dead pid {', '.join(map(str, pids))} ({owner})"
+
+
+def claim_path(d: Path, seen: str) -> Path:
+    return d.parent / f".lock-claim-{hashlib.sha256((d.name + chr(0) + seen).encode()).hexdigest()}"
+
+
+def take_claim(path: Path) -> bool:
+    """One claim file per observed owner line (src/lock-claim.ts takeFile), so two takers cannot both clear."""
+    mine = f"pid={os.getpid()}"
+    for _ in range(2):
+        try:
+            with path.open("x") as claim_file:
+                claim_file.write(mine)
+            return True
+        except OSError:
+            seen = path.read_text().strip() if path.exists() else None
+            if seen is None:
+                continue
+            pid = re.search(r"pid=(\d+)", seen)
+            if pid is None or alive(int(pid.group(1))):
+                return False
+            path.unlink(missing_ok=True)
+    return False
+
+
+def clear_stale(d: Path, seen: str | None) -> bool:
+    """Remove the lock only while it still reads as `seen` and is still left behind (src/lock-owner.ts clear)."""
+    claim = claim_path(d, seen or "")
+    if not take_claim(claim):
+        return False
+    try:
+        now = owner_text(d)
+        if now != seen or stale_why(d, now) is None:
+            return False
+        shutil.rmtree(d, ignore_errors=True)
+        return True
+    except FileNotFoundError:
+        return False
+    finally:
+        claim.unlink(missing_ok=True)
+
+
+def try_lock(acct: str, lane: str) -> str | None:
+    """Take the account lock without waiting; the owner line, or None while a live job holds it."""
+    d = lock_dir(acct)
+    for _ in range(3):
+        try:
+            d.mkdir(parents=True)
+        except FileExistsError:
+            try:
+                seen = owner_text(d)
+                why = stale_why(d, seen)
+            except FileNotFoundError:
+                continue
+            if why is None:
+                return None
+            print(f"redteam: {acct} {why}; clearing", file=sys.stderr)
+            clear_stale(d, seen)
+            continue
+        owner = f"{lane} {stamp()} pid={os.getpid()}"
+        (d / "owner").write_text(owner + "\n")
+        return owner
+    return None
+
+
+def name_command(acct: str, owner: str, pid: int) -> str:
+    """Add ` cmd=<pid>` to the owner line, so a waiter keeps the lock held while the runner runs."""
+    named = f"{owner} cmd={pid}"
+    d = lock_dir(acct)
+    tmp = d / "owner.tmp"
+    tmp.write_text(named + "\n")
+    tmp.replace(d / "owner")
+    return named
+
+
+def release_lock(acct: str, owner: str) -> None:
+    """Remove the lock only while it is still this owner's."""
+    d = lock_dir(acct)
+    if owner_text(d) == owner:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------- (c) web GPT 6 Pro ----------
+GPT_MODEL_MARK = "6 pro"
+
+
+def read_gpt_answer(meta: dict, meta_path: Path, raw: Path) -> tuple[str, str]:
+    """(answer text, why it is '못 받음'). Received needs all three, per tools/redteam/README.md:
+    status 'ok', model_shown naming GPT 6 Pro, and a non-empty answer file."""
+    if str(meta.get("status") or "") != "ok":
+        reason = f"status={meta.get('status') or '없음'}"
+        return "", reason + (f" ({meta['reason']})" if meta.get("reason") else "")
+    model = str(meta.get("model_shown") or "")
+    if GPT_MODEL_MARK not in model.lower():
+        return "", f"model_shown={model or '없음'} — GPT 6 Pro가 아니다"
+    answer = raw
+    if meta.get("answer_path"):
+        p = Path(str(meta["answer_path"])).expanduser()
+        answer = p if p.is_absolute() else meta_path.parent / p
+    try:
+        text = answer.read_text()
+    except FileNotFoundError:
+        return "", f"답 파일이 없다: {answer}"
+    if not text.strip():
+        return "", f"답이 비었다: {answer}"
+    return text, ""
 
 
 def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
     """Web GPT 6 Pro, one attempt. No answer is recorded as '못 받음'.
 
-    The account lock is taken once, here, and never waited on. The runner is called directly,
-    not through carbon-lock.sh, which would wait forever on the lock this function just took.
-    The lock is released on every exit, including a missing runner or a raised error."""
+    The account lock is taken once, here, and never waited on. The runner is called directly, not through
+    carbon-lock.sh, which would wait forever on the lock this function just took. The lock is released on
+    every exit, including a missing runner or a raised error."""
     if not acct:
         write_model_file(out / "gpt6pro_web.md", {"branch": "gpt6pro_web", "status": NOT_GOT, "reason": blocked},
                          "돌리지 않았다. 다른 모델로 대신하지 않았다.")
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
-    if not try_lock(acct, lane):
+    owner = try_lock(acct, lane)
+    if owner is None:
         reason = "같은 Aside 계정을 카본이 쓰는 중이라 기다리지 않고 넘김"
         write_model_file(out / "gpt6pro_web.md",
                          {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
+    held = {"owner": owner}
     try:
-        return _run_gpt_locked(out, prompt_file, acct)
+        return _run_gpt_locked(out, prompt_file, acct, held)
     finally:
-        import shutil
-        shutil.rmtree(lock_dir(acct), ignore_errors=True)
+        release_lock(acct, held["owner"])
 
 
-def _run_gpt_locked(out: Path, prompt_file: Path, acct: str) -> dict:
+def _run_gpt_locked(out: Path, prompt_file: Path, acct: str, held: dict) -> dict:
     gpt_run = HOME / "sobaegi-lead/results/gpt-web/run.js"
     if not gpt_run.exists():
         reason = f"runner missing: {gpt_run}"
@@ -135,23 +253,26 @@ def _run_gpt_locked(out: Path, prompt_file: Path, acct: str) -> dict:
                          {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
     raw = out / "raw_gpt6pro_web.txt"
-    meta = out / "raw_gpt6pro_web.meta.json"
+    meta_path = out / "raw_gpt6pro_web.meta.json"
     raw.unlink(missing_ok=True)  # an earlier run's answer must never read as this run's
-    meta.unlink(missing_ok=True)
+    meta_path.unlink(missing_ok=True)
     t0 = time.time()
-    proc = subprocess.run(["node", str(gpt_run), "--prompt", str(prompt_file),
-                           "--out", str(raw), "--account", acct, "--meta", str(meta), "--timeout", "1800"],
-                          capture_output=True, text=True)
-    m = json.loads(meta.read_text()) if meta.exists() else {}
-    text = raw.read_text() if raw.exists() and m.get("status") == "ok" else ""
-    got = m.get("status") == "ok" and bool(text)
-    head = {"branch": "gpt6pro_web", "account": acct, "status": GOT if got else NOT_GOT,
-            "model_shown": m.get("modelLabel", "-"), "chat_url": m.get("chatUrl", "-"),
+    proc = subprocess.Popen(["node", str(gpt_run), "--prompt", str(prompt_file),
+                             "--out", str(raw), "--account", acct, "--meta", str(meta_path), "--timeout", "1800"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    held["owner"] = name_command(acct, held["owner"], proc.pid)  # a killed redteam.py leaves this lock held
+    stdout, stderr = proc.communicate()
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    text, why = (read_gpt_answer(meta, meta_path, raw) if meta
+                 else ("", f"meta.json 없음 (runner exit {proc.returncode})"))
+    head = {"branch": "gpt6pro_web", "account": acct, "status": GOT if text else NOT_GOT,
+            "model_shown": str(meta.get("model_shown") or "-"),
+            "finished_at": str(meta.get("finished_at") or "-"),
+            "chat_url": str(meta.get("chat_url") or meta.get("chatUrl") or "-"),
             "chars": len(text), "seconds": round(time.time() - t0)}
-    if not got:
-        head["reason"] = m.get("reason") or f"exit {proc.returncode}"
-    write_model_file(out / "gpt6pro_web.md", head,
-                     text or (m.get("reason", "") + "\n" + proc.stdout[-3000:] + proc.stderr[-2000:]))
+    if not text:
+        head["reason"] = why
+    write_model_file(out / "gpt6pro_web.md", head, text or (why + "\n" + stdout[-3000:] + stderr[-2000:]))
     return {"branch": "gpt6pro_web", "status": head["status"], "model": head["model_shown"],
             "chars": len(text), "text": text}
 
@@ -328,6 +449,14 @@ def read_back(path: Path) -> dict:
             "chars": int(head.get("chars", 0)) if ok else 0, "text": body.strip() if ok else ""}
 
 
+def same_account_error(carbon: str | None, gpt: str | None) -> str | None:
+    """Why one Aside account cannot serve both branches: they share one lock, so one would only wait for the other."""
+    if carbon and gpt and carbon.split(":")[0] == gpt.split(":")[0]:
+        return (f"--carbon-account and --gpt-account must name different Aside accounts: both would take "
+                f"{carbon.split(':')[0]}'s lock, and one branch would only ever wait for the other")
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", action="append", required=True)
@@ -337,11 +466,13 @@ def main() -> int:
     ap.add_argument("--carbon-account", help="aside account for Gemini Carbon, e.g. u1:<profile>; omitted = branch recorded as blocked")
     ap.add_argument("--carbon-blocked", default="no logged-in Gemini account given", help="reason written when --carbon-account is omitted")
     ap.add_argument("--lane", default="redteam-path-1116")
-    ap.add_argument("--gpt-account", help="aside account for web GPT 6 Pro, e.g. u0:<profile>; omitted = branch recorded as 못 받음")
+    ap.add_argument("--gpt-account", help="aside account for web GPT 6 Pro, e.g. u0:<profile>; must differ from --carbon-account")
     ap.add_argument("--gpt-blocked", default="no logged-in ChatGPT account given", help="reason written when --gpt-account is omitted")
     ap.add_argument("--only", default="carbon,gpt,pirates",
                     help="branches to (re)run; the others are read back from their files in --out and merged again")
     a = ap.parse_args()
+    if (same := same_account_error(a.carbon_account, a.gpt_account)):
+        ap.error(same)
     only = set(a.only.split(","))
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
