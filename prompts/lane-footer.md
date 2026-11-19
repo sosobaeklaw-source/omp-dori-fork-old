@@ -13,6 +13,7 @@ Reset coupons and credits require the user's explicit permission for each specif
    If you are blocked outside your pane (waiting on CI, a review, a human), add `--status waiting --for '<what you wait on>'` and name the blocker in one line. Waiting does not stop the clock: you are nudged to check that the thing you wait on is alive, and 40 minutes without progress is escalated with it.
 5. When the deliverable is done, send the final answer with at least one evidence link:
    `{{dori}} ready {{key}} --text '<final answer>' --evidence <link> [--evidence <link>]`
+   If the deliverable is files for the owner, the final answer names the proofreading round folder that passed them (its `verdict.txt` opens with `나가도 됩니다`): the lead sends them with `--passed <that folder>`, and a file that folder does not list is not sent.
 6. Code lands as a PR. Ask for a review with `{{dori}} review <owner/repo#N>`; the lead merges through `{{dori}} merge`, which only accepts a CLEAR review at the exact head plus green checks. Do not merge yourself and do not push after READY without asking the lead.
 7. Messages from the lead or duty arrive in this pane as prompts. Answer them, then continue.
 8. Never close your own pane. The lead closes it with `{{dori}} done {{key}}`.
