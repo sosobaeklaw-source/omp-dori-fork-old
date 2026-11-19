@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { discordInbound, formatDiscordInbound } from "../src/messenger/discord-inbound.ts";
+import { toInbound } from "../src/messenger/discord-inbound-api.ts";
 import { MessengerError } from "../src/messenger/http.ts";
 import {
   discordRestWorld,
@@ -54,6 +55,18 @@ const expected = [
   'INBOUND_REPLY discord 20 104 {"id":"90","author":"99","text":"bot said \\"hi\\""}',
   'INBOUND discord 20 105 from=owner ref=91 "gone"',
 ];
+
+test("only a reply's reference is ref=: a forward names a message but answers none", () => {
+  const forward = ownerMessage("107", {
+    content: "",
+    message_reference: { type: 1, message_id: "92" },
+    referenced_message: { id: "92", author: { id: "99" }, content: "the question" },
+  });
+  expect(formatDiscordInbound(toInbound(forward))).toBe('INBOUND discord 20 107 from=owner ref=- ""');
+  expect(toInbound(ownerMessage("108", { type: 19, message_reference: { type: 0, message_id: "92" } })).reference).toBe(
+    "92",
+  );
+});
 
 /** Capture one emit per owner message, before its cursor commit. */
 const restLines = async () => {

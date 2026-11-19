@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
-import { claimDone, closeLane, objectDone, watchTick } from "../src/done-flow.ts";
+import { claimDone, closeLane, type FlowDeps, objectDone, watchTick } from "../src/done-flow.ts";
 import { type Lane, statusOf } from "../src/registry.ts";
 import { depsFor, fakeClock, newWorld, sent, withState, type World, WT } from "./fakes.ts";
 
@@ -40,6 +40,32 @@ test("an objection inside the window keeps the lane open and the lane hears why"
   expect(after && statusOf(after)).toBe("not-done");
   expect(closedVia()).toHaveLength(0);
   expect(sent(world).some((t) => t.startsWith("[LEAD] not done: changelog entry missing"))).toBe(true);
+});
+
+test("a recorded claim runs its follow-up even when telling the lane throws; a claim that lost the race runs none", async () => {
+  world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "idle" }];
+  // herdr refuses the native prompt, then the server stops answering: the probe before the typed fallback throws.
+  const deps = at(T0);
+  let prompted = false;
+  const flaky: FlowDeps = {
+    ...deps,
+    run: async (argv) => {
+      if (argv[1] === "agent" && argv[2] === "prompt") prompted = true;
+      if (prompted && argv[1] === "pane" && argv[2] === "get") return { code: 1, out: "", err: "server timed out" };
+      return deps.run(argv);
+    },
+  };
+  const followed: string[] = [];
+  await expect(claimDone(flaky, lane, "merged acme/app#1", () => followed.push("first"))).rejects.toThrow(
+    "server timed out",
+  );
+  expect(world.calls.some((c) => c[2] === "send-text")).toBe(false);
+  const after = await at(T0).registry.read("demo-lane");
+  expect(after && statusOf(after)).toBe("done-claimed");
+  expect(followed).toEqual(["first"]);
+  // The stale record no longer matches the stored lane: nothing is recorded and nothing follows.
+  expect(await claimDone(at(T0), lane, "again", () => followed.push("second"))).toStartWith("LANE_CHANGED");
+  expect(followed).toEqual(["first"]);
 });
 
 test("five quiet minutes after a claim the lane is closed, its thread marked done and its worktree removed", async () => {

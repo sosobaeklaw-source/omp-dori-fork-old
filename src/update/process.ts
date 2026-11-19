@@ -34,14 +34,16 @@ function nativeLaunch(
   directory: string,
   env: Record<string, string>,
 ): { readonly argv: string[]; readonly guard: Guard } {
+  // OMP's own arguments, after any launcher prefix whose options (`stdbuf -e L`) are not OMP's.
+  const own = ompPart(argv);
   if (
-    argv.some((arg) =>
+    own.some((arg) =>
       /^(?:-e|--extension|--extensions|--trusted-extension|--hook|--profile|--dori-role)(?:=|$)/.test(arg),
     )
   ) {
     throw new UpdateError("automated OMP uses no explicit extension/profile/Dori-role flags");
   }
-  const mode = flagValue(argv, "mode");
+  const mode = flagValue(own, "mode");
   if (mode !== null && mode !== "json") {
     throw new UpdateError("automated OMP requires --mode json for final-message evidence");
   }

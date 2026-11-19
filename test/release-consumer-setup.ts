@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { VerifiedBundle } from "../src/release/bundle.ts";
 import { readArchive } from "../src/release/archive.ts";
@@ -116,7 +116,12 @@ export type ConsumerFixture = {
   readonly release: (payload: string) => { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string };
 };
 
-export function fixture(side = false): ConsumerFixture {
+/** Match source release metadata independently of the selected installation home. */
+export function portableFixture(side = false): ConsumerFixture {
+  return fixture(side, true);
+}
+
+export function fixture(side = false, portable = side): ConsumerFixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-consumer-")));
   if (roots.length === 0) onTestFinished(restore);
   roots.push(root);
@@ -164,9 +169,10 @@ export function fixture(side = false): ConsumerFixture {
       "payload.txt": payload,
       "skills/dori-mode/SKILL.md": `---\nname: dori-mode\ndescription: Dori commands\n---\nRelease skill\n${payload}`,
       "bin-entry.sh": "#!/bin/sh\nprintf 'release fixture\\n'\n",
+      "src/release/references.ts": `export { installIsolatedReferences } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/references.ts"))};\n`,
       "skills/dori-mode/references/config.example.json": '{"runtime":"herdr","stateDir":"~/.dori/state"}\n',
     };
-    if (side)
+    if (portable)
       contents["release-capabilities.json"] = JSON.stringify({
         version: 1,
         profiles: [

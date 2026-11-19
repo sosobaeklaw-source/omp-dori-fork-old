@@ -76,12 +76,7 @@ test("restart drains every page after the cursor in numeric order without duplic
   const pages = world.requests
     .map((request) => new URL(request.url))
     .filter((url) => url.searchParams.get("limit") === "100");
-  expect(pages.map((url) => url.searchParams.get("before"))).toEqual([
-    null,
-    String(base + 152n),
-    String(base + 53n),
-    null,
-  ]);
+  expect(pages.map((url) => url.searchParams.get("before"))).toEqual([null, String(base + 152n), String(base + 53n)]);
 });
 
 test("duplicate messages within a history page emit and checkpoint only once", async () => {
@@ -141,6 +136,26 @@ test("a failed emitter leaves the failed message uncommitted and resumes without
     ].join("\n"),
   );
   expect(groups[1]).toBe(groups[0]);
+});
+
+test("an emit promise is awaited: a rejection keeps the cursor, and the retry delivers in order", async () => {
+  const world = discordRestWorld([ownerMessage("100"), ownerMessage("101"), ownerMessage("102"), ownerMessage("103")]);
+  const cursor = memoryDiscordCursor("100");
+  const intake = await discordInbound(world.discord, () => cursor.store, options);
+  const received: string[] = [];
+  const late = async (message: DiscordInbound, fail: string | undefined) => {
+    await new Promise<void>((resolve) => setImmediate(resolve)); // one event-loop turn, as a lookup would take
+    expect(cursor.store.load()).toBe(String(Number(message.message) - 1));
+    if (message.message === fail) throw new Error("late delivery failure");
+    received.push(message.message);
+  };
+  await expect(intake.poll((message) => late(message, "102"))).rejects.toThrow("late delivery failure");
+  expect([received, cursor.store.load()]).toEqual([["101"], "101"]);
+  await intake.poll((message) => late(message, undefined));
+  expect([received, cursor.saved]).toEqual([
+    ["101", "102", "103"],
+    ["101", "102", "103"],
+  ]);
 });
 
 test("a later-page failure emits nothing and retains the cursor for a complete retry", async () => {

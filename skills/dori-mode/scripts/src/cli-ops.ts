@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { bootCheck, envSlackCheck } from "./boot.ts";
 import { type Command, die, every, slackAuth } from "./cli-context.ts";
 import { deadPaneTick, newDeadPaneState } from "./dead-panes.ts";
+import { Decisions } from "./decisions.ts";
 import { watchTick } from "./done-flow.ts";
 import { freshnessTick } from "./freshness.ts";
 import { acquireSlot, pidAlive, releaseSlot } from "./heavy-slot.ts";
@@ -38,6 +39,7 @@ const boot: Command = async ({ deps, config }) => {
     ...deps,
     reports: new Reports(config.stateDir),
     worklog: new Worklog(config.stateDir),
+    decisions: new Decisions(config.stateDir),
     // A bad token file is a failed boot line, not an exit: boot is the read-only report a fresh lead depends on.
     slack: envSlackCheck((token) => new Slack(fetchHttp, realClock, slackAuth(token))),
     monitorDirs: sessionDirs.flatMap((dir) => (dir ? [join(dir, "extensions", "terminal")] : [])),

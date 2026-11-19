@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { paneStatePath, readPaneState, writePaneState } from "../../skills/dori-mode/scripts/src/lane-state";
@@ -191,11 +192,13 @@ describe("goal tool", () => {
     expect(normal.active).toEqual(["read", "bash"]);
   });
 
+  // A plain session is reached by switching to its file, never by creating one in this process (`reason: "new"`),
+  // which keeps the process's own role.
   test("is taken back when a goal-less lane switches to a normal session", async () => {
     const pi = await load({ session: session("lane"), flags: { "dori-role": "lane" } });
     await pi.emit("session_start");
     pi.session = session("plain");
-    await pi.emit("session_switch", { type: "session_switch", reason: "new" });
+    await pi.emit("session_switch", { type: "session_switch", reason: "resume" });
     expect(pi.active).toEqual(["read", "bash"]);
   });
 
@@ -227,7 +230,7 @@ describe("monitor restore", () => {
     const result = await pi.tools.get("monitor")?.execute("call", params, undefined, undefined, pi.ctx());
     return result?.content[0]?.text ?? "";
   };
-  const tick = { op: "start", name: "tick", argv: ["sh", "-c", "echo up; sleep 30"], filter: "^up" };
+  const tick = { op: "start", name: "tick", argv: ["sh", "-c", "echo up; exec sleep 30"], filter: "^up" };
 
   test("a resumed Dori session restarts the monitors it recorded and their lines wake it again", async () => {
     const s = session("dori-r1");
@@ -246,6 +249,84 @@ describe("monitor restore", () => {
     await until(() => resumed.messages.some((m) => m.content === "[tick] up"));
     expect(await monitorCall(resumed, { op: "list" })).toContain("tick (pid");
     await resumed.emit("session_shutdown");
+  });
+
+  test("a fresh Dori session restores carried monitors from a native branch snapshot", async () => {
+    const started = session("dori-c1", [roleEntry("dori")]);
+    const fresh = session("dori-c2");
+    const pi = await load({ session: started, flags: { "dori-role": "dori" } });
+    let resumed: FakePi | undefined;
+    const pids: number[] = [];
+    const alive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      await pi.emit("session_start");
+      await monitorCall(pi, tick);
+      const initial = await monitorCall(pi, { op: "list" });
+      expect(initial).toContain("tick (pid");
+      const oldPid = Number(/pid (\d+)/.exec(initial)?.[1]);
+      pids.push(oldPid);
+      expect(alive(oldPid)).toBe(true);
+      await until(() => pi.messages.some((m) => m.content === "[tick] up"));
+      pi.messages.length = 0;
+
+      pi.session = fresh;
+      const snapshot = pi.ctx().sessionManager.getBranch();
+      await pi.emit("session_switch", { type: "session_switch", reason: "new" });
+      expect(snapshot).toEqual([]);
+      expect(fresh.entries).toEqual([
+        roleEntry("dori"),
+        { type: "custom", customType: "omp-dori:monitor", data: { ...tick, cwd: tmpdir() } },
+      ]);
+      expect(pi.active).toContain("monitor");
+      expect(await pi.emit("before_agent_start", agentStart)).toContainEqual({
+        systemPrompt: ["base prompt", "<fake-ulw-policy>"],
+      });
+      const carried = await monitorCall(pi, { op: "list" });
+      expect(carried).toContain("tick (pid");
+      expect(carried.split("\n")).toHaveLength(1);
+      const carriedPid = Number(/pid (\d+)/.exec(carried)?.[1]);
+      pids.push(carriedPid);
+      await until(() => !alive(oldPid));
+      expect(alive(carriedPid)).toBe(true);
+      await until(() => pi.messages.some((m) => m.content === "[tick] up"));
+      expect(pi.messages.filter((m) => m.content === "[tick] up")).toEqual([
+        { content: "[tick] up", options: { triggerTurn: true, deliverAs: "aside" } },
+      ]);
+      const metadata = join(stateDir, "monitors", `${fresh.id}.json`);
+      expect(JSON.parse(readFileSync(metadata, "utf8"))).toEqual({
+        version: 1,
+        sessionId: fresh.id,
+        monitors: [{ name: tick.name, argv: tick.argv, filter: tick.filter, cwd: tmpdir() }],
+      });
+      expect(lstatSync(metadata).mode & 0o777).toBe(0o600);
+      expect(readPaneState(stateDir, PANE)).toMatchObject({ role: "dori", sessionId: fresh.id });
+      await pi.emit("session_shutdown");
+      await until(() => pids.every((pid) => !alive(pid)));
+      expect(await monitorCall(pi, { op: "list" })).toBe("no monitors running");
+
+      // A later process needs only the destination records, not the original role flag or monitor process.
+      resumed = await load({ session: fresh });
+      await resumed.emit("session_start");
+      const restored = await monitorCall(resumed, { op: "list" });
+      expect(restored).toContain("tick (pid");
+      expect(restored.split("\n")).toHaveLength(1);
+      pids.push(Number(/pid (\d+)/.exec(restored)?.[1]));
+      const restoredSession = resumed;
+      await until(() => restoredSession.messages.some((m) => m.content === "[tick] up"));
+      expect(fresh.entries).toHaveLength(2);
+      expect(resumed.active).toContain("monitor");
+    } finally {
+      await pi.emit("session_shutdown");
+      await resumed?.emit("session_shutdown");
+      await until(() => pids.every((pid) => !alive(pid)));
+    }
   });
 
   test("a monitor stopped by name, even after it exited on its own, is not restored", async () => {
@@ -297,7 +378,7 @@ describe("pane state", () => {
       await replacement.emit("session_start");
       expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: process.pid, sessionId: "replacement" });
       await replacement.emit("session_shutdown");
-      expect(readPaneState(stateDir, PANE)).toBeNull();
+      expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: 0, sessionId: "replacement" });
       await lead.emit("session_shutdown");
     } finally {
       if (owner.exitCode === null) owner.kill();
@@ -324,7 +405,7 @@ describe("pane state", () => {
       await fresh.emit("agent_start");
       expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: process.pid, sessionId: "fresh" });
       await fresh.emit("session_shutdown");
-      expect(readPaneState(stateDir, PANE)).toBeNull();
+      expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: 0, sessionId: "fresh" });
     } finally {
       unrelated.kill();
       await unrelated.exited;
@@ -346,7 +427,7 @@ describe("pane state", () => {
       await next.emit("goal_updated", { goal: { objective: "recover pane", status: "active" } });
       expect(readPaneState(stateDir, PANE)?.goal).toEqual({ objective: "recover pane", status: "active" });
       await next.emit("session_shutdown");
-      expect(readPaneState(stateDir, PANE)).toBeNull();
+      expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: 0, sessionId: "next" });
       await first.emit("session_shutdown");
     },
   );
@@ -424,12 +505,20 @@ describe("pane state", () => {
     expect(pi.active).toEqual(["read", "bash", "goal"]);
   });
 
-  test("is removed at session shutdown, unless another process has taken the pane since", async () => {
+  test("is retired to a pid-less tombstone at session shutdown, unless another process has taken the pane since", async () => {
     const pi = await load({ session: session("lane-4"), flags: { "dori-role": "lane" } });
     await pi.emit("session_start");
     expect(existsSync(paneStatePath(stateDir, PANE))).toBe(true);
     await pi.emit("session_shutdown");
-    expect(existsSync(paneStatePath(stateDir, PANE))).toBe(false);
+    // Keep the persisted session identity available for resume without claiming live ownership.
+    expect(readPaneState(stateDir, PANE)).toMatchObject({
+      pid: 0,
+      sessionId: "lane-4",
+      role: "lane",
+      sessionFile: "/sessions/lane-4.jsonl",
+      approvalPending: false,
+      agentStatus: "idle",
+    });
 
     const again = await load({ session: session("lane-5"), flags: { "dori-role": "lane" } });
     await again.emit("session_start");
@@ -438,6 +527,27 @@ describe("pane state", () => {
     writePaneState(stateDir, { ...other, pid: process.pid + 1, sessionId: "other" });
     await again.emit("session_shutdown");
     expect(readPaneState(stateDir, PANE)?.sessionId).toBe("other");
+  });
+
+  test("headless sessions preserve a retired pane until an interactive plain session takes over", async () => {
+    const lead = await load({ session: session("dori-9"), flags: { "dori-role": "dori" } });
+    await lead.emit("session_start");
+    await lead.emit("session_shutdown");
+    expect(readPaneState(stateDir, PANE)?.sessionId).toBe("dori-9");
+
+    for (const mode of ["print", "rpc"]) {
+      const headless = await load({ session: session(`headless-${mode}`), mode });
+      await headless.emit("session_start");
+      expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: 0, sessionId: "dori-9" });
+      await headless.emit("session_shutdown");
+      expect(readPaneState(stateDir, PANE)).toMatchObject({ pid: 0, sessionId: "dori-9" });
+    }
+
+    const plain = await load({ session: session("plain-9"), mode: "tui" });
+    await plain.emit("session_start");
+    expect(readPaneState(stateDir, PANE)).toBeNull();
+    await plain.emit("session_shutdown");
+    expect(readPaneState(stateDir, PANE)).toBeNull();
   });
 
   test("approvals in a normal session reached from a Dori session leave no pane file", async () => {
@@ -464,7 +574,7 @@ describe("pane state", () => {
     await pi.emit("goal_updated", { type: "goal_updated", goal: { objective: "hc port", status: "paused" } });
     expect(readPaneState(stateDir, "t1b")?.goal.status).toBe("paused");
     await pi.emit("session_shutdown");
-    expect(readPaneState(stateDir, "t1b")).toBeNull();
+    expect(readPaneState(stateDir, "t1b")).toMatchObject({ pid: 0, sessionId: "hc-lane" });
   });
 
   test("is not written without a runtime session id", async () => {

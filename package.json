@@ -10,6 +10,7 @@
   },
   "scripts": {
     "check": "biome check .",
+    "check:fixtures": "bun scripts/check-test-fixtures.ts",
     "fmt": "biome format --write .",
     "typecheck": "bun scripts/typecheck.ts",
     "lint:loc": "bun scripts/check-loc.ts",
@@ -18,7 +19,7 @@
     "test:ci": "bun test --parallel=2 --timings=.bun-test-timings.json ./test/",
     "test:skill": "cd skills/dori-mode/scripts && bun test",
     "test:extension": "cd extension && bun test",
-    "ci": "bun run check && bun run typecheck && bun run knip && bun run lint:loc && bun run test:ci && bun run test:skill && bun run test:extension"
+    "ci": "bun run check:fixtures && bun run check && bun run typecheck && bun run knip && bun run lint:loc && bun run test:ci && bun run test:skill && bun run test:extension"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",

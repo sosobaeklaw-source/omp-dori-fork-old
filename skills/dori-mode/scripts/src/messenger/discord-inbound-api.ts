@@ -11,7 +11,8 @@ export type Message = {
   content?: string;
   flags?: number;
   attachments?: unknown;
-  message_reference?: { message_id?: string };
+  /** `type` 0 (or absent) is a reply; 1 is a forward, which names a message but answers nothing. */
+  message_reference?: { message_id?: string; type?: number };
   /** Present on replies, or null when Discord could not load the target (for example, after deletion). */
   referenced_message?: { id?: string; author?: { id?: string }; content?: string } | null;
 };
@@ -35,6 +36,11 @@ export type DiscordInbound = {
   replyTo: InboundReply | null;
   attachments: InboundAttachment[];
 };
+/**
+ * Delivers one owner message; the cursor moves past it only after this returns or, when it returns a promise, after
+ * that resolves. Any other returned value is ignored.
+ */
+export type Emit = (message: DiscordInbound) => unknown;
 export type Request = <T>(path: string, body?: Record<string, unknown>) => Promise<T>;
 
 const REQUEST_FAILED = "Discord inbound request failed; check the connection and Discord API availability";
@@ -112,8 +118,9 @@ export const toInbound = (message: Message): DiscordInbound => {
       403,
     );
   }
-  const reference = message.message_reference?.message_id;
-  const replied = message.referenced_message;
+  const isReply = (message.message_reference?.type ?? 0) === 0;
+  const reference = isReply ? message.message_reference?.message_id : undefined;
+  const replied = isReply ? message.referenced_message : undefined;
   return {
     channel: message.channel_id,
     message: message.id,

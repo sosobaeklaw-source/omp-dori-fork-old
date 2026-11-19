@@ -7,13 +7,17 @@ import { withState } from "./fakes.ts";
 const inboundCli = async (
   args: string[],
   environment: Record<string, string> = {},
-  around: { prepare?: (dir: string) => void; inspect?: (dir: string) => void } = {},
+  prepareOrAround:
+    | ((stateDir: string) => void)
+    | { prepare?: (dir: string) => void; inspect?: (dir: string) => void } = {},
 ) => {
   const state = withState();
   try {
-    const config = join(state.dir, "config.json");
-    writeFileSync(config, JSON.stringify({ stateDir: state.dir, runtime: "herdr", hooks: {} }));
+    const around = typeof prepareOrAround === "function" ? { prepare: prepareOrAround } : prepareOrAround;
     around.prepare?.(state.dir);
+    const config = join(state.dir, "config.json");
+    if (!existsSync(config))
+      writeFileSync(config, JSON.stringify({ stateDir: state.dir, runtime: "herdr", hooks: {} }));
     const child = Bun.spawn(
       [
         process.execPath,
@@ -72,7 +76,7 @@ test("public Discord intake defaults to three seconds and honors --loop in minut
     expect(JSON.parse(receipt?.slice("DISCORD_INBOUND_QA ".length) ?? "null")).toEqual({
       delays: [milliseconds, milliseconds],
       polls: 2,
-      requests: 5,
+      requests: 7,
     });
   }
 });
@@ -160,36 +164,6 @@ test("a ledger that cannot be read only warns, and intake still commits its curs
   ]);
 });
 
-test("an opted-in transcriber fills an empty voice message; text, non-voice, no transcriber, failure and timeout pass through", async () => {
-  const { voiceEmit } = await import("../src/cli-discord.ts");
-  const voice = {
-    channel: "1",
-    message: "2",
-    reference: null,
-    text: "",
-    replyTo: null,
-    attachments: [{ filename: "voice-message.ogg", size: 9, url: "https://cdn.example/v.ogg", voice: true as const }],
-  };
-  const opts = { prefix: "[heard] ", deadlineMs: 50 };
-  const printed: string[] = [];
-  const warned: string[] = [];
-  const kept: string[] = [];
-  const print = (shown: { text: string }, sent: { text: string }) => {
-    printed.push(shown.text);
-    kept.push(sent.text); // What a verbatim record (the correction ledger) gets: never the transcript.
-  };
-  const warn = (l: string) => void warned.push(l);
-  const heard = voiceEmit(print, async (url) => `들은 말 ${url}`, warn, opts);
-  await heard(voice);
-  await heard({ ...voice, text: "글로 쓴 지시" });
-  await heard({ ...voice, attachments: [{ filename: "a.png", size: 1, url: "https://cdn.example/a.png" }] });
-  expect(voiceEmit(print, undefined, warn, opts)(voice)).toBeUndefined(); // No transcriber: printed at once.
-  await voiceEmit(print, async () => Promise.reject(new Error("empty transcript")), warn, opts)(voice);
-  await voiceEmit(print, () => new Promise<string>(() => {}), warn, opts)(voice);
-  expect(printed).toEqual(["[heard] 들은 말 https://cdn.example/v.ogg", "글로 쓴 지시", "", "", "", ""]);
-  expect(kept).toEqual(["", "글로 쓴 지시", "", "", "", ""]);
-  expect(warned).toEqual(["WARN transcribe 2: empty transcript", "WARN transcribe 2: timed out after 0.05s"]);
-});
 
 test("transcription is opt-in, needs a hook and a non-empty marker, and announces itself", async () => {
   const withHook = {
@@ -211,4 +185,38 @@ test("transcription is opt-in, needs a hook and a non-empty marker, and announce
     const { out, err, code } = await inboundCli(["--loop", "0"], environment, around);
     expect({ code, out, said: err.includes(said) }).toEqual({ code: 1, out: "", said: true });
   }
+});
+test("--context ends each group with where it was posted and the purposes recorded there", async () => {
+  const purposes = (dir: string) =>
+    writeFileSync(
+      join(dir, "discord-channels.json"),
+      JSON.stringify({
+        "30": { purpose: "omp-dori development", name: "dev", updatedAt: "2026-11-17T00:00:00.000Z" },
+        "20": { purpose: "one task", updatedAt: "2026-11-17T00:00:00.000Z" },
+      }),
+    );
+  const message = 'INBOUND discord 20 101 from=owner ref=- "first owner text"';
+  const where = await inboundCli(["--loop", "0", "--context"], { DORI_TEST_DISCORD_CASE: "context" }, purposes);
+  expect({ code: where.code, err: where.err, cursor: where.cursor }).toEqual({ code: 0, err: "", cursor: "102" });
+  expect(where.out.trim().split("\n").slice(1)).toEqual([
+    message,
+    `INBOUND_CONTEXT discord 20 101 ${JSON.stringify({
+      channel: { id: "30", name: "dev", topic: "editable topic", purpose: "omp-dori development" },
+      thread: { id: "20", name: "task thread", purpose: "one task" },
+    })}`,
+  ]);
+  // A failed lookup still delivers the message and commits it; the record says what is known, without the body.
+  const denied = await inboundCli(["--loop", "0", "--context"], { DORI_TEST_DISCORD_CASE: "context-denied" }, purposes);
+  expect({ code: denied.code, cursor: denied.cursor }).toEqual({ code: 0, cursor: "102" });
+  expect(denied.out.trim().split("\n").slice(1)).toEqual([
+    message,
+    `INBOUND_CONTEXT discord 20 101 ${JSON.stringify({
+      channel: { id: "20", purpose: "one task" },
+      thread: null,
+      error: "channel lookup failed (HTTP 403)",
+    })}`,
+  ]);
+  // Without --context nothing is looked up and the output is unchanged, even where lookups would fail.
+  const plain = await inboundCli(["--loop", "0"], { DORI_TEST_DISCORD_CASE: "context-denied" }, purposes);
+  expect(plain.out.trim().split("\n").slice(1)).toEqual([message]);
 });

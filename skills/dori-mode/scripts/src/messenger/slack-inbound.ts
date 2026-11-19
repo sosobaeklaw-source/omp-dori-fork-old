@@ -89,5 +89,5 @@ export const pollSlackInbound = async (
       add({ source: "unread", channel: c.id, ts: "", text: `${c.mention_count ?? 0} mention(s), unread` });
   }
   for (const message of out) await emit(message);
-  for (const s of seenUpTo) await ledger.markSeen(s.channel, s.rootTs, s.ts);
+  await ledger.markSeen(seenUpTo);
 };

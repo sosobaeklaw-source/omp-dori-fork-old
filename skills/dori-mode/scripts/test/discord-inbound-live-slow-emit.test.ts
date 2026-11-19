@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { discordInbound } from "../src/messenger/discord-inbound.ts";
 import { discordInboundLive } from "../src/messenger/discord-inbound-live.ts";
+import { discordInboundQueue } from "../src/messenger/discord-inbound-queue.ts";
 import { discordRestWorld, memoryDiscordCursor, ownerMessage } from "./discord-inbound-fakes.ts";
 import { settle } from "./discord-inbound-live-fakes.ts";
+import { withState } from "./fakes.ts";
 import { FakeGateway, gatewayTimers } from "./discord-presence-fakes.ts";
 
 const options = { ownerId: "10", channelIds: ["20"] };
@@ -10,6 +12,8 @@ const options = { ownerId: "10", channelIds: ["20"] };
 test("a live message whose emit is still running holds the next dispatch and its own cursor", async () => {
   const rest = discordRestWorld();
   const cursor = memoryDiscordCursor("100");
+  const state = withState();
+  const queue = discordInboundQueue(state.dir);
   const intake = await discordInbound(rest.discord, () => cursor.store, options);
   const sockets: FakeGateway[] = [];
   const printed: string[] = [];
@@ -28,6 +32,7 @@ test("a live message whose emit is still running holds the next dispatch and its
       return slow.promise.then(() => void printed.push("101"));
     },
     () => {},
+    queue,
   );
   live.done.catch(() => {});
   const [socket] = sockets;
@@ -44,4 +49,6 @@ test("a live message whose emit is still running holds the next dispatch and its
   await settle();
   expect({ printed, cursor: cursor.store.load() }).toEqual({ printed: ["101", "102"], cursor: "102" });
   live.close();
+  queue.close();
+  state.done();
 });

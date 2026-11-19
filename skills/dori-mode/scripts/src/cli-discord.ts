@@ -1,10 +1,17 @@
 /** The Discord Gateway plumbing shared by `dori presence discord` and `dori inbound discord --gateway`. */
 import { die, every } from "./cli-context.ts";
 import { Discord } from "./messenger/discord.ts";
+import { DiscordChannels, inboundContext } from "./messenger/discord-channels.ts";
 import type { GatewayClock, GatewaySocket } from "./messenger/discord-gateway.ts";
-import { type DiscordInbound, discordInbound, formatDiscordInbound } from "./messenger/discord-inbound.ts";
+import {
+  type DiscordInbound,
+  discordInbound,
+  formatDiscordInbound,
+  formatInboundContext,
+} from "./messenger/discord-inbound.ts";
 import { discordInboundLive } from "./messenger/discord-inbound-live.ts";
-import { discordInboundEnv, fileDiscordInboundStore } from "./messenger/discord-inbound-state.ts";
+import { discordInboundQueue } from "./messenger/discord-inbound-queue.ts";
+import { discordInboundEnv } from "./messenger/discord-inbound-state.ts";
 import { ledgerReply } from "./messenger/discord-sent.ts";
 import { fetchHttp } from "./messenger/http.ts";
 import { defaultHome } from "../../../../src/test-home.ts";
@@ -103,12 +110,14 @@ export const VOICE_DEADLINE_MS = 150_000;
 /**
  * Channels come from DORI_DISCORD_CHANNEL_ID, DORI_DISCORD_CHANNEL_IDS (comma separated) and DORI_DISCORD_SCOPE=all.
  * DORI_DISCORD_TRANSCRIBE=1 opts in to transcribing owner voice messages with `voiceText` (hooks.transcribe).
+ * `context` adds an INBOUND_CONTEXT record (channel, thread, topic, recorded purposes) to each message's group.
  */
 export const discordInboundCommand = async (
   stateDir: string,
   gateway: boolean,
   pollMinutes: number,
   voiceText?: VoiceText,
+  context = false,
 ) => {
   const env = process.env;
   const ownerId = discordInboundEnv("DORI_DISCORD_OWNER_ID", env["DORI_DISCORD_OWNER_ID"]);
@@ -128,28 +137,41 @@ export const discordInboundCommand = async (
   // An empty marker would make a machine transcript read as the owner's own typed words.
   const prefix = env["DORI_DISCORD_VOICE_PREFIX"] ?? DEFAULT_VOICE_PREFIX;
   if (prefix.trim() === "") die("DORI_DISCORD_VOICE_PREFIX must not be empty");
-  const intake = await discordInbound(
-    new Discord(fetchHttp, realClock, token),
-    (channelId) => fileDiscordInboundStore(stateDir, channelId),
-    { ownerId, channelIds: [...new Set(channelIds)], all },
-  );
-  const watching = all ? "all" : intake.channels().join(",");
-  const home = defaultHome();
-  // The owner's reply to a post lands in the ledger verbatim, so it takes the typed text, never a transcript.
-  // A ledger fault is reported and never holds intake.
-  const print = (shown: Inbound, sent: Inbound) => {
-    console.log(formatDiscordInbound(shown));
-    try {
-      const head = ledgerReply(home, stateDir, ownerId, sent);
-      if (head) console.log(`LEDGER ${head}`);
-    } catch (e) {
-      console.log(`WARN ledger ${sent.message}: ${(e as Error).message}`);
-    }
-  };
-  const emit = voiceEmit(print, heardBy, (l) => console.log(l), { prefix, deadlineMs: VOICE_DEADLINE_MS });
-  console.log(
-    `INBOUND_READY discord owner=${ownerId} channel=${watching} bot=${intake.botId}${gateway ? " mode=gateway" : ""}${heardBy ? " transcribe=on" : ""}`,
-  );
-  if (!gateway) return await every(pollMinutes, () => intake.poll(emit));
-  await untilStopped(discordInboundLive(intake, openDiscordSocket, token, discordClock, emit, (l) => console.log(l)));
+  const queue = discordInboundQueue(stateDir);
+  try {
+    if (!gateway && queue.first())
+      die("Discord inbound has pending Gateway work; restart with --gateway before REST mode");
+    const discord = new Discord(fetchHttp, realClock, token);
+    const intake = await discordInbound(discord, queue.storeFor, {
+      ownerId,
+      channelIds: [...new Set(channelIds)],
+      all,
+    });
+    const watching = all ? "all" : intake.channels().join(",");
+    const home = defaultHome();
+    const where = context ? inboundContext(discord, new DiscordChannels(stateDir), realClock.now) : undefined;
+    // The owner's reply to a post lands in the ledger verbatim, so it takes the typed text, never a transcript.
+    // A ledger fault is reported and never holds intake. The whole group, context included, is one write before the
+    // cursor moves past the message.
+    const print = async (shown: Inbound, sent: Inbound) => {
+      const extra = where ? `\n${formatInboundContext(shown, await where(shown.channel))}` : "";
+      console.log(`${formatDiscordInbound(shown)}${extra}`);
+      try {
+        const head = ledgerReply(home, stateDir, ownerId, sent);
+        if (head) console.log(`LEDGER ${head}`);
+      } catch (e) {
+        console.log(`WARN ledger ${sent.message}: ${(e as Error).message}`);
+      }
+    };
+    const emit = voiceEmit(print, heardBy, (l) => console.log(l), { prefix, deadlineMs: VOICE_DEADLINE_MS });
+    console.log(
+      `INBOUND_READY discord owner=${ownerId} channel=${watching} bot=${intake.botId}${gateway ? " mode=gateway" : ""}${heardBy ? " transcribe=on" : ""}`,
+    );
+    if (!gateway) return await every(pollMinutes, () => intake.poll(emit));
+    await untilStopped(
+      discordInboundLive(intake, openDiscordSocket, token, discordClock, emit, (l) => console.log(l), queue),
+    );
+  } finally {
+    queue.close();
+  }
 };

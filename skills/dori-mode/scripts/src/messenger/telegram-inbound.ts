@@ -16,6 +16,8 @@ export type TgInbound = {
   readonly updateId: number;
   /** The Telegram message_id — the id a later edit replaces (edit lines print it as mid=). */
   readonly messageId?: number;
+  /** The message_id this one replies to; absent when it replies to nothing or only sits in a topic. */
+  readonly replyTo?: number;
   readonly from: number;
   readonly username?: string;
   readonly text?: string;
@@ -122,6 +124,7 @@ type TgMessage = {
   readonly chat?: { readonly id: number; readonly type?: string };
   readonly is_topic_message?: boolean;
   readonly message_thread_id?: number;
+  readonly reply_to_message?: { readonly message_id?: number };
   readonly text?: string;
   readonly caption?: string;
   /** Unix seconds Telegram recorded the message; absent on some old or edited payloads. */
@@ -147,6 +150,12 @@ type TgUpdate = { readonly update_id: number; readonly message?: TgMessage; read
  */
 const threadOf = (m: TgMessage): number | undefined =>
   m.is_topic_message === true ? (m.message_thread_id ?? 1) : undefined;
+
+/** The message replied to. A topic message that replies to nothing names the topic's root (id = topic id): no reply. */
+const replyOf = (m: TgMessage): number | undefined => {
+  const id = m.reply_to_message?.message_id;
+  return m.is_topic_message === true && id === m.message_thread_id ? undefined : id;
+};
 
 /** The largest photo variant is the last array element; file ids are unique per size. */
 const mediaOf = (m: TgMessage): TgMedia | undefined => {
@@ -217,10 +226,13 @@ export const pollTelegramInbound = async (
     }
     const source = m!.chat!.type === "private" ? "dm" : "topic";
     const thread = source === "topic" ? (threadOf(m!) ?? 1) : threadOf(m!);
+    const replyTo = replyOf(m!);
+    const media = mediaOf(m!);
     const inbound: TgInbound = {
       kind,
       source,
       ...(m!.message_id === undefined ? {} : { messageId: m!.message_id }),
+      ...(replyTo === undefined ? {} : { replyTo }),
       chat: Number(m!.chat!.id),
       ...(thread === undefined ? {} : { thread }),
       updateId: u.update_id,
@@ -228,10 +240,7 @@ export const pollTelegramInbound = async (
       ...(m!.from!.username === undefined ? {} : { username: m!.from!.username }),
       ...(m!.text === undefined && m!.caption === undefined ? {} : { text: m!.text ?? m!.caption }),
       ...(m!.date === undefined ? {} : { date: m!.date }),
-      ...(() => {
-        const media = mediaOf(m!);
-        return media === undefined ? {} : { media };
-      })(),
+      ...(media === undefined ? {} : { media }),
     };
     emit(inbound); // may throw: offset stays before this update, so it is polled again
     out.push(inbound);

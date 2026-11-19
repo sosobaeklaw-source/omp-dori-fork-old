@@ -1,7 +1,8 @@
 // Sessions across every runtime the skill talks to: one `Runtimes` registry, each stored ref answered by its own kind.
 import type { Runtimes } from "../../../../src/runtime/registry.ts";
 import { type DeliverWhen, formatRef, type SessionInfo, type SessionRef } from "../../../../src/runtime/types.ts";
-import type { Clock } from "./run.ts";
+import type { FlowDeps } from "./done-flow.ts";
+import { type Clock, runtimesOf } from "./run.ts";
 
 export class UnsafeTextError extends Error {}
 
@@ -50,6 +51,19 @@ export const listWatched = async (
 
 export const readScreen = async (rts: Runtimes, ref: SessionRef, lines?: number): Promise<string> =>
   rts.for(ref).read(ref, lines ?? SCREEN_LINES);
+
+/** Closes the lane's tab when it has one, else its session; a failed close is named in the receipt, never thrown. */
+export const closeSession = async (deps: FlowDeps, ref: SessionRef): Promise<string> => {
+  const what = ref.container ? `tab ${ref.container}` : `pane ${ref.id}`;
+  try {
+    await runtimesOf(deps)
+      .for(ref)
+      .close(ref, ref.container ? "container" : "session");
+    return `${what} closed`;
+  } catch {
+    return `${what} not closed`;
+  }
+};
 
 /** States a runtime reports for a session whose agent is running. A screen read never stands in for these. */
 export const ALIVE_STATUSES: ReadonlySet<string> = new Set(["idle", "working", "blocked", "done", "error"]);

@@ -1,6 +1,4 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import {
@@ -21,27 +19,11 @@ import type {
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
+import { assertNativeHost } from "./host.ts";
 
 type FixtureModel = NonNullable<ExtensionContext["model"]>;
 
 const preparedFactories = new Map<string, Promise<PreparedExtension>>();
-
-async function assertNativeHost(): Promise<void> {
-  const host = process.env["DORI_TEST_OMP_ROOT"];
-  if (!host || !isAbsolute(host)) throw new Error("DORI_TEST_OMP_ROOT must name the absolute exact native OMP fixture");
-  const manifest = await Bun.file(join(host, "package.json")).json();
-  if (manifest.version !== "18.20.0") throw new Error(`native OMP fixture must be 18.20.0, got ${manifest.version}`);
-  for (const [specifier, path] of [
-    ["@oh-my-pi/pi-coding-agent/extensibility/extensions/runner", "src/extensibility/extensions/runner.ts"],
-    ["@oh-my-pi/pi-coding-agent/extensibility/extensions/loader", "src/extensibility/extensions/loader.ts"],
-    ["@oh-my-pi/pi-coding-agent/config/settings", "src/config/settings.ts"],
-  ] as const) {
-    const resolved = import.meta.resolve(specifier);
-    const modulePath = resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved;
-    if (realpathSync(modulePath) !== realpathSync(join(host, path)))
-      throw new Error(`native prompt guard imported ${specifier} outside DORI_TEST_OMP_ROOT`);
-  }
-}
 
 /** Rebind the same canonically prepared module across parent and subagent sessions, as the native host does. */
 export const nativeExtensionFactory = async (entry: string): Promise<ExtensionFactory> => {

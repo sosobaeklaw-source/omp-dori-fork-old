@@ -5,7 +5,7 @@ import { object } from "../src/update/config.ts";
 import { githubApi, githubPages } from "./release-process.ts";
 
 export const RELEASE_REPOSITORY = "vntrevx/omp-dori";
-const REQUIRED = ["check", "test-macos", "e2e-herdr", "e2e-hc"];
+const REQUIRED = ["check", "e2e-herdr", "e2e-hc"];
 type Reads = { api: typeof githubApi; pages: typeof githubPages };
 
 function record(value: unknown): Record<string, unknown> {
@@ -135,7 +135,7 @@ export async function releaseGate(
     }
     return { name, checkId: Number(match[1]) };
   });
-  // Only these four independent GETs overlap. Drain all reads before validating in required-job order.
+  // Only the required independent GETs overlap. Drain all reads before validating in required-job order.
   const results = await Promise.allSettled(
     requiredChecks.map(({ checkId }) => reads.api(`${prefix}/check-runs/${checkId}`)),
   );

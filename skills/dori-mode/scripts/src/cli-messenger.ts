@@ -1,9 +1,10 @@
 /** dori send, presence, inbound, thread, react and transcribe: the messengers. */
 import { existsSync } from "node:fs";
 
-import { type Command, die, envSlackToken, every, slackAuth } from "./cli-context.ts";
-import { reactDiscord, sendDiscord, threadDiscord, withLocalAudio } from "./cli-discord-ops.ts";
+import { type Command, die, envSlackToken, every, messageText, slackAuth } from "./cli-context.ts";
+import { channelDiscord, reactDiscord, sendDiscord, threadDiscord, withLocalAudio } from "./cli-discord-ops.ts";
 import { discordClock, discordInboundCommand, openDiscordSocket, untilStopped } from "./cli-discord.ts";
+import { ChannelPurposeError } from "./messenger/discord-channels.ts";
 import { discordPresence } from "./messenger/discord-presence.ts";
 import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
@@ -18,7 +19,7 @@ import { transcribe, TranscriptionError } from "./messenger/voice.ts";
 import { realClock, run } from "./run.ts";
 
 /** Messenger errors are one line, never a stack. */
-export const messengerErrors = [MessengerError, UnsafeMessageError, TranscriptionError] as const;
+export const messengerErrors = [MessengerError, UnsafeMessageError, TranscriptionError, ChannelPurposeError] as const;
 
 const NO_SLACK_TOKEN = "DORI_SLACK_TOKEN is not set (nor DORI_SLACK_TOKEN_FILE)";
 
@@ -26,8 +27,10 @@ const send: Command = async (cli) => {
   const { key, need, opt, values, config } = cli;
   const platform = key ?? die("send needs slack, telegram or discord");
   if (platform === "discord") return await sendDiscord(cli);
+  // A reply that silently became a plain post would land out of context.
+  if (values["reply"] !== undefined) die("--reply is supported for discord only");
   const to = need("to");
-  const text = need("text");
+  const text = await messageText(cli);
   const thread = opt("thread");
   const edit = opt("edit");
   const token = (name: string) => process.env[name] ?? die(`${name} is not set`);
@@ -146,6 +149,8 @@ const VOICE_TRANSCRIBE_MS = 120_000;
 
 const inbound: Command = async ({ key, loopMinutes, config, values }) => {
   const minutes = loopMinutes();
+  const context = values["context"] === true;
+  if (context && key !== "discord") die("--context is supported for discord only");
   if (key === "telegram") return await telegramInbound(config.stateDir, minutes);
   if (key === "discord")
     return await discordInboundCommand(
@@ -163,6 +168,7 @@ const inbound: Command = async ({ key, loopMinutes, config, values }) => {
               VOICE_DOWNLOAD_MS,
             )
         : undefined,
+      context,
     );
   if (key !== "slack") die("inbound supports slack, telegram or discord");
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));
@@ -186,6 +192,7 @@ export const messengerCommands: Readonly<Record<string, Command>> = {
   inbound,
   thread: async (cli) => (cli.key === "discord" ? await threadDiscord(cli) : die("thread supports discord")),
   react: async (cli) => (cli.key === "discord" ? await reactDiscord(cli) : die("react supports discord")),
+  channel: async (cli) => (cli.key === "discord" ? await channelDiscord(cli) : die("channel supports discord")),
   "inbound-lag": async ({ opt, config }) => {
     // Read back what the receiver recorded: without this the jsonl is a file nobody can query.
     const limitText = opt("limit");

@@ -25,7 +25,7 @@ test("a long-lived ledger sees a thread another process recorded later and never
   expect((await receiver.list()).map((t) => t.channel)).toEqual(["C1"]);
   await new ThreadLedger(file).record("C2", "2000.000100", "2000.000100");
   expect((await receiver.list()).map((t) => t.channel)).toEqual(["C1", "C2"]);
-  await receiver.markSeen("C1", "1000.000100", "3000.000100");
+  await receiver.markSeen([{ channel: "C1", rootTs: "1000.000100", ts: "3000.000100" }]);
   expect(onDisk(file)).toEqual(["C1:1000.000100@3000.000100", "C2:2000.000100@2000.000100"]);
 });
 
@@ -33,8 +33,8 @@ test("a seen position only moves forward, whichever process wrote last", async (
   const file = join(state.dir, "slack-threads.json");
   const a = new ThreadLedger(file);
   await a.record("C1", "1000.000100", "1000.000100");
-  await new ThreadLedger(file).markSeen("C1", "1000.000100", "5000.000100");
-  await a.markSeen("C1", "1000.000100", "3000.000100");
+  await new ThreadLedger(file).markSeen([{ channel: "C1", rootTs: "1000.000100", ts: "5000.000100" }]);
+  await a.markSeen([{ channel: "C1", rootTs: "1000.000100", ts: "3000.000100" }]);
   await a.record("C1", "1000.000100", "4000.000100");
   expect(onDisk(file)).toEqual(["C1:1000.000100@5000.000100"]);
 });

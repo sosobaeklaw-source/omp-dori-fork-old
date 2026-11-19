@@ -39,6 +39,7 @@ interface SessionEntry {
 }
 export interface DoriContext {
   cwd: string;
+  mode: string;
   abort(): void;
   agent: { kind: "main" | "sub"; id: string; parentId?: string };
   model?: PromptModel;
@@ -216,7 +217,14 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let lifecycleRegistered = false;
   /** The session whose monitor bootstrap was rejected: it stays role-less until a session_start bootstraps it again. */
   let rejectedBootstrap: string | undefined;
-  let session: { id: string; startedAt: string } | undefined;
+  let session:
+    | {
+        id: string;
+        startedAt: string;
+        monitorSpecs?: readonly MonitorSpec[];
+        intake?: ReturnType<typeof recordedIntake>;
+      }
+    | undefined;
   let goal: PaneState["goal"] = { status: "none" };
   let agentStatus: "idle" | "working" = "idle";
   let goalToolAdded = false;
@@ -230,7 +238,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   );
   const runtimeHealth = new RuntimeHealthWriter(monitors);
 
-  // Only the file this process wrote: another process may have taken the pane since.
+  // Only remove a live record this process wrote. Inactive pointers are handled separately on plain TUI takeover.
   const removePane = (): void => {
     runtimeHealth.stop();
     if (
@@ -239,6 +247,24 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       readPaneState(stateDir, paneWritten)?.pid === process.pid
     ) {
       rmSync(paneStatePath(stateDir, paneWritten), { force: true });
+      if (process.env.HC_TERMINAL_ID) process.stdout.write("\x1b]7501;state=unknown:app=omp\x1b\\");
+    }
+    paneWritten = undefined;
+  };
+
+  // Preserve session identity for a later resume without attesting a live pane owner.
+  const retirePane = (): void => {
+    runtimeHealth.stop();
+    if (paneWritten === undefined || stateDir === undefined) return;
+    const state = readPaneState(stateDir, paneWritten);
+    if (state !== null && state.pid === process.pid) {
+      writePaneState(stateDir, {
+        ...state,
+        pid: 0,
+        agentStatus: "idle",
+        approvalPending: false,
+        updatedAt: new Date().toISOString(),
+      });
       if (process.env.HC_TERMINAL_ID) process.stdout.write("\x1b]7501;state=unknown:app=omp\x1b\\");
     }
     paneWritten = undefined;
@@ -277,9 +303,11 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   const savePane = (ctx: DoriContext): void => {
     const paneId = process.env.HC_TERMINAL_ID || process.env.HERDR_PANE_ID;
     if (!paneId || stateDir === undefined || !session) return;
-    // The pane now runs a session without a role: a leftover file would point `dori` at the previous session.
+    // Only an interactive session taking over the pane clears an inactive resume pointer. Print/RPC children
+    // inherit pane ids too, but do not own the terminal. A record another live process owns stays untouched.
     if (!role) {
       removePane();
+      if (ctx.mode === "tui" && !paneHeldByAnother(paneId)) rmSync(paneStatePath(stateDir, paneId), { force: true });
       return;
     }
     if (paneHeldByAnother(paneId)) return;
@@ -315,9 +343,12 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     }
   };
 
-  // Boot reads this desired-state mirror instead of opening private session transcripts.
+  // Cache desired intent for /new; boot reads the same mirror without opening private session transcripts.
   const saveMonitorSpecs = (specs: ReadonlyMap<string, MonitorSpec>, branch: readonly SessionEntry[]): void => {
-    if (!session || !stateDir) return;
+    if (!session) return;
+    session.monitorSpecs = [...specs.values()];
+    session.intake = recordedIntake(branch);
+    if (!stateDir) return;
     const dir = join(stateDir, "monitors");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = join(dir, `${encodeURIComponent(session.id)}.json`);
@@ -328,8 +359,8 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
         {
           version: 1,
           sessionId: session.id,
-          monitors: [...specs.values()],
-          intake: recordedIntake(branch),
+          monitors: session.monitorSpecs,
+          intake: session.intake,
         },
         null,
         2,
@@ -373,7 +404,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     });
     pi.on("session_shutdown", () => {
       monitors.stopAll();
-      removePane();
+      retirePane();
     });
   };
 
@@ -461,25 +492,50 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
 
   // Registered before omp-ulw so its restore handlers see this event's role.
   for (const eventName of ["session_start", "session_switch", "session_branch", "session_tree"] as const) {
-    pi.on(eventName, async (_event, ctx) => {
+    pi.on(eventName, async (event, ctx) => {
       const branch = ctx.sessionManager.getBranch();
       let flaggedRole = false;
       if (ctx.agent.kind === "sub") {
         role = ctx.agent.parentId === undefined ? undefined : agentRoles.get(ctx.agent.parentId);
       } else {
-        role = recordedRole(branch);
+        const recorded = recordedRole(branch);
+        // `/new` emits `session_switch` with `reason: "new"`; its empty branch has no role entry to read. Adopting
+        // that emptiness would strip `monitor`, stop the monitors that answer the messenger, and drop the pane record
+        // for the rest of the process lifetime, so the process's own role carries over instead.
+        const carried =
+          eventName === "session_switch" &&
+          typeof event === "object" &&
+          event !== null &&
+          "reason" in event &&
+          event.reason === "new";
+        role = recorded ?? (carried ? role : undefined);
         const flagged = pi.getFlag(ROLE_FLAG);
-        if (eventName === "session_start" && role === undefined && flagged !== undefined) {
+        if (role === undefined && eventName === "session_start" && flagged !== undefined) {
           role = parseRole(flagged);
           if (role) flaggedRole = true;
           else ctx.ui.notify(`omp-dori: --${ROLE_FLAG} must be "dori" or "lane", got "${String(flagged)}"`, "error");
         }
         if (eventName !== "session_start" && rejectedBootstrap === ctx.sessionManager.getSessionId()) role = undefined;
+        // Re-record the role and desired monitor starts: an exited child is not a recorded stop, and the fresh
+        // branch otherwise loses the intent that `syncMain` uses to restore it.
+        if (carried && role && recorded === undefined) pi.appendEntry(ROLE_ENTRY, role);
+        if (carried && role === "dori" && recorded === undefined) {
+          for (const spec of session?.monitorSpecs ?? [])
+            pi.appendEntry(MONITOR_ENTRY, {
+              op: "start",
+              name: spec.name,
+              argv: spec.argv,
+              filter: spec.filter,
+              cwd: spec.cwd,
+            });
+          if (session?.intake) pi.appendEntry("omp-dori:intake", session.intake);
+        }
       }
       if (role) agentRoles.set(ctx.agent.id, role);
       else agentRoles.delete(ctx.agent.id);
       try {
-        if (ctx.agent.kind === "main") await syncMain(ctx, branch, eventName === "session_start");
+        if (ctx.agent.kind === "main")
+          await syncMain(ctx, ctx.sessionManager.getBranch(), eventName === "session_start");
       } finally {
         // A rejected bootstrap has cleared the role, so it is not recorded; any other failure keeps the role this
         // process runs with, and its record, as a later resume without the flag must restore it.

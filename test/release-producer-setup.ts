@@ -59,7 +59,7 @@ export function githubFixture() {
     status: "completed",
     conclusion: "success",
   };
-  const jobs: Record<string, unknown>[] = ["check", "test-macos", "e2e-herdr", "e2e-hc"].map((name, i) => ({
+  const jobs: Record<string, unknown>[] = ["check", "e2e-herdr", "e2e-hc"].map((name, i) => ({
     name,
     head_sha: manifest.commit,
     run_id: 70,

@@ -77,12 +77,18 @@ export class ThreadLedger {
     });
   }
 
-  async markSeen(channel: string, rootTs: string, ts: string): Promise<void> {
+  async markSeen(updates: readonly { channel: string; rootTs: string; ts: string }[]): Promise<void> {
+    if (updates.length === 0) return;
     await this.update((threads) => {
-      const prev = threads.get(keyOf(channel, rootTs));
-      if (!prev || !tsAfter(ts, prev.seenTs)) return false;
-      threads.set(keyOf(channel, rootTs), { ...prev, seenTs: ts });
-      return true;
+      let changed = false;
+      for (const { channel, rootTs, ts } of updates) {
+        const key = keyOf(channel, rootTs);
+        const prev = threads.get(key);
+        if (!prev || !tsAfter(ts, prev.seenTs)) continue;
+        threads.set(key, { ...prev, seenTs: ts });
+        changed = true;
+      }
+      return changed;
     });
   }
 

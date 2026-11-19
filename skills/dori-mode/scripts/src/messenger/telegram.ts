@@ -1,5 +1,6 @@
 import type { Clock } from "../run.ts";
 import { guardText, type Http, MessengerError, withBackoff } from "./http.ts";
+import { cutAt } from "./split.ts";
 
 export type TgTarget = { readonly chatId: number | string; readonly threadId?: number };
 
@@ -19,13 +20,7 @@ export const splitForTelegram = (text: string): string[] => {
   const parts: string[] = [];
   let rest = text;
   while (rest.length > limit) {
-    const window = rest.slice(0, limit);
-    const nl = window.lastIndexOf("\n");
-    const sp = window.lastIndexOf(" ");
-    let at = nl >= limit / 2 ? nl + 1 : sp >= limit / 2 ? sp + 1 : limit;
-    const before = rest.charCodeAt(at - 1);
-    const after = rest.charCodeAt(at);
-    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) at--;
+    const at = cutAt(rest, limit, ["\n", " "]);
     parts.push(rest.slice(0, at));
     rest = rest.slice(at);
   }

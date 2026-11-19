@@ -23,9 +23,10 @@ const OMP_COMMAND =
   /^(?:(?:\S*\/)?(?:bun|node)(?:\s+-\S+)*\s+)?(?:\S*\/)?omp(?:\s|$)|^(?:\S*\/)?(?:bun|node)(?:\s+-\S+)*\s+\S*@oh-my-pi\/pi-coding-agent\/dist\/cli\.js(?:\s|$)/;
 const SOURCE_OMP_COMMAND =
   /^(?:\S*\/)?bun\s+--preload\s+(.+\/packages\/coding-agent\/)scripts\/omp\.ts\s+(?:--preload\s+\1scripts\/\.\.\/\.\.\/utils\/src\/module-timer\.ts\s+)?\1(?:scripts\/\.\.\/)?src\/cli\.ts(?:\s|$)/;
-const OMP_EXECUTABLE = /(?:^|\/)omp$|@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/;
+export const OMP_EXECUTABLE = /(?:^|\/)omp$|@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/;
 
-const sourceOmpArgv = (argv: readonly string[]): boolean => {
+/** The pinned source launcher's exact argv (see SOURCE_OMP_COMMAND for its `ps` line). */
+export const sourceOmpArgv = (argv: readonly string[]): boolean => {
   if (!/(?:^|\/)bun$/.test(argv[0] ?? "") || argv[1] !== "--preload") return false;
   const root = /^(.+\/packages\/coding-agent\/)scripts\/omp\.ts$/.exec(argv[2] ?? "")?.[1];
   if (root === undefined) return false;
@@ -39,93 +40,12 @@ const sourceOmpArgv = (argv: readonly string[]): boolean => {
 export const isOmpProcessCommand = (command: string): boolean =>
   OMP_COMMAND.test(command) || SOURCE_OMP_COMMAND.test(command);
 
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-// GNU env's long options: those that take a separate operand when written without `=`, and those that take none.
-const ENV_LONG: Record<string, "flag" | "operand"> = {
-  "ignore-environment": "flag",
-  null: "flag",
-  debug: "flag",
-  "block-signal": "flag",
-  "default-signal": "flag",
-  "ignore-signal": "flag",
-  "list-signal-handling": "flag",
-  unset: "operand",
-  chdir: "operand",
-  argv0: "operand",
-};
-
-/** GNU getopt_long accepts any unambiguous prefix of a long option name. */
-const envLong = (name: string): "flag" | "operand" | undefined => {
-  if (Object.hasOwn(ENV_LONG, name)) return ENV_LONG[name];
-  const matches = Object.keys(ENV_LONG).filter((option) => name !== "" && option.startsWith(name));
-  return matches.length === 1 ? ENV_LONG[matches[0]!] : undefined;
-};
-
 /**
- * The index where `env [OPTION]... [-] [NAME=VALUE]... COMMAND` starts COMMAND, or undefined when an option is not one
- * of the GNU/BSD options that only change the environment or directory. `-S`/`--split-string` re-parses a string with
- * its own quoting, escapes and comments, so it is not decoded here.
+ * A `ps` command line that names OMP anywhere, as `bun run <omp>` or a published CLI under a spaced root does. Only
+ * discovery without the extension's record uses it (the start-time session folder); trust keeps the exact forms above.
  */
-function envCommandAt(argv: readonly string[], at: number): number | undefined {
-  for (;;) {
-    const word = argv[at];
-    if (word === undefined || word === "-" || !word.startsWith("-")) break;
-    at++;
-    if (word === "--") break;
-    if (word.startsWith("--")) {
-      const equals = word.indexOf("=");
-      const kind = envLong(word.slice(2, equals < 0 ? undefined : equals));
-      if (kind === undefined) return undefined;
-      if (kind === "operand" && equals < 0) at++;
-      continue;
-    }
-    for (let i = 1; i < word.length; i++) {
-      const flag = word[i];
-      if (flag === "i" || flag === "0" || flag === "v") continue;
-      if (flag !== "u" && flag !== "C" && flag !== "P" && flag !== "a") return undefined;
-      if (i + 1 === word.length) at++;
-      break;
-    }
-  }
-  if (argv[at] === "-") at++;
-  // env takes every word with a `=` as an assignment, not only shell-style names.
-  while (argv[at]?.includes("=")) at++;
-  return at < argv.length ? at : undefined;
-}
-
-/**
- * What an exact argv runs, after leading `NAME=value` assignments and the `env` utility with its options: the command
- * itself (that prefix removed), as `omp` when it starts OMP and `other` otherwise, or `unparsed` when a command prefix
- * cannot be read unambiguously, which must not be taken for either.
- */
-export type OmpArgv =
-  | { readonly kind: "omp" | "other"; readonly command: readonly string[] }
-  | { readonly kind: "unparsed" };
-
-export function classifyOmpArgv(argv: readonly string[]): OmpArgv {
-  let at = 0;
-  while (ASSIGNMENT.test(argv[at] ?? "")) at++;
-  const start = argv[at]?.split("/").at(-1) === "env" ? envCommandAt(argv, at + 1) : at;
-  if (start === undefined) return { kind: "unparsed" };
-  const command = argv.slice(start);
-  if (sourceOmpArgv(command)) return { kind: "omp", command };
-  const name = command[0]?.split("/").at(-1);
-  if (OMP_EXECUTABLE.test(command[0] ?? "")) return { kind: "omp", command };
-  if (name !== "bun" && name !== "node") return { kind: "other", command };
-  let script = 1;
-  while (command[script]?.startsWith("-")) script++;
-  const prefix = name === "bun" && command[script] === "run" ? 2 : 1;
-  if (prefix === 2) {
-    script++;
-    while (command[script]?.startsWith("-")) script++;
-  }
-  if (OMP_EXECUTABLE.test(command[script] ?? "")) return { kind: "omp", command };
-  if (script > prefix && command.slice(script + 1).some((arg) => OMP_EXECUTABLE.test(arg))) return { kind: "unparsed" };
-  return { kind: "other", command };
-}
-
-/** An exact argv that starts OMP (see classifyOmpArgv); an unparsed command prefix is not one. */
-export const isOmpArgv = (argv: readonly string[]): boolean => classifyOmpArgv(argv).kind === "omp";
+export const namesOmpProcess = (command: string): boolean =>
+  isOmpProcessCommand(command) || /(?:^|\s)(?:\S*\/)?omp(?:\s|$)|pi-coding-agent\/dist\/cli\.js/.test(command);
 
 export const ompProcess = (p: ForegroundProcess): boolean =>
   p.name.split("/").at(-1) === "omp" ||

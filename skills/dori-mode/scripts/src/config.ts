@@ -1,6 +1,6 @@
+import { checkPrAutoTrack } from "./config-pr.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
 import {
   resolveConsumerOmpCommand,
   resolveConsumerOmpUlwPath,
@@ -57,6 +57,7 @@ export type DoriConfig = {
   /** Expected Git author and committer per lowercase `owner/repo`, for `verify-pr` and the lane footer. */
   readonly repoIdentities: Readonly<Record<string, CommitIdentity>>;
   readonly supervision: SupervisionOptions;
+  readonly prAutoTrack: boolean;
 };
 
 export const defaultConfig = (home = homedir()): DoriConfig => ({
@@ -87,8 +88,8 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
     staleAfterMinutes: 20,
     defaults: { wallMinutes: null, tokens: null, costUsd: null },
   },
+  prAutoTrack: false,
 });
-
 export const configPath = (): string =>
   outsideRealHomeUnderTest(process.env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json"));
 
@@ -191,6 +192,7 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
   const raw = (await file.exists()) ? ((await file.json()) as Partial<DoriConfig>) : {};
   checkRuntime(raw.runtime);
   checkSupervision(raw.supervision);
+  checkPrAutoTrack(raw.prAutoTrack);
   const merged: DoriConfig = {
     ...base,
     ...raw,

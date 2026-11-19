@@ -191,6 +191,13 @@ try {
   });
   await run("update-b", [cli, "update", "install", "--from", distB, "--version", b.tag]);
   await inspect(distB, distA);
+  // A's historical updater selects B but still renders A's wrapper. B must publish its own launch hook.
+  const hasLaunchHook = () =>
+    readFileSync(join(side, "bin/omp"), "utf8").includes('"$source/src/release/automatic.ts"');
+  assert.equal(hasLaunchHook(), false, "The historical A updater unexpectedly published a newer launch hook");
+  await run("reinstall-b-references", [cli, "update", "install", "--from", distB, "--version", b.tag]);
+  await inspect(distB, distA);
+  assert.equal(hasLaunchHook(), true, "B same-release reinstall did not publish its automatic launch hook");
   await run("adopted-b-harness", [
     bun,
     join(import.meta.dir, "consumer-smoke-harness.ts"),
