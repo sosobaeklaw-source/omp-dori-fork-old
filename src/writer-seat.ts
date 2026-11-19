@@ -1,18 +1,7 @@
 /**
- * Picks the writing seat for one Argon/Hydrogen request.
- *
- * Seats are the lines of `<home>/writer-seats.txt`, `<aside account> <google mail prefix>` (e.g. `u0 sosobaeklaw`),
- * tried in that order. A seat is busy while its `state/carbon-<account>.lock` is held (the lock carbon-lock.sh and
- * every lane already use). It rests in two ways, and every lane reads the same files before taking it:
- *   - a limit notice the runner saw on the screen (`state/writer-rest-<account>.json`, until the time the notice shows);
- *   - three lost answers in a row (exit 14) in `state/writer-calls-<account>.tsv`, for 30 minutes, doubling each
- *     further three. Slowness or any other failure never rests a seat, and a sent request is never sent again.
- * Only when every seat is busy or resting does the request wait.
- *
- * The runner (gemini_web_runner.mjs) exits 16 when a limit notice kept it from picking `<model> 높음` before sending:
- * nothing was sent, so the same request goes to the next seat. Any other exit is the request's result as it stands.
- * It exits 15 when the Google account on the screen is not the one the seat names: nothing was sent, the seat is
- * marked disconnected (`state/writer-seat-<account>.json`, read by every lane) and the request moves on.
+ * Picks the first available writing seat. Limit notices, unreadable accounts and consecutive lost answers rest it;
+ * a verified account mismatch disconnects it. Exit 15 and pre-send limit exit 16 may move to another seat unsent.
+ * A sent request is never sent again. Every lane shares the locks, rest files, disconnect marks and call logs.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -178,7 +167,21 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
           if (code !== undefined) {
             recordCall(o.home, seat.account, env.now(), code);
             if (code === ACCOUNT_MISMATCH) {
-              markSeat(o.home, seat.account, false, "screen account differs from the seat (exit 15)", env.now());
+              const meta = existsSync(o.meta) ? JSON.parse(readFileSync(o.meta, "utf8")) : {};
+              if (meta.googleAccount) {
+                markSeat(o.home, seat.account, false, "screen account differs from the seat (exit 15)", env.now());
+              } else {
+                const now = env.now();
+                writeFileSync(
+                  restPath(o.home, seat.account),
+                  JSON.stringify({
+                    limitText: "screen account unreadable",
+                    resetAt: null,
+                    seenAt: new Date(now).toISOString(),
+                    until: new Date(now + BUSY_POLL_MS).toISOString(),
+                  }),
+                );
+              }
             } else if (code === 0) {
               markSeat(o.home, seat.account, true, "answered", env.now());
             }
@@ -204,7 +207,8 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
         env.log(`SKIP ${seat.account}: ${disconnectedWhy(o.home, seat.account)}`);
       }
       // Nothing was sent, so the same request may go to the next seat. Anything else already went out.
-      if ((code === LIMIT_PRESEND && rest && Date.parse(rest.seenAt) >= pickedAt) || code === ACCOUNT_MISMATCH) break;
+      if ((code === LIMIT_PRESEND && rest && Date.parse(rest.seenAt) >= pickedAt) || code === ACCOUNT_MISMATCH)
+        continue;
       return { code, seat };
     }
     // This seat just exited 15 and was marked, so every seat may now be disconnected: refuse before the wait.

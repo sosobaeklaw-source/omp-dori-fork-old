@@ -24,7 +24,7 @@ export function agySkipWhy(env: AgyEnv, home: string): string | undefined {
   if (!env.seatAccount) return "no agy account set";
   const mail = env.account();
   if (mail === undefined) return "agy not signed in";
-  if (mail !== env.seatAccount) return `agy logged in as ${mail}, not the seat`;
+  if (mail !== env.seatAccount) return `agy logged in as ${mail.split("@")[0]}@…, not the seat`;
   const until = readQuotaUntil(home);
   if (until > env.now()) return `agy-s4 under quota until ${new Date(until).toISOString()}`;
   return undefined;
@@ -40,7 +40,7 @@ export async function sendBody(agy: AgyEnv, web: SeatEnv, o: OrderOpts): Promise
     agy.log(why.startsWith("ESCALATE") ? why : `SKIP agy-s4: ${why}`);
   } else {
     try {
-      const code = await sendOnAgy(agy, o);
+      const code = await sendOnAgy(agy, o, false);
       return { code, seat: "agy-s4" };
     } catch (e) {
       if (!(e instanceof AgyStop)) throw e;

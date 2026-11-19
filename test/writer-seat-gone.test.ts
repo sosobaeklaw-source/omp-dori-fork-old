@@ -27,6 +27,7 @@ function setup(seats = "u0 alpha\n") {
       calls.push(args[args.indexOf("--account") + 1]!);
       t += 1000;
       onSpawn(process.pid);
+      writeFileSync(join(home, "r.meta.json"), JSON.stringify({ googleAccount: "xx***@example.com" }));
       return 15;
     },
   };

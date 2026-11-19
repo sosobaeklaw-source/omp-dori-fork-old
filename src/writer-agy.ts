@@ -44,7 +44,6 @@ export type AgyOpts = {
 
 export const stopPath = (home: string): string => join(home, "state", "agy-stopped.json");
 
-/** agy's logs for every lane, never before the last call this seat itself made. */
 function usageOf(env: AgyEnv, home: string): AgyUsage {
   const u = env.usage();
   return { ...u, lastEndAt: Math.max(u.lastEndAt, own.readOwn(home).lastAt) };
@@ -53,7 +52,6 @@ function usageOf(env: AgyEnv, home: string): AgyUsage {
 const record = (o: AgyOpts, kind: string, result: string, code: number, startedAt: number, endAt: number): void =>
   own.appendCall(o.calls, [own.kst(endAt), SEAT, kind, "Argon", AGY_MODEL, result, code, (endAt - startedAt) / 1000]);
 
-/** No configured account is a setup gap, not an account change: no call, and the seat is not stopped. */
 function seatAccount(env: AgyEnv): string {
   if (env.seatAccount) return env.seatAccount;
   throw new AgyStop(EXIT.account, "ESCALATE no agy account set (agyAccount in config.json or DORI_AGY_ACCOUNT)");
@@ -159,7 +157,7 @@ async function callOnce(env: AgyEnv, o: AgyOpts, kind: string, onPid: (pid: numb
 }
 
 /** Sends on the agy seat (lock, gap, one retry of a linked answer); stops throw {@link AgyStop}; answer to `out`. */
-export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
+export async function sendOnAgy(env: AgyEnv, o: AgyOpts, waitForSeat = true): Promise<number> {
   rmSync(o.out, { force: true });
   rmSync(o.meta, { force: true });
   refuseIfStopped(o.home);
@@ -169,6 +167,7 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
   checkAccount(env, o.home, "before the call");
   let got = tryTake(env, LOCK, o.lane, env.log);
   while ("busy" in got) {
+    if (!waitForSeat) throw new AgyStop(EXIT.busy, "agy-s4 busy; no call");
     env.log(`WAIT agy-s4 busy (${holder(env.root, LOCK)?.owner ?? got.busy})`);
     await env.sleep(BUSY_POLL_MS);
     got = tryTake(env, LOCK, o.lane, env.log);
@@ -185,6 +184,7 @@ export async function sendOnAgy(env: AgyEnv, o: AgyOpts): Promise<number> {
       // stuck past --timeout gives up (the lock is freed in finally) rather than holding every lane behind it.
       const giveUpAt = env.now() + o.timeout * 1000;
       for (let u = usageOf(env, o.home); u.running || u.lastEndAt + GAP_MS > env.now(); u = usageOf(env, o.home)) {
+        if (!waitForSeat && !sent) throw new AgyStop(EXIT.busy, "agy-s4 busy or gap active; no call");
         if (u.running && env.now() >= giveUpAt)
           throw new AgyStop(EXIT.busy, `ESCALATE an agy -p outside this lock ran past ${o.timeout}s; no call`);
         const wait = u.running ? BUSY_POLL_MS : u.lastEndAt + GAP_MS - env.now();

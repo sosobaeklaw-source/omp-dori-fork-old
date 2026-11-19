@@ -56,11 +56,10 @@ export function lostRun(home: string, account: string): { streak: number; until:
   let last = 0;
   for (const row of rows) {
     const [timestamp, , result] = row.split("\t");
-    if (result === "success") {
+    if (result !== "lost") {
       streak = 0;
       continue;
     }
-    if (result !== "lost") continue;
     streak++;
     if (streak % 3 === 0) last = Date.parse(timestamp ?? "");
   }

@@ -1,3 +1,9 @@
+/**
+ * A previous account was suspended with a 403 after tool-like use. The seat serializes calls and keeps a 60-second
+ * gap, checks the configured account before and after each call, stops on 403, and retries a file-linked answer once.
+ * Quota holds and account checks are re-read before each call; changing these protections risks another suspension.
+ * The request goes in a fresh folder and every call is logged. See writer-agy.ts for the implementation.
+ */
 /** What one `agy` call printed, and how the Antigravity seat (src/writer-agy.ts) reads it. */
 export type AgyRun = { code: number; stdout: string; stderr: string };
 

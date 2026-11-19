@@ -14,6 +14,16 @@ const log = (h: string, rows: string[]) =>
   writeFileSync(join(h, "state", "writer-calls-u0.tsv"), `${rows.join("\n")}\n`);
 
 describe("lost answer rest", () => {
+  test("a non-lost result breaks the consecutive loss run", () => {
+    const h = home();
+    log(h, [
+      lost("2026-11-16T00:00:00.000Z"),
+      "2026-11-16T00:01:00.000Z\tu0\tother\t3",
+      lost("2026-11-16T00:02:00.000Z"),
+      lost("2026-11-16T00:03:00.000Z"),
+    ]);
+    expect(lostRun(h, "u0")).toEqual({ streak: 2, until: 0 });
+  });
   test("the rest runs from the loss that completed the third, so one more later does not rest it again", () => {
     const h = home();
     log(h, [

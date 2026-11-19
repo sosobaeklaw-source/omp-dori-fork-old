@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { quotaUntilPath } from "../src/agy-own.ts";
+import { lockDir } from "../src/lock-owner.ts";
 import { stopPath } from "../src/writer-agy.ts";
 import { ok, setup as agySetup } from "./agy-fake.ts";
 import { sendBody } from "../src/writer-order.ts";
@@ -31,6 +32,34 @@ function web(home: string) {
 }
 
 describe("writing order", () => {
+  test("a busy agy lock sends immediately to the web seat", async () => {
+    const { env, opts, calls } = agySetup([]);
+    mkdirSync(lockDir(opts.home, "agy-s4"));
+    writeFileSync(join(lockDir(opts.home, "agy-s4"), "owner"), `other 2026-11-16 14:00:00 pid=${process.pid}\n`);
+    env.sleep = async () => {
+      throw new Error("must not wait");
+    };
+    writeFileSync(seatsPath(opts.home), "u0 alpha\n");
+    const w = web(opts.home);
+    const sent = await sendBody(env, w.env, opts);
+    expect([sent.seat, calls.length, w.calls]).toEqual(["u0", 0, ["u0"]]);
+  });
+
+  test("an active agy gap sends immediately to the web seat", async () => {
+    const { env, opts, calls } = agySetup([], undefined, {
+      lastEndAt: Date.parse("2026-11-16T10:00:00Z"),
+      running: false,
+      forbidden: false,
+    });
+    env.sleep = async () => {
+      throw new Error("must not wait");
+    };
+    writeFileSync(seatsPath(opts.home), "u0 alpha\n");
+    const w = web(opts.home);
+    const sent = await sendBody(env, w.env, opts);
+    expect([sent.seat, calls.length, w.calls]).toEqual(["u0", 0, ["u0"]]);
+  });
+
   test("a logged-out agy seat falls back without creating a stop", async () => {
     const { env, opts, calls } = agySetup([]);
     env.account = () => undefined;

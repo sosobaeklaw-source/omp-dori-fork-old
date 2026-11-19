@@ -140,7 +140,7 @@ describe("writer seat", () => {
   test("a screen account that is not the seat's is skipped, the reason kept, and the request moves on unsent", async () => {
     const { home, calls, env, opts } = setup();
     const { seat } = await sendOnSeat(
-      env((a) => (a === "u0" ? [15, {}] : [0, {}])),
+      env((a) => (a === "u0" ? [15, { googleAccount: "xx***@example.com" }] : [0, {}])),
       opts,
     );
     expect([seat.account, calls]).toEqual(["u2", ["u0", "u2"]]);
@@ -151,6 +151,17 @@ describe("writer seat", () => {
       { ...opts, lane: "other" },
     );
     expect(calls).toEqual(["u2"]);
+  });
+
+  test("an unreadable screen account rests briefly without permanent disconnection", async () => {
+    const { home, env, opts } = setup();
+    const result = await sendOnSeat(
+      env((a) => (a === "u0" ? [15, { googleAccount: "" }] : [0, {}])),
+      opts,
+    );
+    expect(result.seat.account).toBe("u2");
+    expect(disconnectedWhy(home, "u0")).toBeUndefined();
+    expect(readRest(home, "u0")?.limitText).toBe("screen account unreadable");
   });
 
   test("six lost answers rest the seat for twice as long as the first three", async () => {
