@@ -20,10 +20,11 @@ export type OrderOpts = SendOpts & { calls: string };
 
 /** Why the agy seat will not be called right now, or undefined when it is the next seat. */
 export function agySkipWhy(env: AgyEnv, home: string): string | undefined {
-  if (existsSync(stopPath(home))) return "agy-s4 stopped";
+  if (existsSync(stopPath(home))) return `ESCALATE agy-s4 stopped; a person removes ${stopPath(home)}`;
   if (!env.seatAccount) return "no agy account set";
   const mail = env.account();
-  if (mail !== undefined && mail !== env.seatAccount) return `agy logged in as ${mail}, not the seat`;
+  if (mail === undefined) return "agy not signed in";
+  if (mail !== env.seatAccount) return `agy logged in as ${mail}, not the seat`;
   const until = readQuotaUntil(home);
   if (until > env.now()) return `agy-s4 under quota until ${new Date(until).toISOString()}`;
   return undefined;
@@ -36,7 +37,7 @@ export function agySkipWhy(env: AgyEnv, home: string): string | undefined {
 export async function sendBody(agy: AgyEnv, web: SeatEnv, o: OrderOpts): Promise<{ code: number; seat: string }> {
   const why = agySkipWhy(agy, o.home);
   if (why) {
-    agy.log(`SKIP agy-s4: ${why}`);
+    agy.log(why.startsWith("ESCALATE") ? why : `SKIP agy-s4: ${why}`);
   } else {
     try {
       const code = await sendOnAgy(agy, o);
@@ -44,7 +45,7 @@ export async function sendBody(agy: AgyEnv, web: SeatEnv, o: OrderOpts): Promise
     } catch (e) {
       if (!(e instanceof AgyStop)) throw e;
       if (e.afterSend) throw e;
-      agy.log(`SKIP agy-s4: ${e.message.split("\n")[0]}`);
+      agy.log(e.message.startsWith("ESCALATE") ? e.message : `SKIP agy-s4: ${e.message}`);
     }
   }
   const now = web.now();

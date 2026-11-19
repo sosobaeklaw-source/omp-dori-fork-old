@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { quotaUntilPath } from "../src/agy-own.ts";
+import { stopPath } from "../src/writer-agy.ts";
 import { ok, setup as agySetup } from "./agy-fake.ts";
 import { sendBody } from "../src/writer-order.ts";
 import { type SeatEnv, seatsPath } from "../src/writer-seat.ts";
@@ -30,6 +31,33 @@ function web(home: string) {
 }
 
 describe("writing order", () => {
+  test("a logged-out agy seat falls back without creating a stop", async () => {
+    const { env, opts, calls } = agySetup([]);
+    env.account = () => undefined;
+    writeFileSync(seatsPath(opts.home), "u0 alpha\n");
+    const w = web(opts.home);
+    const sent = await sendBody(env, w.env, opts);
+    expect([sent.seat, sent.code, calls.length, w.calls, existsSync(stopPath(opts.home))]).toEqual([
+      "u0",
+      0,
+      0,
+      ["u0"],
+      false,
+    ]);
+  });
+
+  test("a prior 403 remains visible when falling back to the web", async () => {
+    const { env, opts } = agySetup([], undefined, { lastEndAt: 0, running: false, forbidden: true });
+    writeFileSync(seatsPath(opts.home), "u0 alpha\n");
+    const w = web(opts.home);
+    const sent = await sendBody({ ...env, log: (l) => w.lines.push(l) }, w.env, opts);
+    expect([sent.seat, existsSync(stopPath(opts.home)), w.lines.some((l) => l.startsWith("ESCALATE"))]).toEqual([
+      "u0",
+      true,
+      true,
+    ]);
+  });
+
   test("agy answers first and no web seat is called", async () => {
     const { env, opts, calls } = agySetup([ok("본문")]);
     writeFileSync(seatsPath(opts.home), "u0 alpha\n");
