@@ -10,7 +10,9 @@ Branches (started together, same instruction for every model):
   (b) pirate__*.md   every model in the tokenmaxx and OpenCode Go lists, highest reasoning first.
                      Google models are never called (recorded as skipped). With --material client
                      the whole branch is skipped and recorded.
-No GPT branch: web GPT is not used for red-team or delivery review (owner decision, 2026-11-16).
+  (c) gpt6pro_web.md  web GPT 6 Pro via gpt-web/run.js under carbon-lock <acct>.
+                     A missing answer is recorded as '못 받음' and never waited on.
+No GPT API branch: web GPT 6 Pro only (owner decision 2026-11-16 redteam.web_gpt6pro_carbon_plus_all_pirates).
 Then merged.md groups the same finding across models (Opus via local ocx) with a model count.
 """
 from __future__ import annotations
@@ -60,11 +62,44 @@ def write_model_file(path: Path, head: dict, text: str) -> None:
 
 
 # ---------- (a) Carbon web ----------
+GPT_RUN = HOME / "sobaegi-lead/results/gpt-web/run.js"
+GOT = "받음"
+NOT_GOT = "못 받음"
+
+
+def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
+    """Web GPT 6 Pro. One attempt; no answer is recorded as '못 받음' and the run moves on."""
+    if not acct:
+        write_model_file(out / "gpt6pro_web.md", {"branch": "gpt6pro_web", "status": NOT_GOT, "reason": blocked},
+                         "돌리지 않았다. 다른 모델로 대신하지 않았다.")
+        return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
+    raw = out / "raw_gpt6pro_web.txt"
+    meta = out / "raw_gpt6pro_web.meta.json"
+    raw.unlink(missing_ok=True)  # an earlier run's answer must never read as this run's
+    meta.unlink(missing_ok=True)
+    t0 = time.time()
+    proc = subprocess.run([str(LOCK), acct.split(":")[0], lane, "--", "node", str(GPT_RUN), "--prompt", str(prompt_file),
+                           "--out", str(raw), "--account", acct, "--meta", str(meta), "--timeout", "1800"],
+                          capture_output=True, text=True)
+    m = json.loads(meta.read_text()) if meta.exists() else {}
+    text = raw.read_text() if raw.exists() and m.get("status") == "ok" else ""
+    got = m.get("status") == "ok" and bool(text)
+    head = {"branch": "gpt6pro_web", "account": acct, "status": GOT if got else NOT_GOT,
+            "model_shown": m.get("modelLabel", "-"), "chat_url": m.get("chatUrl", "-"),
+            "chars": len(text), "seconds": round(time.time() - t0)}
+    if not got:
+        head["reason"] = m.get("reason") or f"exit {proc.returncode}"
+    write_model_file(out / "gpt6pro_web.md", head,
+                     text or (m.get("reason", "") + "\n" + proc.stdout[-3000:] + proc.stderr[-2000:]))
+    return {"branch": "gpt6pro_web", "status": head["status"], "model": head["model_shown"],
+            "chars": len(text), "text": text}
+
+
 def run_carbon(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
     if not acct:
-        write_model_file(out / "carbon_web.md", {"branch": "carbon_web", "status": f"blocked: {blocked}"},
+        write_model_file(out / "carbon_web.md", {"branch": "carbon_web", "status": NOT_GOT, "reason": blocked},
                          "돌리지 않았다. 다른 모델로 대신하지 않았다.")
-        return {"branch": "carbon_web", "status": "blocked", "model": "-", "chars": 0}
+        return {"branch": "carbon_web", "status": NOT_GOT, "model": "-", "chars": 0}
     lock_acct = acct.split(":")[0]
     raw = out / "raw_carbon_web.txt"
     meta = out / "raw_carbon_web.meta.json"
@@ -77,8 +112,11 @@ def run_carbon(out: Path, prompt_file: Path, acct: str | None, lane: str, blocke
     m = json.loads(meta.read_text()) if meta.exists() else {}
     text = raw.read_text() if raw.exists() and m.get("status") == "ok" else ""
     model = m.get("modelLabel", "-")
-    head = {"branch": "carbon_web", "account": acct, "status": m.get("status", f"exit {proc.returncode}"),
+    got = m.get("status") == "ok" and bool(text)
+    head = {"branch": "carbon_web", "account": acct, "status": GOT if got else NOT_GOT,
             "model_shown": model, "chat_url": m.get("chatUrl", "-"), "chars": len(text), "seconds": round(time.time() - t0)}
+    if not got:
+        head["reason"] = m.get("reason") or m.get("status") or f"exit {proc.returncode}"
     write_model_file(out / "carbon_web.md", head, text or (m.get("reason", "") + "\n" + proc.stdout[-3000:] + proc.stderr[-2000:]))
     return {"branch": "carbon_web", "status": head["status"], "model": model, "chars": len(text), "text": text}
 
@@ -192,8 +230,11 @@ MERGE_INSTR = (
 def merge(out: Path, results: list[dict]) -> int:
     """Group findings; returns the group count. Raises when the merge model's reply cannot be used."""
     got = [r for r in results if r.get("text")]
+    received = [r["branch"] for r in results if r.get("status") == GOT]
+    missed = [r["branch"] for r in results if r.get("status") == NOT_GOT]
+    tally = f" | 받음: {', '.join(received) or '-'} | 못 받음: {', '.join(missed) or '-'}"
     if not got:
-        (out / "merged.md").write_text("# 병합 지적 0건 (답 0개, 병합하지 않음)\n")
+        (out / "merged.md").write_text(f"# 병합 지적 0건 (답 0개, 병합하지 않음){tally}\n")
         return 0
     known = {r["branch"] for r in got}
     blob = "\n\n".join(f"### {r['branch']}\n{r['text']}" for r in got)
@@ -205,7 +246,7 @@ def merge(out: Path, results: list[dict]) -> int:
         named = set(g.get("models") or [])
         g["counted"], g["unknown"] = sorted(named & known), sorted(named - known)
     groups.sort(key=lambda g: -len(g["counted"]))
-    lines = [f"# 병합 지적 {len(groups)}건 (병합 {r.get('model', MERGE_MODEL)}, 답 {len(got)}개)\n"]
+    lines = [f"# 병합 지적 {len(groups)}건 (병합 {r.get('model', MERGE_MODEL)}, 답 {len(got)}개){tally}\n"]
     for i, g in enumerate(groups, 1):
         extra = f" | 모르는 이름(세지 않음): {', '.join(g['unknown'])}" if g["unknown"] else ""
         lines.append(f"{i}. [{len(g['counted'])}개 모델] 위치: {g.get('location', '?')} | 문제: {g.get('problem', '?')}"
@@ -234,7 +275,9 @@ def main() -> int:
     ap.add_argument("--carbon-account", help="aside account for Gemini Carbon, e.g. u1:<profile>; omitted = branch recorded as blocked")
     ap.add_argument("--carbon-blocked", default="no logged-in Gemini account given", help="reason written when --carbon-account is omitted")
     ap.add_argument("--lane", default="redteam-path-1116")
-    ap.add_argument("--only", default="carbon,pirates",
+    ap.add_argument("--gpt-account", help="aside account for web GPT 6 Pro, e.g. u0:<profile>; omitted = branch recorded as 못 받음")
+    ap.add_argument("--gpt-blocked", default="no logged-in ChatGPT account given", help="reason written when --gpt-account is omitted")
+    ap.add_argument("--only", default="carbon,gpt,pirates",
                     help="branches to (re)run; the others are read back from their files in --out and merged again")
     a = ap.parse_args()
     only = set(a.only.split(","))
@@ -251,16 +294,18 @@ def main() -> int:
         except Exception as e:
             write_model_file(out / f"{branch}.md", {"branch": branch, "status": "error", "error": repr(e)}, repr(e))
             return {"branch": branch, "status": "error", "model": "-", "chars": 0, "text": ""}
-    with cf.ThreadPoolExecutor(2) as ex:
+    with cf.ThreadPoolExecutor(3) as ex:
         fc = ex.submit(run_carbon, out, pf, a.carbon_account, a.lane, a.carbon_blocked) if "carbon" in only else None
+        fg = ex.submit(run_gpt, out, pf, a.gpt_account, a.lane, a.gpt_blocked) if "gpt" in only else None
         fp = ex.submit(run_pirates, out, prompt, a.material) if "pirates" in only else None
         carbon = settle(fc, "carbon_web") if fc else read_back(out / "carbon_web.md")
+        gpt = settle(fg, "gpt6pro_web") if fg else read_back(out / "gpt6pro_web.md")
         if fp:
             pirates = settle(fp, "pirates_error")
             pirates = pirates if isinstance(pirates, list) else [pirates]
         else:
             pirates = [read_back(p) for p in sorted(out.glob("pirate__*.md"))]
-    results = [carbon, *pirates]
+    results = [carbon, gpt, *pirates]
     code, merged = 0, None
     try:
         merged = merge(out, results)
@@ -271,7 +316,7 @@ def main() -> int:
                                                  + [{"merged": merged}], ensure_ascii=False, indent=1))
     def short(r): return f"{r['model']} {r['chars']}" if r["chars"] else f"{r['status']}"
     ok = [r for r in pirates if r["chars"]]
-    print(f"Carbon {short(carbon)} | 해적선 "
+    print(f"Carbon {short(carbon)} | GPT 6 Pro {short(gpt)} | 해적선 "
           + ", ".join(f"{r['model']}:{r['chars']}" for r in ok) + f" | 병합 지적 {merged if merged is not None else '실패'}건")
     return code
 

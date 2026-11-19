@@ -109,6 +109,45 @@ class RedteamTest(unittest.TestCase):
             self.assertEqual(redteam.merge(self.out, [{"branch": "carbon_web", "text": ""}]), 0)
         self.assertEqual(fake.calls, [])
 
+
+    def test_gpt_branch_records_not_received_without_waiting(self):
+        def boom(*a, **k):
+            raise AssertionError("gpt runner must not be called when no account is given")
+        with mock.patch.object(redteam.subprocess, "run", boom):
+            r = redteam.run_gpt(self.out, self.out / "p.txt", None, "lane", "no account")
+        self.assertEqual(r["status"], redteam.NOT_GOT)
+        self.assertEqual(r["chars"], 0)
+        self.assertIn("돌리지 않았다", (self.out / "gpt6pro_web.md").read_text())
+
+    def test_gpt_branch_records_received_and_not_received(self):
+        def fake_run(cmd, capture_output, text):
+            meta = Path(cmd[cmd.index("--meta") + 1])
+            raw = Path(cmd[cmd.index("--out") + 1])
+            if "limit" in cmd[cmd.index("--account") + 1]:
+                meta.write_text(json.dumps({"status": "limit", "reason": "사용 한도"}))
+            else:
+                meta.write_text(json.dumps({"status": "ok", "modelLabel": "GPT-6 Pro", "chatUrl": "https://chatgpt.com/c/x"}))
+                raw.write_text("지적: 위치=1장 | 문제=단정 | 근거=추정")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(redteam.subprocess, "run", fake_run):
+            got = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+            miss = redteam.run_gpt(self.out, self.out / "p.txt", "u0:limit", "lane", "-")
+        self.assertEqual(got["status"], redteam.GOT)
+        self.assertEqual(got["chars"], len("지적: 위치=1장 | 문제=단정 | 근거=추정"))
+        self.assertEqual(miss["status"], redteam.NOT_GOT)
+        self.assertEqual(miss["chars"], 0)
+        self.assertIn("사용 한도", (self.out / "gpt6pro_web.md").read_text())
+
+    def test_merge_marks_received_and_not_received_branches(self):
+        reply = [{"location": "1장", "problem": "a", "evidence": "e", "models": ["carbon_web"]}]
+        fake = FakeHttp({redteam.OCX: {"model": "opus", "choices": [{"message": {"content": json.dumps(reply)}}]}})
+        results = [{"branch": "carbon_web", "status": redteam.GOT, "text": "x"},
+                   {"branch": "gpt6pro_web", "status": redteam.NOT_GOT, "text": ""}]
+        with mock.patch.object(redteam, "http_json", fake):
+            redteam.merge(self.out, results)
+        head = (self.out / "merged.md").read_text().splitlines()[0]
+        self.assertIn("받음: carbon_web", head)
+        self.assertIn("못 받음: gpt6pro_web", head)
     def test_unparseable_merge_reply_raises(self):
         fake = FakeHttp({redteam.OCX: {"choices": [{"message": {"content": "no json"}}]}})
         with mock.patch.object(redteam, "http_json", fake), self.assertRaises(ValueError):
