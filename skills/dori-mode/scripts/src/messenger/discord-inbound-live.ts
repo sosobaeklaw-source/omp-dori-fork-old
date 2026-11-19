@@ -9,7 +9,8 @@ type Intake = {
   accepts(message: Message): boolean;
   cursorFor(channel: string): string | undefined;
   sync(emit: Emit, queue?: DiscordInboundQueue): Promise<void>;
-  accept(message: Message, emit: Emit, admittedAfter?: string | null): void | Promise<void>;};
+  accept(message: Message, emit: Emit, admittedAfter?: string | null): void | Promise<void>;
+};
 
 export type DiscordInboundLive = { done: Promise<void>; close(): void };
 

@@ -46,7 +46,7 @@
 
 - The skill CLI loads command implementations on demand, avoiding updater, messenger and lane graphs for successful journal commands and all configuration/command graphs for `--version`. Ordinary commands retain configuration and consumer-native admission before execution; usage, exit codes and original error classes remain unchanged.
 
-- Automatic CI keeps the Linux `check`, `e2e-herdr` and `e2e-hc` jobs and this fork's macOS `test-macos` job (red-team runner, WP publish gate, skill and extension tests). Upstream dropped its automatic macOS job; this fork did not. The `check` job also verifies the latest ULW code-mode and task bridge against the bound native source.
+- Automatic CI keeps the Linux `check`, `e2e-herdr` and `e2e-hc` jobs. This fork's macOS `test-macos` job was removed: upstream dropped its automatic macOS job (f4be5ca) and the release gate accepts exactly those three Linux jobs, while `test-macos` was the only place the upstream native-cache removal tests failed. The `check` job also verifies the latest ULW code-mode and task bridge against the bound native source.
 
 - Monitor stdout/stderr use bounded incremental line framing and 64 KiB delivery batches. Oversized lines or rendered messages are preserved in private temporary files with explicit path/size notices instead of being truncated or accumulated in memory; storage/read failures stop the child and report potentially incomplete output. Normal filters, UTF-8, EOF, stop and session ownership behavior remain intact.
 
@@ -195,7 +195,7 @@ CLI output, release metadata and opt-in telemetry resource versions use the cano
 - Existing source-port/check/fresh-review, promotion, supervisor and recovery functionality moves to `dori upstream ... --config FILE`. There is no legacy `dori update stage/watch` alias.
 - The checkout installer moves to `scripts/install-source.sh`, retaining its source-user behavior. Public consumers use the separate release bootstrap.
 - `bun scripts/release.ts build --out DIST --prerelease` packages actual committed source into the fixed release assets. The root `package.json` remains the canonical version source; public archives exclude `ref/omp-ulw` and keep the exact external dependency pin.
-- Tag publication requires successful exact-commit `check`, `test-macos`, `e2e-herdr` and `e2e-hc` results from the repository's trusted CI workflow and GitHub Actions app. Existing tags/releases/assets are not overwritten.
+- Tag publication requires successful exact-commit `check`, `e2e-herdr` and `e2e-hc` results from the repository's trusted CI workflow and GitHub Actions app. Existing tags/releases/assets are not overwritten.
 
 ### Discord operation
 

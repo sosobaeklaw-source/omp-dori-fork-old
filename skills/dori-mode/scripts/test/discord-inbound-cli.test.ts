@@ -164,7 +164,6 @@ test("a ledger that cannot be read only warns, and intake still commits its curs
   ]);
 });
 
-
 test("transcription is opt-in, needs a hook and a non-empty marker, and announces itself", async () => {
   const withHook = {
     prepare: (dir: string) =>

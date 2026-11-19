@@ -9,9 +9,9 @@ import {
   type Message,
   messagePage,
   toInbound,
+  type Emit,
 } from "./discord-inbound-api.ts";
 import type { DiscordInboundQueue } from "./discord-inbound-queue.ts";
-import type { Emit } from "./discord-inbound-api.ts";
 import { discordInboundEnv, type DiscordInboundStore, isDiscordSnowflake } from "./discord-inbound-state.ts";
 import { MessengerError } from "./http.ts";
 

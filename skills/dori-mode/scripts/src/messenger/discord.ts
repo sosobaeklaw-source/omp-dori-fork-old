@@ -59,7 +59,8 @@ export class Discord {
    * part stops the rest; its error names the parts already posted, which stay.
    */
   async send(channelId: string, content: string, opts: { readonly replyTo?: string } = {}): Promise<string[]> {
-    return await this.post(channelId, splitForDiscord(guardText(content)), opts.replyTo);  }
+    return await this.post(channelId, splitForDiscord(guardText(content)), opts.replyTo);
+  }
 
   /** `before`: messages of the same text already posted (a forum starter), counted in a failure's part numbers. */
   private async post(
@@ -73,7 +74,7 @@ export class Discord {
     for (const part of parts) {
       const reference =
         ids.length === 0 && replyTo !== undefined
-          ? { message_reference: { message_id: replyTo, fail_if_not_exists: false } }
+          ? { message_reference: { message_id: replyTo, fail_if_not_exists: true } }
           : {};
       try {
         const sent = await this.call<{ id: string }>("POST", `/channels/${channelId}/messages`, {
