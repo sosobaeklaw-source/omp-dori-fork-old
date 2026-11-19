@@ -8,7 +8,7 @@ test("allows only a real complete CI response bound to the tagged commit, workfl
   await expect(releaseGate(f.manifest, f.reads)).resolves.toBeUndefined();
 });
 
-test("release validation follows exactly the three automatic Linux CI jobs", async () => {
+test("release validation follows the four CI jobs, including the macOS job", async () => {
   const workflow = Bun.YAML.parse(await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text());
   if (!object(workflow) || !object(workflow["jobs"])) throw new Error("CI workflow jobs must be a mapping");
   const jobs = workflow["jobs"];
