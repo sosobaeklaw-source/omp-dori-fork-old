@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { lockDir } from "../src/lock-owner.ts";
+import { disconnectedWhy } from "../src/writer-seat-log.ts";
 import { readRest, type SeatEnv, seatsPath, sendOnSeat } from "../src/writer-seat.ts";
 
 const NOW = Date.parse("2026-11-16T05:00:00Z");
@@ -26,6 +27,7 @@ function setup() {
     run: async (args, onSpawn) => {
       const account = args[args.indexOf("--account") + 1]!;
       calls.push(account);
+      t += 1000;
       // The fake runner's pid is this test's own (alive); the owner line must name it once it is spawned.
       onSpawn(process.pid);
       expect(readFileSync(join(lockDir(home, `carbon-${account}`), "owner"), "utf8")).toContain(`cmd=${process.pid}`);
@@ -120,5 +122,60 @@ describe("writer seat", () => {
       opts,
     );
     expect([code, calls, readRest(home, "u0")]).toEqual([3, ["u0"], undefined]);
+  });
+
+  test("three lost turns rest the account for the next lane without retrying the sent request", async () => {
+    const { calls, env, opts } = setup();
+    const failing = env(() => [14, {}]);
+    await sendOnSeat(failing, opts);
+    await sendOnSeat(failing, opts);
+    await sendOnSeat(failing, opts);
+    const next = await sendOnSeat(
+      env(() => [0, {}]),
+      { ...opts, lane: "other" },
+    );
+    expect([calls, next.seat.account]).toEqual([["u0", "u0", "u0", "u2"], "u2"]);
+  });
+
+  test("a screen account that is not the seat's is skipped, the reason kept, and the request moves on unsent", async () => {
+    const { home, calls, env, opts } = setup();
+    const { seat } = await sendOnSeat(
+      env((a) => (a === "u0" ? [15, { googleAccount: "xx***@example.com" }] : [0, {}])),
+      opts,
+    );
+    expect([seat.account, calls]).toEqual(["u2", ["u0", "u2"]]);
+    expect(disconnectedWhy(home, "u0")).toContain("exit 15");
+    calls.length = 0;
+    await sendOnSeat(
+      env(() => [0, {}]),
+      { ...opts, lane: "other" },
+    );
+    expect(calls).toEqual(["u2"]);
+  });
+
+  test("an unreadable screen account disconnects while another seat answers", async () => {
+    const { home, env, opts } = setup();
+    const result = await sendOnSeat(
+      env((a) => (a === "u0" ? [15, { googleAccount: "" }] : [0, {}])),
+      opts,
+    );
+    expect(result.seat.account).toBe("u2");
+    expect(disconnectedWhy(home, "u0")).toContain("account unreadable");
+  });
+
+  test("six lost answers rest the seat for twice as long as the first three", async () => {
+    const { home, calls, env, opts } = setup();
+    writeFileSync(seatsPath(home), "u0 alpha\n");
+    const failing = env(() => [14, {}]);
+    for (let i = 0; i < 3; i++) await sendOnSeat(failing, opts);
+    const lines: string[] = [];
+    const loud = { ...failing, log: (l: string) => lines.push(l) };
+    for (let i = 0; i < 3; i++) await sendOnSeat(i < 2 ? failing : loud, opts);
+    expect(calls).toEqual(["u0", "u0", "u0", "u0", "u0", "u0"]);
+    // The second window runs from the sixth loss (30 min after the third, plus the six calls' time), not from now.
+    const doubled = lines.find((l) => l.startsWith("REST u0"));
+    expect(doubled).toBe(
+      `REST u0 until ${new Date(NOW + 1_806_000 + 60 * 60_000).toISOString()}: 6 lost answers in a row`,
+    );
   });
 });

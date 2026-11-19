@@ -1,20 +1,24 @@
 /**
- * Picks the writing seat for one Argon/Hydrogen request: whichever web-Gemini account is free right now.
- *
- * Seats are the lines of `<home>/writer-seats.txt`, `<aside account> <google mail prefix>` (e.g. `u0 sosobaeklaw`),
- * tried in that order. A seat is busy while its `state/carbon-<account>.lock` is held (the lock carbon-lock.sh and
- * every lane already use), and resting only after the runner saw a limit notice on the screen: the notice text and
- * the reset time it shows go to `state/writer-rest-<account>.json`, and the seat is tried again from that time.
- * Slowness without a notice never rests a seat. Only when every seat is busy or resting does the request wait.
- *
- * The runner (gemini_web_runner.mjs) exits 16 when a limit notice kept it from picking `<model> 높음` before sending:
- * nothing was sent, so the same request goes to the next seat. Any other exit is the request's result as it stands;
- * a sent request is never sent again.
+ * Picks seats listed in writer-seats.txt under the shared carbon account lock. Three consecutive lost answers rest
+ * a seat for 30 minutes, doubling each further three; screen limit notices rest it until their displayed reset time.
+ * Exit 16 means the model limit was seen before sending, so the request may move to another seat. Exit 15 also means
+ * nothing was sent: a mismatched or unreadable account disconnects the seat until a person clears its state file.
+ * A sent request is never sent again. Every lane shares the locks, rest files, disconnect marks and call logs.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { holder, nameCommand, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
 import { Refusal } from "./refusal.ts";
+import {
+  disconnectedWhy,
+  LOST_TURN,
+  lostRun,
+  markSeat,
+  recordCall,
+  runnerAccount,
+  seatStatePath,
+} from "./writer-seat-log.ts";
+export { LOST_TURN };
 import type { Writer } from "./writer-request.ts";
 
 export type Seat = { account: string; expect: string };
@@ -43,8 +47,18 @@ export const UNDATED_REST_MS = 30 * 60_000;
 export const BUSY_POLL_MS = 20_000;
 /** The runner's exit code for a limit notice seen before sending (nothing sent). */
 export const LIMIT_PRESEND = 16;
+/** The runner's exit code when the Google account on screen is not the seat's (nothing sent). */
+export const ACCOUNT_MISMATCH = 15;
 
 export const seatsPath = (home: string): string => join(home, "writer-seats.txt");
+
+/**
+ * Every seat is disconnected, so nothing was sent and waiting would never end. The lane reports it as exit 15, the same
+ * code a single disconnected seat gives, and the message names the state files a person clears once signed in again.
+ */
+export class SeatGone extends Error {
+  readonly code = ACCOUNT_MISMATCH;
+}
 export const restPath = (home: string, account: string): string => join(home, "state", `writer-rest-${account}.json`);
 const lockName = (account: string): string => `carbon-${account}`;
 
@@ -69,11 +83,11 @@ export function readRest(home: string, account: string): Rest | undefined {
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Rest) : undefined;
 }
 
-/** The time a seat rests until, or undefined once that time has passed (or it never rested). */
 export function restingUntil(home: string, account: string, now: number): number | undefined {
   const rest = readRest(home, account);
   const until = rest ? Date.parse(rest.until) : Number.NaN;
-  return until > now ? until : undefined;
+  const callUntil = lostRun(home, account).until;
+  return Math.max(until > now ? until : 0, callUntil > now ? callUntil : 0) || undefined;
 }
 
 /** Rests the seat when the runner's meta carries a limit notice from the screen; returns the rest written, if any. */
@@ -93,7 +107,6 @@ export function noteLimit(home: string, account: string, metaPath: string, now: 
   return rest;
 }
 
-/** Adds the seat to the runner's meta, so every result names the account it went to and the label it ran under. */
 function stampMeta(metaPath: string, seat: Seat, pickedAt: number, waitedMs: number, tried: string[]): void {
   if (!existsSync(metaPath)) return;
   const meta = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
@@ -108,8 +121,12 @@ function stampMeta(metaPath: string, seat: Seat, pickedAt: number, waitedMs: num
 }
 
 /**
- * Sends the request on the first free, unrested seat, waiting only while none is. Returns the runner's exit code and
- * the seat it ran on. A presend limit (exit 16) rests that seat and moves the same request to the next one.
+ * Sends one request on the first seat that is free, and returns its exit code with the seat that ran it.
+ *
+ * A seat that exits 15 (the screen's account is not the seat's) is marked disconnected and the request moves on unsent,
+ * so the next seat may get it; every other exit already went out and is returned as it stands, never sent again. Only
+ * when every seat is busy or resting does the call wait, and when every seat is disconnected it refuses with an
+ * ESCALATE naming the state files a person must clear.
  */
 export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: number; seat: Seat }> {
   const seats = readSeats(o.home);
@@ -118,11 +135,23 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
   let waitNoted = "";
   for (;;) {
     const now = env.now();
-    const open = seats.filter((s) => restingUntil(o.home, s.account, now) === undefined);
+    const open = seats.filter(
+      (s) => restingUntil(o.home, s.account, now) === undefined && disconnectedWhy(o.home, s.account) === undefined,
+    );
+    // No seat can take this request. Waiting would never end (a disconnected seat is never called again), so the lane is
+    // told what a person must clear.
+    if (open.length === 0) refuseIfAllDisconnected(env, o.home, seats, now);
     for (const seat of open) {
       const got = tryTake(env, lockName(seat.account), o.lane, env.log);
       if ("busy" in got) continue;
-      let code: number;
+      // Read again under the lock: another lane may have rested or disconnected this seat while we waited for it.
+      const restNow = restingUntil(o.home, seat.account, env.now());
+      const whyNow = disconnectedWhy(o.home, seat.account);
+      if (restNow !== undefined || whyNow !== undefined) {
+        release(env.root, lockName(seat.account), got.owner);
+        continue;
+      }
+      let code: number | undefined;
       const pickedAt = env.now();
       env.log(
         `SEAT ${seat.account} (${seat.expect}) for ${o.model}${tried.length ? `, after ${tried.join(", ")}` : ""}`,
@@ -142,26 +171,80 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
           owner = nameCommand(env.root, lockName(seat.account), got.owner, pid);
         });
       } finally {
-        release(env.root, lockName(seat.account), owner);
+        try {
+          if (code !== undefined) {
+            recordCall(o.home, seat.account, env.now(), code);
+            if (code === ACCOUNT_MISMATCH) {
+              const account = runnerAccount(o.meta);
+              markSeat(
+                o.home,
+                seat.account,
+                false,
+                account ? "screen account differs (exit 15)" : "signed out / account unreadable (exit 15)",
+                env.now(),
+              );
+            } else if (code === 0) {
+              markSeat(o.home, seat.account, true, "answered", env.now());
+            }
+          }
+          if (code !== ACCOUNT_MISMATCH) noteLimit(o.home, seat.account, o.meta, env.now());
+        } finally {
+          release(env.root, lockName(seat.account), owner);
+        }
       }
+      if (code === undefined) throw new Refusal("runner exited without a status");
       tried.push(seat.account);
-      stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
-      const rest = noteLimit(o.home, seat.account, o.meta, env.now());
-      if (rest) env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);
-      if (code === LIMIT_PRESEND && rest) break;
+      if (code !== ACCOUNT_MISMATCH) stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
+      const rest = readRest(o.home, seat.account);
+      if (rest && Date.parse(rest.seenAt) >= pickedAt)
+        env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);
+      const lost = lostRun(o.home, seat.account);
+      if (code === LOST_TURN && lost.streak >= 3 && lost.until > env.now()) {
+        env.log(
+          `REST ${seat.account} until ${new Date(lost.until).toISOString()}: ${lost.streak} lost answers in a row`,
+        );
+      }
+      if (code === ACCOUNT_MISMATCH) {
+        env.log(`SKIP ${seat.account}: ${disconnectedWhy(o.home, seat.account)}`);
+      }
+      // Nothing was sent, so the same request may go to the next seat. Anything else already went out.
+      if ((code === LIMIT_PRESEND && rest && Date.parse(rest.seenAt) >= pickedAt) || code === ACCOUNT_MISMATCH)
+        continue;
       return { code, seat };
     }
+    // This seat just exited 15 and was marked, so every seat may now be disconnected: refuse before the wait.
+    refuseIfAllDisconnected(env, o.home, seats, env.now());
     const next = Math.min(...seats.map((s) => restingUntil(o.home, s.account, env.now()) ?? env.now() + BUSY_POLL_MS));
-    const why = seats
-      .map((s) => {
-        const r = restingUntil(o.home, s.account, env.now());
-        return r
-          ? `${s.account} resting until ${new Date(r).toISOString()}`
-          : `${s.account} busy (${holder(env.root, lockName(s.account))?.owner ?? "?"})`;
-      })
-      .join("; ");
+    const why = seatWhy(env, o.home, seats, env.now());
     if (why !== waitNoted) env.log(`WAIT ${why}`);
     waitNoted = why;
     await env.sleep(Math.max(1_000, Math.min(next - env.now(), BUSY_POLL_MS)));
   }
+}
+
+/**
+ * Throws when every seat is disconnected, which is the one state waiting can never leave. Resting seats do leave it, so
+ * a seat that is only resting keeps the wait; a seat disconnected and another resting keeps waiting for the resting one.
+ */
+function refuseIfAllDisconnected(env: SeatEnv, home: string, seats: readonly Seat[], now: number): void {
+  if (!seats.every((s) => disconnectedWhy(home, s.account) !== undefined)) return;
+  const files = seats.map((s) => seatStatePath(home, s.account)).join(", ");
+  throw new SeatGone(
+    `ESCALATE exit ${ACCOUNT_MISMATCH}: every writing seat is disconnected, so nothing was sent; ` +
+      `a person removes ${files} once the account is signed in again (${seatWhy(env, home, seats, now)})`,
+  );
+}
+
+/** One line per seat saying why it cannot be called now: disconnected, resting until when, or busy with whose lock. */
+function seatWhy(env: SeatEnv, home: string, seats: readonly Seat[], now: number): string {
+  return seats
+    .map((s) => {
+      const d = disconnectedWhy(home, s.account);
+      if (d) return `${s.account} disconnected (${d})`;
+      const r = restingUntil(home, s.account, now);
+      return r
+        ? `${s.account} resting until ${new Date(r).toISOString()}`
+        : `${s.account} busy (${holder(env.root, lockName(s.account))?.owner ?? "?"})`;
+    })
+    .join("; ");
 }
