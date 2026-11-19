@@ -1,13 +1,23 @@
 /**
- * Picks the first available writing seat. Limit notices, unreadable accounts and consecutive lost answers rest it;
- * a verified account mismatch disconnects it. Exit 15 and pre-send limit exit 16 may move to another seat unsent.
+ * Picks seats listed in writer-seats.txt under the shared carbon account lock. Three consecutive lost answers rest
+ * a seat for 30 minutes, doubling each further three; screen limit notices rest it until their displayed reset time.
+ * Exit 16 means the model limit was seen before sending, so the request may move to another seat. Exit 15 also means
+ * nothing was sent: a mismatched or unreadable account disconnects the seat until a person clears its state file.
  * A sent request is never sent again. Every lane shares the locks, rest files, disconnect marks and call logs.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { holder, nameCommand, type OwnerEnv, release, tryTake } from "./lock-owner.ts";
 import { Refusal } from "./refusal.ts";
-import { disconnectedWhy, LOST_TURN, lostRun, markSeat, recordCall, seatStatePath } from "./writer-seat-log.ts";
+import {
+  disconnectedWhy,
+  LOST_TURN,
+  lostRun,
+  markSeat,
+  recordCall,
+  runnerAccount,
+  seatStatePath,
+} from "./writer-seat-log.ts";
 export { LOST_TURN };
 import type { Writer } from "./writer-request.ts";
 
@@ -73,7 +83,6 @@ export function readRest(home: string, account: string): Rest | undefined {
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Rest) : undefined;
 }
 
-/** The time a seat rests until, or undefined once that time has passed (or it never rested). */
 export function restingUntil(home: string, account: string, now: number): number | undefined {
   const rest = readRest(home, account);
   const until = rest ? Date.parse(rest.until) : Number.NaN;
@@ -98,7 +107,6 @@ export function noteLimit(home: string, account: string, metaPath: string, now: 
   return rest;
 }
 
-/** Adds the seat to the runner's meta, so every result names the account it went to and the label it ran under. */
 function stampMeta(metaPath: string, seat: Seat, pickedAt: number, waitedMs: number, tried: string[]): void {
   if (!existsSync(metaPath)) return;
   const meta = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
@@ -167,33 +175,26 @@ export async function sendOnSeat(env: SeatEnv, o: SendOpts): Promise<{ code: num
           if (code !== undefined) {
             recordCall(o.home, seat.account, env.now(), code);
             if (code === ACCOUNT_MISMATCH) {
-              const meta = existsSync(o.meta) ? JSON.parse(readFileSync(o.meta, "utf8")) : {};
-              if (meta.googleAccount) {
-                markSeat(o.home, seat.account, false, "screen account differs from the seat (exit 15)", env.now());
-              } else {
-                const now = env.now();
-                writeFileSync(
-                  restPath(o.home, seat.account),
-                  JSON.stringify({
-                    limitText: "screen account unreadable",
-                    resetAt: null,
-                    seenAt: new Date(now).toISOString(),
-                    until: new Date(now + BUSY_POLL_MS).toISOString(),
-                  }),
-                );
-              }
+              const account = runnerAccount(o.meta);
+              markSeat(
+                o.home,
+                seat.account,
+                false,
+                account ? "screen account differs (exit 15)" : "signed out / account unreadable (exit 15)",
+                env.now(),
+              );
             } else if (code === 0) {
               markSeat(o.home, seat.account, true, "answered", env.now());
             }
           }
-          noteLimit(o.home, seat.account, o.meta, env.now());
+          if (code !== ACCOUNT_MISMATCH) noteLimit(o.home, seat.account, o.meta, env.now());
         } finally {
           release(env.root, lockName(seat.account), owner);
         }
       }
       if (code === undefined) throw new Refusal("runner exited without a status");
       tried.push(seat.account);
-      stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
+      if (code !== ACCOUNT_MISMATCH) stampMeta(o.meta, seat, pickedAt, pickedAt - start, tried);
       const rest = readRest(o.home, seat.account);
       if (rest && Date.parse(rest.seenAt) >= pickedAt)
         env.log(`REST ${seat.account} until ${rest.until}: ${rest.limitText}`);

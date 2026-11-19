@@ -44,6 +44,24 @@ function setup(seats = "u0 alpha\n") {
 }
 
 describe("every seat disconnected", () => {
+  test.each([
+    ["null account", '{"googleAccount":null}'],
+    ["corrupt meta", "{bad"],
+  ])("%s disconnects a single seat and returns 15 without retry", async (_label, meta) => {
+    const { home, calls, sleeps, env, opts } = setup();
+    const run = env.run;
+    env.run = async (args, onSpawn) => {
+      const code = await run(args, onSpawn);
+      writeFileSync(opts.meta, meta);
+      return code;
+    };
+    const err = await sendOnSeat(env, opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SeatGone);
+    expect((err as SeatGone).code).toBe(15);
+    expect((err as SeatGone).message).toContain("account unreadable");
+    expect([calls, sleeps]).toEqual([["u0"], []]);
+    expect(JSON.parse(readFileSync(seatStatePath(home, "u0"), "utf8")).connected).toBe(false);
+  });
   test("a single seat that exits 15 leaves the next send refusing at once, not waiting", async () => {
     const { home, calls, sleeps, env, opts } = setup("u0 alpha\n");
     const first = await sendOnSeat(env, opts).catch((e: unknown) => e);

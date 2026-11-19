@@ -24,6 +24,7 @@ export function agySkipWhy(env: AgyEnv, home: string): string | undefined {
   if (!env.seatAccount) return "no agy account set";
   const mail = env.account();
   if (mail === undefined) return "agy not signed in";
+  // Body selection is a non-mutating preflight: a mismatch skips agy, while a direct agy call stops the seat.
   if (mail !== env.seatAccount) return `agy logged in as ${mail.split("@")[0]}@…, not the seat`;
   const until = readQuotaUntil(home);
   if (until > env.now()) return `agy-s4 under quota until ${new Date(until).toISOString()}`;

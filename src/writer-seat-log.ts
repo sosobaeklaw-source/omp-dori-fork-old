@@ -14,6 +14,18 @@ export const seatStatePath = (home: string, account: string): string =>
 
 export type SeatState = { connected: boolean; why: string; seenAt: string };
 
+/** An absent or malformed runner receipt cannot establish which account was on screen. */
+export function runnerAccount(path: string): string {
+  if (!existsSync(path)) return "";
+  const text = readFileSync(path, "utf8");
+  try {
+    return JSON.parse(text)?.googleAccount ?? "";
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) throw e;
+    return "";
+  }
+}
+
 /**
  * Why a seat is not connected, or undefined when it is (or was never marked). Every lane reads this before trying it.
  * A file that cannot be read as JSON is a broken mark, not a reason to crash every lane's seat scan: it is reported as

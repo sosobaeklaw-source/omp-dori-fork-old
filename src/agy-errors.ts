@@ -1,6 +1,9 @@
 /**
  * A previous account was suspended with a 403 after tool-like use. The seat serializes calls and keeps a 60-second
  * gap, checks the configured account before and after each call, stops on 403, and retries a file-linked answer once.
+ * The gap uses agy's own run logs and its local last-call floor, including calls made outside this seat. The account
+ * check compares the CLI login before sending and the individual run's log afterwards, so a different account's
+ * answer cannot be accepted. The stop persists until a person clears it; a quota hold lasts until Google's reset.
  * Quota holds and account checks are re-read before each call; changing these protections risks another suspension.
  * The request goes in a fresh folder and every call is logged. See writer-agy.ts for the implementation.
  */
