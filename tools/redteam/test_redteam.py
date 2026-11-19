@@ -120,6 +120,8 @@ class RedteamTest(unittest.TestCase):
         self.assertIn("돌리지 않았다", (self.out / "gpt6pro_web.md").read_text())
 
     def test_gpt_branch_records_received_and_not_received(self):
+        redteam.GPT_RUN.write_text("// fake runner")
+        self.addCleanup(redteam.GPT_RUN.unlink)
         def fake_run(cmd, capture_output, text):
             meta = Path(cmd[cmd.index("--meta") + 1])
             raw = Path(cmd[cmd.index("--out") + 1])
@@ -148,6 +150,50 @@ class RedteamTest(unittest.TestCase):
         head = (self.out / "merged.md").read_text().splitlines()[0]
         self.assertIn("받음: carbon_web", head)
         self.assertIn("못 받음: gpt6pro_web", head)
+
+    def test_read_back_keeps_received_answer_into_merge(self):
+        redteam.write_model_file(self.out / "carbon_web.md",
+                                 {"branch": "carbon_web", "status": redteam.GOT, "model_shown": "Gemini 카본", "chars": 4},
+                                 "지적 하나")
+        back = redteam.read_back(self.out / "carbon_web.md")
+        self.assertEqual(back["text"], "지적 하나")
+        self.assertEqual(back["chars"], 4)
+        reply = [{"location": "1장", "problem": "a", "evidence": "e", "models": ["carbon_web"]}]
+        fake = FakeHttp({redteam.OCX: {"model": "opus", "choices": [{"message": {"content": json.dumps(reply)}}]}})
+        with mock.patch.object(redteam, "http_json", fake):
+            redteam.merge(self.out, [back, {"branch": "gpt6pro_web", "status": redteam.NOT_GOT, "text": ""}])
+        head = (self.out / "merged.md").read_text().splitlines()[0]
+        self.assertIn("답 1개", head)
+        self.assertIn("받음: carbon_web", head)
+
+    def test_merge_tally_counts_pirate_error_as_missed(self):
+        reply = [{"location": "1장", "problem": "a", "evidence": "e", "models": ["pirate__s__m"]}]
+        fake = FakeHttp({redteam.OCX: {"model": "opus", "choices": [{"message": {"content": json.dumps(reply)}}]}})
+        results = [{"branch": "pirate__s__m", "status": "ok", "text": "지적"},
+                   {"branch": "pirate__s__n", "status": "error", "text": ""},
+                   {"branch": "pirate__s__t", "status": "timeout", "text": ""},
+                   {"branch": "carbon_web", "status": "error", "text": ""}]
+        with mock.patch.object(redteam, "http_json", fake):
+            redteam.merge(self.out, results)
+        head = (self.out / "merged.md").read_text().splitlines()[0]
+        self.assertIn("받음: pirate__s__m", head)
+        for missed in ("pirate__s__n", "pirate__s__t", "carbon_web"):
+            self.assertIn(missed, head.split("못 받음: ")[1])
+
+    def test_gpt_does_not_wait_when_account_lock_is_held(self):
+        lock = redteam.HOME / ".omp-dori/state/carbon-u0.lock"
+        lock.mkdir(parents=True)
+        def boom(*a, **k):
+            raise AssertionError("runner must not be called while the account lock is held")
+        with mock.patch.object(redteam.subprocess, "run", boom):
+            r = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        self.assertEqual(r["status"], redteam.NOT_GOT)
+        self.assertIn("기다리지 않고", (self.out / "gpt6pro_web.md").read_text())
+        lock.rmdir()
+        r2 = redteam.run_gpt(self.out, self.out / "p.txt", "u0:p", "lane", "-")
+        self.assertIn("runner missing", (self.out / "gpt6pro_web.md").read_text())
+        self.assertEqual(r2["status"], redteam.NOT_GOT)
+
     def test_unparseable_merge_reply_raises(self):
         fake = FakeHttp({redteam.OCX: {"choices": [{"message": {"content": "no json"}}]}})
         with mock.patch.object(redteam, "http_json", fake), self.assertRaises(ValueError):

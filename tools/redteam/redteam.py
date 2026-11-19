@@ -11,7 +11,9 @@ Branches (started together, same instruction for every model):
                      Google models are never called (recorded as skipped). With --material client
                      the whole branch is skipped and recorded.
   (c) gpt6pro_web.md  web GPT 6 Pro via gpt-web/run.js under carbon-lock <acct>.
-                     A missing answer is recorded as '못 받음' and never waited on.
+                     One attempt. A missing answer is recorded as '못 받음'.
+                     The same Aside account as Carbon is not waited on: while that
+                     account's lock is held the branch is recorded as '못 받음'.
 No GPT API branch: web GPT 6 Pro only (owner decision 2026-11-16 redteam.web_gpt6pro_carbon_plus_all_pirates).
 Then merged.md groups the same finding across models (Opus via local ocx) with a model count.
 """
@@ -62,16 +64,37 @@ def write_model_file(path: Path, head: dict, text: str) -> None:
 
 
 # ---------- (a) Carbon web ----------
-GPT_RUN = HOME / "sobaegi-lead/results/gpt-web/run.js"
 GOT = "받음"
 NOT_GOT = "못 받음"
 
 
+# ---------- (c) web GPT 6 Pro ----------
+GPT_RUN = HOME / "sobaegi-lead/results/gpt-web/run.js"
+
+
+def account_lock_held(acct: str) -> bool:
+    """carbon-lock.sh holds ~/.omp-dori/state/carbon-<prefix>.lock while a job runs there."""
+    return (HOME / ".omp-dori/state" / f"carbon-{acct.split(':')[0]}.lock").exists()
+
+
 def run_gpt(out: Path, prompt_file: Path, acct: str | None, lane: str, blocked: str) -> dict:
-    """Web GPT 6 Pro. One attempt; no answer is recorded as '못 받음' and the run moves on."""
+    """Web GPT 6 Pro, one attempt. No answer is recorded as '못 받음'.
+
+    When Carbon already holds this Aside account, the branch is recorded as '못 받음'
+    at once instead of waiting behind carbon-lock.sh, which sleeps until the lock frees."""
     if not acct:
         write_model_file(out / "gpt6pro_web.md", {"branch": "gpt6pro_web", "status": NOT_GOT, "reason": blocked},
                          "돌리지 않았다. 다른 모델로 대신하지 않았다.")
+        return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
+    if account_lock_held(acct):
+        reason = "같은 Aside 계정을 카본이 쓰는 중이라 기다리지 않고 넘김"
+        write_model_file(out / "gpt6pro_web.md",
+                         {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
+        return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
+    if not GPT_RUN.exists():
+        reason = f"runner missing: {GPT_RUN}"
+        write_model_file(out / "gpt6pro_web.md",
+                         {"branch": "gpt6pro_web", "account": acct, "status": NOT_GOT, "reason": reason}, reason)
         return {"branch": "gpt6pro_web", "status": NOT_GOT, "model": "-", "chars": 0}
     raw = out / "raw_gpt6pro_web.txt"
     meta = out / "raw_gpt6pro_web.meta.json"
@@ -230,8 +253,8 @@ MERGE_INSTR = (
 def merge(out: Path, results: list[dict]) -> int:
     """Group findings; returns the group count. Raises when the merge model's reply cannot be used."""
     got = [r for r in results if r.get("text")]
-    received = [r["branch"] for r in results if r.get("status") == GOT]
-    missed = [r["branch"] for r in results if r.get("status") == NOT_GOT]
+    received = [r["branch"] for r in results if r.get("text")]
+    missed = [r["branch"] for r in results if not r.get("text")]
     tally = f" | 받음: {', '.join(received) or '-'} | 못 받음: {', '.join(missed) or '-'}"
     if not got:
         (out / "merged.md").write_text(f"# 병합 지적 0건 (답 0개, 병합하지 않음){tally}\n")
@@ -261,7 +284,7 @@ def read_back(path: Path) -> dict:
         return {"branch": path.stem, "status": "missing", "model": "-", "chars": 0, "text": ""}
     head_txt, _, body = path.read_text().partition("\n\n")
     head = dict(line[2:].split(": ", 1) for line in head_txt.splitlines() if ": " in line)
-    ok = head.get("status") == "ok"
+    ok = head.get("status") in ("ok", GOT)
     return {"branch": path.stem, "status": head.get("status", "?"), "model": head.get("model_shown", "-"),
             "chars": int(head.get("chars", 0)) if ok else 0, "text": body.strip() if ok else ""}
 
