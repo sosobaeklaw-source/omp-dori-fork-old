@@ -5,7 +5,7 @@ import { object } from "../src/update/config.ts";
 import { githubApi, githubPages } from "./release-process.ts";
 
 export const RELEASE_REPOSITORY = "vntrevx/omp-dori";
-const REQUIRED = ["check", "e2e-herdr", "e2e-hc"];
+const REQUIRED = ["check", "test-macos", "e2e-herdr", "e2e-hc"];
 type Reads = { api: typeof githubApi; pages: typeof githubPages };
 
 function record(value: unknown): Record<string, unknown> {

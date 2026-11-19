@@ -14,7 +14,7 @@ test("release validation follows exactly the three automatic Linux CI jobs", asy
   const jobs = workflow["jobs"];
   const names = Object.keys(jobs);
   expect(names).toEqual(["check", "test-macos", "e2e-herdr", "e2e-hc"]);
-  expect(githubFixture().jobs.map((job) => job["name"])).toEqual(["check", "e2e-herdr", "e2e-hc"]);
+  expect(githubFixture().jobs.map((job) => job["name"])).toEqual(names);
   for (const name of ["check", "e2e-herdr", "e2e-hc"]) expect(jobs[name]).toHaveProperty("runs-on", "ubuntu-latest");
   expect(jobs["test-macos"]).toHaveProperty("runs-on", "macos-15");
 });

@@ -20,7 +20,6 @@ import { keptFor, pruneFixture, removePruneFixtures } from "./native-cache-prune
 import { nativeCacheFixture, ownProcessCwds, ownProcessFiles } from "./source-bundle-setup.ts";
 
 afterEach(removePruneFixtures);
-const nonRoot = test.skipIf(process.getuid?.() === 0);
 // These tests need rm to fail on an unreadable directory. GNU rm does; the macOS rm in the test-macos job does
 // not (CI run 44461371794: the removal raises no EACCES). They run everywhere except darwin.
 const unixRefusal = test.skipIf(process.platform === "darwin" || process.getuid?.() === 0);
