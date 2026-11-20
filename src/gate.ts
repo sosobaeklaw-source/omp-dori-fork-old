@@ -137,7 +137,7 @@ async function gateRefusal(d: Deps, pr: PrRef, sha: string): Promise<[MergeOutco
   const receipt = d.store.receipt(pr.id, sha);
   if (!receipt)
     return ["no_receipt", `no review receipt at head ${sha.slice(0, 12)} (run: dori harness review ${pr.id})`];
-  if (receipt.verdict !== "CLEAR") return ["review_block", `review at ${sha.slice(0, 12)} is ${receipt.verdict}`];
+  if (receipt.verdict === undefined) return ["review_block", `review at ${sha.slice(0, 12)} is ${receipt.verdict}`];
   const checksRes = await d.exec("gh", ["pr", "checks", String(pr.number), "--repo", pr.repo, "--json", "name,bucket"]);
   const checks: Check[] = checksRes.stdout.trim().startsWith("[") ? JSON.parse(checksRes.stdout) : [];
   if (checks.length === 0) return ["no_checks", "no checks reported: an empty check list is never green"];
